@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>N2Engine Editor</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      
+      body {
+        background: #1e1e1e;
+        color: #ccc;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* Toolbar */
+      .toolbar {
+        background: #333;
+        padding: 6px 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        border-bottom: 1px solid #444;
+        flex-shrink: 0;
+      }
+      .toolbar button {
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        padding: 5px 12px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-size: 12px;
+        transition: background 0.15s;
+      }
+      .toolbar button:hover { background: #1084d8; }
+      .toolbar button:disabled { 
+        background: #555; 
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+      .toolbar .separator { width: 1px; height: 20px; background: #555; margin: 0 4px; }
+      .toolbar .status { margin-left: auto; color: #888; font-size: 12px; }
+      .toolbar .status.connected { color: #4caf50; font-weight: 500; }
+
+      /* Main Layout */
+      .main-container {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+        min-height: 0;
+      }
+
+      /* Panels */
+      .panel {
+        background: #252526;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-width: 0;
+      }
+      .panel-header {
+        background: #333;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #888;
+        border-bottom: 1px solid #444;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        user-select: none;
+      }
+      .panel-header button {
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        padding: 2px 8px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-size: 11px;
+        transition: background 0.15s;
+      }
+      .panel-header button:hover { background: #1084d8; }
+      .panel-header button:disabled {
+        background: #555;
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+      .panel-content {
+        flex: 1;
+        overflow: auto;
+        padding: 4px;
+        min-height: 0;
+      }
+
+      /* Left Panel - File Browser */
+      .left-panel {
+        width: 220px;
+        border-right: 1px solid #444;
+        flex-shrink: 0;
+      }
+
+      /* Center - Viewport */
+      .center-panel {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+      }
+      #viewport-container {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #0a0a0a;
+        overflow: hidden;
+        min-height: 0;
+      }
+      #viewport {
+        background: #000;
+        max-width: 100%;
+        max-height: 100%;
+        image-rendering: pixelated;
+      }
+
+      /* Right Panel - Inspector */
+      .right-panel {
+        width: 280px;
+        border-left: 1px solid #444;
+        flex-shrink: 0;
+      }
+
+      /* Bottom Panel - Script Editor */
+      .bottom-panel {
+        height: 200px;
+        border-top: 1px solid #444;
+        display: flex;
+        flex-direction: column;
+        background: #1e1e1e;
+        flex-shrink: 0;
+      }
+      .bottom-panel.hidden { display: none; }
+      
+      .tab-bar {
+        display: flex;
+        background: #2d2d2d;
+        border-bottom: 1px solid #444;
+        overflow-x: auto;
+        flex-shrink: 0;
+      }
+      .tab-bar::-webkit-scrollbar {
+        height: 4px;
+      }
+      .tab-bar::-webkit-scrollbar-thumb {
+        background: #555;
+        border-radius: 2px;
+      }
+      .tab {
+        padding: 6px 12px;
+        cursor: pointer;
+        border-right: 1px solid #444;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+        user-select: none;
+        transition: background 0.15s;
+      }
+      .tab:hover { background: #333; }
+      .tab.active { background: #1e1e1e; border-bottom: 2px solid #0078d4; }
+      .tab .close {
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 3px;
+        font-size: 16px;
+        line-height: 1;
+        transition: background 0.15s;
+      }
+      .tab .close:hover { background: #555; }
+
+      #script-editor {
+        flex: 1;
+        width: 100%;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        border: none;
+        padding: 10px;
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        resize: none;
+        outline: none;
+        min-height: 0;
+      }
+
+      /* File Tree */
+      .file-tree {
+        font-size: 12px;
+        user-select: none;
+      }
+      .file-item {
+        padding: 3px 6px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+        transition: background 0.15s;
+      }
+      .file-item:hover { background: #2a2d2e; }
+      .file-item.selected { background: #094771; }
+      .file-item .icon { 
+        width: 16px; 
+        text-align: center;
+        font-size: 14px;
+      }
+
+      /* Welcome Screen */
+      .welcome-screen {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+      }
+      .welcome-screen h1 { 
+        color: #fff; 
+        font-size: 32px;
+        font-weight: 300;
+        letter-spacing: 1px;
+      }
+      .welcome-screen .actions { display: flex; gap: 12px; }
+      .welcome-screen button {
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        padding: 12px 28px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 14px;
+        transition: all 0.2s;
+        font-weight: 500;
+      }
+      .welcome-screen button:hover { 
+        background: #1084d8;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 120, 212, 0.3);
+      }
+      .welcome-screen .recent { 
+        margin-top: 30px; 
+        text-align: center;
+        max-width: 500px;
+      }
+      .welcome-screen .recent h3 { 
+        color: #888; 
+        margin-bottom: 12px;
+        font-size: 14px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .welcome-screen .recent-item {
+        padding: 8px 16px;
+        cursor: pointer;
+        color: #0078d4;
+        margin: 4px 0;
+        border-radius: 3px;
+        transition: all 0.15s;
+      }
+      .welcome-screen .recent-item:hover { 
+        background: rgba(0, 120, 212, 0.1);
+        transform: translateX(4px);
+      }
+
+      /* Hierarchy */
+      .hierarchy-item {
+        padding: 4px 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: background 0.15s;
+        user-select: none;
+      }
+      .hierarchy-item:hover { background: #2a2d2e; }
+      .hierarchy-item.selected { background: #094771; }
+
+      /* Inspector */
+      .inspector-section {
+        margin-bottom: 12px;
+      }
+      .inspector-section h4 {
+        color: #888;
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+        padding: 4px 0;
+        border-bottom: 1px solid #444;
+        font-weight: 600;
+      }
+      .inspector-row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 6px;
+        gap: 8px;
+      }
+      .inspector-row label {
+        width: 60px;
+        color: #888;
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+      .inspector-row input {
+        flex: 1;
+        background: #3c3c3c;
+        border: 1px solid #555;
+        color: #ccc;
+        padding: 4px 6px;
+        border-radius: 2px;
+        font-size: 12px;
+        transition: border-color 0.15s;
+      }
+      .inspector-row input:focus {
+        border-color: #0078d4;
+        outline: none;
+      }
+      .vector-inputs {
+        display: flex;
+        gap: 4px;
+        flex: 1;
+      }
+      .vector-inputs input { 
+        width: 50px; 
+        flex: 1;
+        min-width: 0;
+      }
+
+      /* Modal */
+      #modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 1000;
+        backdrop-filter: blur(2px);
+      }
+      #modal-overlay > div {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #2d2d2d;
+        padding: 20px;
+        border-radius: 6px;
+        min-width: 300px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        border: 1px solid #444;
+      }
+      #modal-overlay label {
+        display: block;
+        margin-bottom: 8px;
+        color: #ccc;
+        font-size: 13px;
+      }
+      #modal-overlay input {
+        width: 100%;
+        padding: 8px;
+        background: #3c3c3c;
+        border: 1px solid #555;
+        color: #ccc;
+        border-radius: 3px;
+        font-size: 13px;
+      }
+      #modal-overlay input:focus {
+        border-color: #0078d4;
+        outline: none;
+      }
+      #modal-overlay button {
+        margin-top: 12px;
+        margin-left: 8px;
+        padding: 6px 16px;
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #modal-overlay button:hover {
+        background: #1084d8;
+      }
+      #modal-overlay button#modal-cancel {
+        background: #555;
+      }
+      #modal-overlay button#modal-cancel:hover {
+        background: #666;
+      }
+
+      /* Scrollbar styling */
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #1e1e1e;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #555;
+        border-radius: 5px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Welcome Screen (shown when no project is open) -->
+    <div id="welcome-screen" class="welcome-screen">
+      <h1>N2Engine Editor</h1>
+      <div class="actions">
+        <button id="openProjectBtn">Open Project</button>
+        <button id="createProjectBtn">Create New Project</button>
+      </div>
+      <div class="recent" id="recent-projects">
+        <h3>Recent Projects</h3>
+      </div>
+    </div>
+
+    <!-- Editor (hidden until project is opened) -->
+    <div id="editor" style="display: none; flex-direction: column; height: 100%;">
+      <div class="toolbar">
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+        <div class="separator"></div>
+        <button id="saveBtn" disabled>Save Scene</button>
+        <button id="playBtn" disabled>▶ Play</button>
+        <button id="stopBtn" disabled>■ Stop</button>
+        <span id="status" class="status">Disconnected</span>
+        <span id="project-name" style="margin-left: 12px; color: #888;"></span>
+      </div>
+
+      <div class="main-container">
+        <!-- Left Panel - File Browser -->
+        <div class="panel left-panel">
+          <div class="panel-header">
+            <span>📁</span> Files
+          </div>
+          <div class="panel-content">
+            <div id="file-tree" class="file-tree"></div>
+          </div>
+        </div>
+
+        <!-- Center - Viewport + Script Editor -->
+        <div class="center-panel">
+          <div id="viewport-container">
+            <canvas id="viewport" width="800" height="600"></canvas>
+          </div>
+          
+          <div id="bottom-panel" class="bottom-panel hidden">
+            <div class="tab-bar" id="script-tabs"></div>
+            <textarea id="script-editor" spellcheck="false" placeholder="// Open a script file to edit..."></textarea>
+          </div>
+        </div>
+
+        <!-- Right Panel - Hierarchy & Inspector -->
+        <div class="panel right-panel">
+          <div class="panel-header">
+            <span>🎬</span> Hierarchy
+            <button id="createEntityBtn" style="margin-left: auto;">+ Add</button>
+          </div>
+          <div class="panel-content" style="max-height: 200px;">
+            <div id="hierarchy"></div>
+          </div>
+          
+          <div class="panel-header">
+            <span>⚙️</span> Inspector
+          </div>
+          <div class="panel-content">
+            <div id="inspector">
+              <p style="color: #666; padding: 10px;">Select an entity to inspect</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal overlay -->
+    <div id="modal-overlay">
+      <div>
+        <label><input id="modal-input" type="text" value="New Entity" /></label>
+        <div style="margin-top: 12px; text-align: right;">
+          <button id="modal-cancel">Cancel</button>
+          <button id="modal-ok">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="../dist/renderer.js"></script>
+  </body>
+</html>
