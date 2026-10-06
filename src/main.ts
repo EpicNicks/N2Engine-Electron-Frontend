@@ -46,6 +46,9 @@ function createWindow(): void {
       sandbox: false,
       // The engine's audio starts playing on connect, without waiting for a click
       autoplayPolicy: "no-user-gesture-required",
+      // Chromium throttles timers in a hidden or minimized window to about once a second, which would starve the
+      // 25 ms GetAudio polling (audio-player.ts) and underrun playback, even while muted or quiet
+      backgroundThrottling: false,
     },
     backgroundColor: "#1e1e1e",
   })
