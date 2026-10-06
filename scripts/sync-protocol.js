@@ -1,4 +1,4 @@
-// Regenerates src/protocol.generated.ts from the engine's protocol.json with the engine's own TypeScript generator.
+// Regenerates src/protocol/protocol.generated.ts from the engine's protocol.json with the engine's own TypeScript generator.
 // The generator writes into the engine repo by default, so this imports it and points its output here instead.
 //
 // Usage: npm run sync-protocol [-- <path to the N2Engine repo>]  (default: N2ENGINE_DIR, else ../N2Engine)
@@ -9,7 +9,7 @@ const fs = require("fs")
 
 const engineDir = path.resolve(process.argv[2] || process.env.N2ENGINE_DIR || path.join(__dirname, "..", "..", "N2Engine"))
 const generatorsDir = path.join(engineDir, "editor-server", "protocol", "generators")
-const outputPath = path.resolve(__dirname, "..", "src", "protocol.generated.ts")
+const outputPath = path.resolve(__dirname, "..", "src", "protocol", "protocol.generated.ts")
 
 if (!fs.existsSync(path.join(generatorsDir, "generate_typescript.py"))) {
   console.error(`No TypeScript generator in ${generatorsDir} (pass the N2Engine repo path, or set N2ENGINE_DIR)`)

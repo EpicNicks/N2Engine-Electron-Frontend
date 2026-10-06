@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
-import { EngineClient } from "./engine-client"
+import { EngineClient } from "./protocol/engine-client"
 import { AudioPlayer, AudioPlayerStatus } from "./audio-player"
 import * as fs from "fs"
 import * as path from "path"
