@@ -173,6 +173,18 @@ describe("JitterBuffer", () => {
     assert.equal(jitter.stats.serverDroppedFrames, 4800)
   })
 
+  test("doesn't count frames dropped before the first chunk as a gap", () => {
+    // The first GetAudio of a connection reports what the server dropped while nobody was listening
+    const jitter = new JitterBuffer()
+    const first = jitter.schedule(0, 1200, rate, 96000)!
+    assert.equal(first.reason, "start")
+
+    jitter.reset()
+    assert.equal(jitter.schedule(1, 1200, rate, 4800)!.reason, "start")
+    assert.equal(jitter.stats.gaps, 0)
+    assert.equal(jitter.stats.serverDroppedFrames, 0)
+  })
+
   test("resyncs after an underrun", () => {
     const jitter = new JitterBuffer({ targetSeconds: 0.08 })
     jitter.schedule(0, 1200, rate) // ends at 0.08

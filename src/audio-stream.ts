@@ -243,7 +243,9 @@ export class JitterBuffer {
   schedule(now: number, frameCount: number, sampleRate: number, droppedFrames: number = 0): ScheduleDecision | null {
     const o = this.options
 
-    if (droppedFrames > 0) {
+    // Only a gap in what's playing counts: the first chunk after a start or reset is placed afresh anyway, and the
+    // server reports the frames it dropped before then (e.g. while no client was connected) on it
+    if (droppedFrames > 0 && this.nextStartTime !== null) {
       this._stats.gaps++
       this._stats.serverDroppedFrames += droppedFrames
       this.reset("gap")

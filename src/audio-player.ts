@@ -220,11 +220,6 @@ export class AudioPlayer {
       this.emitStatus()
     }
 
-    if (chunk.droppedFrames > 0) {
-      const ms = ((chunk.droppedFrames / chunk.sampleRate) * 1000).toFixed(0)
-      console.warn(`Audio gap: the engine dropped ${chunk.droppedFrames} frames (${ms} ms) we fell behind on; resyncing`)
-    }
-
     if (context.state !== "running") {
       // The clock isn't moving, so nothing can be scheduled; start afresh once it runs (the chunk is discarded)
       this.jitter.reset()
@@ -232,6 +227,10 @@ export class AudioPlayer {
     }
 
     const decision = this.jitter.schedule(context.currentTime, chunk.frameCount, chunk.sampleRate, chunk.droppedFrames)
+    if (decision?.reason === "gap") {
+      const ms = ((chunk.droppedFrames / chunk.sampleRate) * 1000).toFixed(0)
+      console.warn(`Audio gap: the engine dropped ${chunk.droppedFrames} frames (${ms} ms) we fell behind on; resyncing`)
+    }
     if (!decision || decision.outputFrames === 0) return
     if (decision.reason === "underrun") {
       console.warn("Audio underrun: the jitter buffer ran dry; resyncing")
