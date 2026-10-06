@@ -300,6 +300,16 @@
       .hierarchy-item.selected { background: #094771; }
 
       /* Inspector */
+      .health-item {
+        padding: 3px 8px;
+        font-size: 12px;
+      }
+      .health-item .state { margin-left: 6px; font-weight: 500; }
+      .health-item .state.running { color: #4caf50; }
+      .health-item .state.failed { color: #f44336; }
+      .health-item .state.other { color: #888; }
+      .health-item .detail { color: #888; font-size: 11px; padding-left: 8px; }
+
       .inspector-section {
         margin-bottom: 12px;
       }
@@ -495,6 +505,16 @@
           <div class="panel-content">
             <div id="inspector">
               <p style="color: #666; padding: 10px;">Select an entity to inspect</p>
+            </div>
+          </div>
+
+          <div class="panel-header">
+            <span>🩺</span> Engine
+            <button id="refreshHealthBtn" style="margin-left: auto;" disabled>Refresh</button>
+          </div>
+          <div class="panel-content" style="max-height: 180px; flex: none;">
+            <div id="engine-health">
+              <p style="color: #666; padding: 10px;">Not connected</p>
             </div>
           </div>
         </div>

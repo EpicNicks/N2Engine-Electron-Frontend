@@ -78,6 +78,8 @@ async function connectToEngine(): Promise<void> {
 
     await refreshSceneState()
     startRenderLoop()
+    refreshHealthBtn.disabled = false
+    await refreshEngineHealth()
   } catch (e) {
     console.error("Failed to connect:", e)
     statusEl.textContent = "Connection failed"
@@ -93,7 +95,58 @@ disconnectBtn.addEventListener("click", () => {
   connectBtn.disabled = false
   disconnectBtn.disabled = true
   stopRenderLoop()
+  refreshHealthBtn.disabled = true
+  refreshEngineHealth()
 })
+
+// ==================== Engine Health ====================
+const engineHealthEl = document.getElementById("engine-health")!
+const refreshHealthBtn = document.getElementById("refreshHealthBtn") as HTMLButtonElement
+
+refreshHealthBtn.addEventListener("click", refreshEngineHealth)
+
+async function refreshEngineHealth(): Promise<void> {
+  if (!window.engine.isConnected()) {
+    engineHealthEl.innerHTML = '<p style="color: #666; padding: 10px;">Not connected</p>'
+    return
+  }
+
+  try {
+    const health = await window.engine.getEngineHealth()
+    engineHealthEl.innerHTML = ""
+    if (!health.healthy) {
+      engineHealthEl.innerHTML = '<p style="color: #f44336; padding: 4px 8px;">A subsystem failed</p>'
+    }
+
+    // Details come from the engine, so they're set as text rather than HTML
+    health.subsystems.forEach((subsystem) => {
+      const itemEl = document.createElement("div")
+      itemEl.className = "health-item"
+
+      const name = document.createElement("span")
+      name.textContent = subsystem.name
+      itemEl.appendChild(name)
+
+      const state = document.createElement("span")
+      const stateClass = subsystem.state === "Running" ? "running" : subsystem.state === "Failed" ? "failed" : "other"
+      state.className = `state ${stateClass}`
+      state.textContent = subsystem.state
+      itemEl.appendChild(state)
+
+      if (subsystem.detail) {
+        const detail = document.createElement("div")
+        detail.className = "detail"
+        detail.textContent = subsystem.detail
+        itemEl.appendChild(detail)
+      }
+
+      engineHealthEl.appendChild(itemEl)
+    })
+  } catch (e) {
+    console.error("Failed to get engine health:", e)
+    engineHealthEl.innerHTML = '<p style="color: #f44336; padding: 10px;">Failed to get engine health</p>'
+  }
+}
 
 // ==================== Scene State Management ====================
 async function refreshSceneState(): Promise<void> {
