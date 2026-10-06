@@ -78,6 +78,9 @@ async function connectToEngine(): Promise<void> {
 
     await refreshSceneState()
     startRenderLoop()
+    window.audio.start()
+    refreshHealthBtn.disabled = false
+    await refreshEngineHealth()
   } catch (e) {
     console.error("Failed to connect:", e)
     statusEl.textContent = "Connection failed"
@@ -87,13 +90,140 @@ async function connectToEngine(): Promise<void> {
 connectBtn.addEventListener("click", connectToEngine)
 
 disconnectBtn.addEventListener("click", () => {
+  window.audio.stop()
   window.engine.disconnect()
   statusEl.textContent = "Disconnected"
   statusEl.classList.remove("connected")
   connectBtn.disabled = false
   disconnectBtn.disabled = true
   stopRenderLoop()
+  refreshHealthBtn.disabled = true
+  refreshEngineHealth()
 })
+
+// ==================== Audio ====================
+const muteBtn = document.getElementById("muteBtn") as HTMLButtonElement
+const audioStatusEl = document.getElementById("audio-status")!
+const MutedStorageKey = "audioMuted"
+
+let audioState: AudioStatus["state"] = "stopped"
+
+function loadMutedSetting(): boolean {
+  try {
+    return localStorage.getItem(MutedStorageKey) === "true"
+  } catch {
+    return false
+  }
+}
+
+function saveMutedSetting(muted: boolean): void {
+  try {
+    localStorage.setItem(MutedStorageKey, String(muted))
+  } catch {
+    // not persisted; the setting still applies for this session
+  }
+}
+
+function updateMuteButton(): void {
+  if (audioState === "suspended") {
+    muteBtn.textContent = "🔇 Enable audio"
+  } else {
+    muteBtn.textContent = window.audio.isMuted() ? "🔇 Unmute" : "🔊 Mute"
+  }
+}
+
+muteBtn.addEventListener("click", () => {
+  // A click is a user gesture, so unmuting also resumes audio the autoplay policy suspended
+  const muted = audioState === "suspended" ? false : !window.audio.isMuted()
+  window.audio.setMuted(muted)
+  saveMutedSetting(muted)
+  updateMuteButton()
+})
+
+window.audio.setMuted(loadMutedSetting())
+
+window.audio.onStatus((status) => {
+  if (status.state !== audioState && (status.state === "error" || status.state === "unavailable")) {
+    console.warn(`Audio ${status.state}: ${status.message}`)
+  }
+  audioState = status.state
+
+  const format = status.sampleRate > 0 ? ` (${status.sampleRate / 1000} kHz ${status.sampleFormat})` : ""
+  const problems = status.underruns + status.gaps > 0 ? `, ${status.underruns} underruns, ${status.gaps} gaps` : ""
+  let text: string
+  switch (status.state) {
+    case "playing":
+      text = `Audio: ${status.bufferedMs} ms buffered${format}${problems}`
+      break
+    case "muted":
+      text = `Audio: muted${format}`
+      break
+    case "suspended":
+      text = "Audio: paused until enabled"
+      break
+    case "unavailable":
+      text = "Audio: none (engine not on a loopback device)"
+      break
+    case "error":
+      text = `Audio error: ${status.message}`
+      break
+    default:
+      text = "Audio: off"
+  }
+  audioStatusEl.textContent = text
+  audioStatusEl.title = status.message
+  audioStatusEl.classList.toggle("warning", status.state === "error" || status.state === "suspended")
+  updateMuteButton()
+})
+
+// ==================== Engine Health ====================
+const engineHealthEl = document.getElementById("engine-health")!
+const refreshHealthBtn = document.getElementById("refreshHealthBtn") as HTMLButtonElement
+
+refreshHealthBtn.addEventListener("click", refreshEngineHealth)
+
+async function refreshEngineHealth(): Promise<void> {
+  if (!window.engine.isConnected()) {
+    engineHealthEl.innerHTML = '<p style="color: #666; padding: 10px;">Not connected</p>'
+    return
+  }
+
+  try {
+    const health = await window.engine.getEngineHealth()
+    engineHealthEl.innerHTML = ""
+    if (!health.healthy) {
+      engineHealthEl.innerHTML = '<p style="color: #f44336; padding: 4px 8px;">A subsystem failed</p>'
+    }
+
+    // Details come from the engine, so they're set as text rather than HTML
+    health.subsystems.forEach((subsystem) => {
+      const itemEl = document.createElement("div")
+      itemEl.className = "health-item"
+
+      const name = document.createElement("span")
+      name.textContent = subsystem.name
+      itemEl.appendChild(name)
+
+      const state = document.createElement("span")
+      const stateClass = subsystem.state === "Running" ? "running" : subsystem.state === "Failed" ? "failed" : "other"
+      state.className = `state ${stateClass}`
+      state.textContent = subsystem.state
+      itemEl.appendChild(state)
+
+      if (subsystem.detail) {
+        const detail = document.createElement("div")
+        detail.className = "detail"
+        detail.textContent = subsystem.detail
+        itemEl.appendChild(detail)
+      }
+
+      engineHealthEl.appendChild(itemEl)
+    })
+  } catch (e) {
+    console.error("Failed to get engine health:", e)
+    engineHealthEl.innerHTML = '<p style="color: #f44336; padding: 10px;">Failed to get engine health</p>'
+  }
+}
 
 // ==================== Scene State Management ====================
 async function refreshSceneState(): Promise<void> {
@@ -559,7 +689,10 @@ function stopRenderLoop(): void {
 
 const resizeObserver = new ResizeObserver(() => {
   if (window.engine.isConnected()) {
-    window.engine.setViewportSize(canvas.width, canvas.height)
+    // The server rejects sizes outside 1..MaxViewportDimension with an Error
+    window.engine.setViewportSize(canvas.width, canvas.height).catch((e) => {
+      console.error("Failed to set viewport size:", e)
+    })
   }
 })
 resizeObserver.observe(canvas)

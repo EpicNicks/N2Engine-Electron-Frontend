@@ -1,9 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron"
 import { EngineClient } from "./engine-client"
+import { AudioPlayer, AudioPlayerStatus } from "./audio-player"
 import * as fs from "fs"
 import * as path from "path"
 
 const client = new EngineClient()
+const audioPlayer = new AudioPlayer({
+  getAudio: () => client.getAudio(),
+  isConnected: () => client.isConnected,
+})
 
 contextBridge.exposeInMainWorld("engine", {
   // Connection
@@ -13,6 +18,8 @@ contextBridge.exposeInMainWorld("engine", {
 
   // Rendering
   renderFrame: () => client.renderFrame(),
+  // No getAudio here: each GetAudio drains the server's stream, so a call from the page would steal audio from the
+  // player. Use window.audio.
   setViewportSize: (width: number, height: number) => client.setViewportSize(width, height),
 
   // Camera
@@ -29,12 +36,24 @@ contextBridge.exposeInMainWorld("engine", {
   createScript: (name: string) => client.createScript(name),
   rescanAssets: () => client.rescanAssets(),
 
+  // Diagnostics
+  getEngineHealth: () => client.getEngineHealth(),
+
   // Entity management
   createEntity: (name: string) => client.createEntity(name),
   destroyEntity: (entityId: string) => client.destroyEntity(entityId),
   getAllEntities: () => client.getAllEntities(),
   setEntityTransform: (id: string, pos: any, rot: any, scale: any) => client.setEntityTransform(id, pos, rot, scale),
   getEntityTransform: (id: string) => client.getEntityTransform(id),
+})
+
+// Audio playback: polls GetAudio and plays it through Web Audio (see audio-player.ts)
+contextBridge.exposeInMainWorld("audio", {
+  start: () => audioPlayer.start(),
+  stop: () => audioPlayer.stop(),
+  setMuted: (muted: boolean) => audioPlayer.setMuted(muted),
+  isMuted: () => audioPlayer.isMuted,
+  onStatus: (listener: (status: AudioPlayerStatus) => void) => audioPlayer.onStatus(listener),
 })
 
 interface FileInfo {

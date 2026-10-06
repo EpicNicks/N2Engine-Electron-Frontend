@@ -5,48 +5,62 @@ import {
   FrameDataResponse,
   CameraPositionResponse,
   SceneDataResponse,
+  EngineHealthResponse,
+  SubsystemStatus,
 } from "./protocol.generated"
 import { readString, writeString } from "./serialization"
+import { AudioSamples, decodeAudioSamples } from "./audio-stream"
 
 interface PendingRequest {
   resolve: (data: Buffer) => void
   reject: (error: Error) => void
 }
 
+/** Opens the connection; a parameter so tests can substitute a fake socket */
+export type SocketFactory = (options: net.NetConnectOpts, onConnect: () => void) => net.Socket
+
 export class EngineClient {
   private socket: net.Socket | null = null
   private buffer: Buffer = Buffer.alloc(0)
   private requestQueue: PendingRequest[] = []
+
+  constructor(
+    private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)
+  ) {}
 
   get isConnected(): boolean {
     return this.socket !== null && !this.socket.destroyed
   }
 
   connect(host: string = "localhost", port: number = 9999): Promise<void> {
+    // Nothing from a previous connection (a partial response, requests it never answered) may leak into this one
+    this.closeSocket(new Error("Reconnected"))
+
     return new Promise((resolve, reject) => {
-      this.socket = net.connect({ host, port }, () => {
+      const socket = this.createSocket({ host, port }, () => {
         resolve()
       })
+      this.socket = socket
 
-      this.socket.on("data", (chunk: Buffer) => {
+      // Each handler only acts while its socket is the current one: an old socket's events can arrive after a reconnect
+      socket.on("data", (chunk: Buffer) => {
+        if (this.socket !== socket) return
         this.buffer = Buffer.concat([this.buffer, chunk])
         this.processBuffer()
       })
 
-      this.socket.on("error", (err: Error) => {
-        while (this.requestQueue.length > 0) {
-          const req = this.requestQueue.shift()!
-          req.reject(err)
+      socket.on("error", (err: Error) => {
+        if (this.socket === socket) {
+          this.rejectPending(err)
         }
         reject(err)
       })
 
-      this.socket.on("close", () => {
+      socket.on("close", () => {
+        if (this.socket !== socket) return
         this.socket = null
-        while (this.requestQueue.length > 0) {
-          const req = this.requestQueue.shift()!
-          req.reject(new Error("Connection closed"))
-        }
+        this.buffer = Buffer.alloc(0)
+        this.rejectPending(new Error("Connection closed"))
       })
     })
   }
@@ -54,8 +68,25 @@ export class EngineClient {
   disconnect(): void {
     if (this.socket) {
       this.sendCommandRaw(CommandType.Shutdown, Buffer.alloc(0)).catch(() => {})
-      this.socket.destroy()
-      this.socket = null
+      this.closeSocket(new Error("Disconnected"))
+    }
+  }
+
+  /** Destroys the current socket (if any), drops any partial response and rejects every pending request */
+  private closeSocket(error: Error): void {
+    const socket = this.socket
+    this.socket = null
+    this.buffer = Buffer.alloc(0)
+    if (socket) {
+      socket.destroy()
+    }
+    this.rejectPending(error)
+  }
+
+  private rejectPending(error: Error): void {
+    while (this.requestQueue.length > 0) {
+      const req = this.requestQueue.shift()!
+      req.reject(error)
     }
   }
 
@@ -96,6 +127,21 @@ export class EngineClient {
     })
   }
 
+  /**
+   * Throws the server's message for an Error response (e.g. RenderFrame without a renderer), or a mismatch error
+   * for any type other than the expected one
+   */
+  private expectResponse(response: Buffer, expected: ResponseType, name: string): void {
+    const type = response.readUInt8(0)
+    if (type === ResponseType.Error) {
+      const message = response.subarray(5).toString("utf-8")
+      throw new Error(message || `Expected ${name}, got Error`)
+    }
+    if (type !== expected) {
+      throw new Error(`Expected ${name}, got ${type}`)
+    }
+  }
+
   private expectOk(response: Buffer): void {
     const type = response.readUInt8(0)
     if (type === ResponseType.Error) {
@@ -112,10 +158,7 @@ export class EngineClient {
   async renderFrame(): Promise<FrameDataResponse> {
     const response = await this.sendCommandRaw(CommandType.RenderFrame, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.FrameData) {
-      throw new Error(`Expected FrameData, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.FrameData, "FrameData")
 
     const width = response.readUInt32LE(5)
     const height = response.readUInt32LE(9)
@@ -133,6 +176,30 @@ export class EngineClient {
     this.expectOk(response)
   }
 
+  // ==================== Audio ====================
+
+  /**
+   * Everything the server mixed since the previous GetAudio (at most 250 ms of it), with the samples converted to
+   * float32. Null when the server has no audio stream (audio isn't running on a loopback device, see GetEngineHealth).
+   */
+  async getAudio(): Promise<AudioSamples | null> {
+    const response = await this.sendCommandRaw(CommandType.GetAudio, Buffer.alloc(0))
+
+    const type = response.readUInt8(0)
+    if (type === ResponseType.Error) {
+      const message = response.subarray(5).toString("utf-8")
+      if (message.startsWith("No audio stream")) {
+        return null
+      }
+      throw new Error(message || "Failed to get audio")
+    }
+    if (type !== ResponseType.AudioSamples) {
+      throw new Error(`Expected AudioSamples, got ${type}`)
+    }
+
+    return decodeAudioSamples(response.subarray(5))
+  }
+
   // ==================== Camera ====================
 
   async setCameraPosition(x: number, y: number, z: number): Promise<void> {
@@ -148,10 +215,7 @@ export class EngineClient {
   async getCameraPosition(): Promise<CameraPositionResponse> {
     const response = await this.sendCommandRaw(CommandType.GetCameraPosition, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.CameraPosition) {
-      throw new Error(`Expected CameraPosition, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.CameraPosition, "CameraPosition")
 
     return {
       x: response.readFloatLE(5),
@@ -287,10 +351,7 @@ export class EngineClient {
   async getAllEntities(): Promise<Array<{ id: string; name: string }>> {
     const response = await this.sendCommandRaw(CommandType.GetAllEntities, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.EntityList) {
-      throw new Error(`Expected EntityList, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.EntityList, "EntityList")
 
     const entities: Array<{ id: string; name: string }> = []
     let offset = 5
@@ -358,10 +419,7 @@ export class EngineClient {
 
     const response = await this.sendCommandRaw(CommandType.GetEntityTransform, payload)
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.EntityTransform) {
-      throw new Error(`Expected EntityTransform, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.EntityTransform, "EntityTransform")
 
     let offset = 5
     return {
@@ -407,5 +465,33 @@ export class EngineClient {
   async rescanAssets(): Promise<void> {
     const response = await this.sendCommandRaw(CommandType.RescanAssets, Buffer.alloc(0))
     this.expectOk(response)
+  }
+
+  // ==================== Engine Health ====================
+
+  /**
+   * Per-subsystem status (window, renderer, audio, ...); healthy is false when any of them failed
+   */
+  async getEngineHealth(): Promise<EngineHealthResponse> {
+    const response = await this.sendCommandRaw(CommandType.GetEngineHealth, Buffer.alloc(0))
+    this.expectResponse(response, ResponseType.EngineHealth, "EngineHealth")
+
+    let offset = 5
+    const healthy = response.readUInt8(offset) !== 0
+    offset += 1
+    const count = response.readUInt32LE(offset)
+    offset += 4
+
+    const subsystems: SubsystemStatus[] = []
+    for (let i = 0; i < count; i++) {
+      const nameRes = readString(response, offset)
+      const stateRes = readString(response, nameRes.offset)
+      const detailRes = readString(response, stateRes.offset)
+      offset = detailRes.offset
+
+      subsystems.push({ name: nameRes.value, state: stateRes.value, detail: detailRes.value })
+    }
+
+    return { healthy, count, subsystems }
   }
 }

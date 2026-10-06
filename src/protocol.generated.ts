@@ -1,19 +1,26 @@
 // Auto-generated from protocol.json - do not edit
 
 export interface Vec3 {
-  x: number
-  y: number
-  z: number
+  x: number;
+  y: number;
+  z: number;
 }
 
 export interface EntityInfo {
-  id: string
-  name: string
+  id: string;
+  name: string;
+}
+
+export interface SubsystemStatus {
+  name: string;
+  state: string;
+  detail: string;
 }
 
 export const CommandType = {
   RenderFrame: 0x01,
   SetViewportSize: 0x02,
+  GetAudio: 0x03,
   SetCameraPosition: 0x10,
   GetCameraPosition: 0x12,
   CreateScene: 0x20,
@@ -28,10 +35,11 @@ export const CommandType = {
   GetAllEntities: 0x34,
   CreateScript: 0x40,
   RescanAssets: 0x41,
-  Shutdown: 0xff,
-} as const
+  GetEngineHealth: 0x50,
+  Shutdown: 0xFF,
+} as const;
 
-export type CommandType = (typeof CommandType)[keyof typeof CommandType]
+export type CommandType = typeof CommandType[keyof typeof CommandType];
 
 export const ResponseType = {
   Ok: 0x00,
@@ -43,87 +51,104 @@ export const ResponseType = {
   EntityCreated: 0x06,
   SceneData: 0x07,
   ScriptData: 0x08,
-} as const
+  EngineHealth: 0x09,
+  AudioSamples: 0x0A,
+} as const;
 
-export type ResponseType = (typeof ResponseType)[keyof typeof ResponseType]
+export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
 
 export interface SetViewportSizeRequest {
-  width: number
-  height: number
+  width: number;
+  height: number;
 }
 
 export interface SetCameraPositionRequest {
-  x: number
-  y: number
-  z: number
+  x: number;
+  y: number;
+  z: number;
 }
 
 export interface CreateSceneRequest {
-  name: string
+  name: string;
 }
 
 export interface LoadSceneRequest {
-  sceneJson: string
+  sceneJson: string;
 }
 
 export interface DeleteSceneRequest {
-  sceneName: string
+  sceneName: string;
 }
 
 export interface CreateEntityRequest {
-  name: string
+  name: string;
 }
 
 export interface DestroyEntityRequest {
-  entityId: string
+  entityId: string;
 }
 
 export interface SetEntityTransformRequest {
-  entityId: string
-  position: Vec3
-  rotation: Vec3
-  scale: Vec3
+  entityId: string;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
 }
 
 export interface GetEntityTransformRequest {
-  entityId: string
+  entityId: string;
 }
 
 export interface CreateScriptRequest {
-  name: string
+  name: string;
 }
 
 export interface FrameDataResponse {
-  width: number
-  height: number
-  pixels: Uint8Array
+  width: number;
+  height: number;
+  pixels: Uint8Array;
+}
+
+export interface AudioSamplesResponse {
+  sampleRate: number;
+  channels: number;
+  sampleFormat: string;
+  frameCount: number;
+  droppedFrames: number;
+  samples: Uint8Array;
 }
 
 export interface CameraPositionResponse {
-  x: number
-  y: number
-  z: number
+  x: number;
+  y: number;
+  z: number;
 }
 
 export interface SceneDataResponse {
-  sceneJson: string
+  sceneJson: string;
 }
 
 export interface EntityCreatedResponse {
-  entityId: string
+  entityId: string;
 }
 
 export interface EntityTransformResponse {
-  position: Vec3
-  rotation: Vec3
-  scale: Vec3
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
 }
 
 export interface EntityListResponse {
-  count: number
-  entities: EntityInfo[]
+  count: number;
+  entities: EntityInfo[];
 }
 
 export interface ScriptDataResponse {
-  scriptTemplate: string
+  scriptTemplate: string;
+}
+
+export interface EngineHealthResponse {
+  healthy: boolean;
+  count: number;
+  subsystems: SubsystemStatus[];
 }

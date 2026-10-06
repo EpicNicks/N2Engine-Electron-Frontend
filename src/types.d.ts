@@ -2,6 +2,18 @@ interface SceneData {
   sceneJson: string
 }
 
+interface SubsystemStatus {
+  name: string
+  state: string
+  detail: string
+}
+
+interface EngineHealth {
+  healthy: boolean
+  count: number
+  subsystems: SubsystemStatus[]
+}
+
 interface EngineAPI {
   // Connection
   connect(host?: string, port?: number): Promise<void>
@@ -26,6 +38,9 @@ interface EngineAPI {
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
 
+  // Diagnostics
+  getEngineHealth(): Promise<EngineHealth>
+
   // Entity management
   createEntity(name: string): Promise<string>
   destroyEntity(entityId: string): Promise<void>
@@ -41,6 +56,26 @@ interface EngineAPI {
     rotation: { x: number; y: number; z: number }
     scale: { x: number; y: number; z: number }
   }>
+}
+
+interface AudioStatus {
+  state: "stopped" | "playing" | "muted" | "suspended" | "unavailable" | "error"
+  message: string
+  bufferedMs: number
+  sampleRate: number
+  channels: number
+  sampleFormat: string
+  underruns: number
+  gaps: number
+  serverDroppedFrames: number
+}
+
+interface AudioAPI {
+  start(): void
+  stop(): void
+  setMuted(muted: boolean): void
+  isMuted(): boolean
+  onStatus(listener: (status: AudioStatus) => void): void
 }
 
 interface FileInfo {
@@ -74,5 +109,6 @@ interface FileSystemAPI {
 
 interface Window {
   engine: EngineAPI
+  audio: AudioAPI
   fileSystem: FileSystemAPI
 }
