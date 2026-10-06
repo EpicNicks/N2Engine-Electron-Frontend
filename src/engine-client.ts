@@ -9,6 +9,7 @@ import {
   SubsystemStatus,
 } from "./protocol.generated"
 import { readString, writeString } from "./serialization"
+import { AudioSamples, decodeAudioSamples } from "./audio-stream"
 
 interface PendingRequest {
   resolve: (data: Buffer) => void
@@ -145,6 +146,30 @@ export class EngineClient {
 
     const response = await this.sendCommandRaw(CommandType.SetViewportSize, payload)
     this.expectOk(response)
+  }
+
+  // ==================== Audio ====================
+
+  /**
+   * Everything the server mixed since the previous GetAudio (at most 250 ms of it), with the samples converted to
+   * float32. Null when the server has no audio stream (audio isn't running on a loopback device, see GetEngineHealth).
+   */
+  async getAudio(): Promise<AudioSamples | null> {
+    const response = await this.sendCommandRaw(CommandType.GetAudio, Buffer.alloc(0))
+
+    const type = response.readUInt8(0)
+    if (type === ResponseType.Error) {
+      const message = response.subarray(5).toString("utf-8")
+      if (message.startsWith("No audio stream")) {
+        return null
+      }
+      throw new Error(message || "Failed to get audio")
+    }
+    if (type !== ResponseType.AudioSamples) {
+      throw new Error(`Expected AudioSamples, got ${type}`)
+    }
+
+    return decodeAudioSamples(response.subarray(5))
   }
 
   // ==================== Camera ====================

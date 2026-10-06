@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "start": "npm run build && electron .",
-    "sync-protocol": "node scripts/sync-protocol.js"
+    "sync-protocol": "node scripts/sync-protocol.js",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\""
   },
   "devDependencies": {
     "@types/node": "^25.0.3",
