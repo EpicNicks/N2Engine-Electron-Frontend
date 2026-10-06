@@ -5,6 +5,8 @@ import {
   FrameDataResponse,
   CameraPositionResponse,
   SceneDataResponse,
+  EngineHealthResponse,
+  SubsystemStatus,
 } from "./protocol.generated"
 import { readString, writeString } from "./serialization"
 
@@ -96,6 +98,21 @@ export class EngineClient {
     })
   }
 
+  /**
+   * Throws the server's message for an Error response (e.g. RenderFrame without a renderer), or a mismatch error
+   * for any type other than the expected one
+   */
+  private expectResponse(response: Buffer, expected: ResponseType, name: string): void {
+    const type = response.readUInt8(0)
+    if (type === ResponseType.Error) {
+      const message = response.subarray(5).toString("utf-8")
+      throw new Error(message || `Expected ${name}, got Error`)
+    }
+    if (type !== expected) {
+      throw new Error(`Expected ${name}, got ${type}`)
+    }
+  }
+
   private expectOk(response: Buffer): void {
     const type = response.readUInt8(0)
     if (type === ResponseType.Error) {
@@ -112,10 +129,7 @@ export class EngineClient {
   async renderFrame(): Promise<FrameDataResponse> {
     const response = await this.sendCommandRaw(CommandType.RenderFrame, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.FrameData) {
-      throw new Error(`Expected FrameData, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.FrameData, "FrameData")
 
     const width = response.readUInt32LE(5)
     const height = response.readUInt32LE(9)
@@ -148,10 +162,7 @@ export class EngineClient {
   async getCameraPosition(): Promise<CameraPositionResponse> {
     const response = await this.sendCommandRaw(CommandType.GetCameraPosition, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.CameraPosition) {
-      throw new Error(`Expected CameraPosition, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.CameraPosition, "CameraPosition")
 
     return {
       x: response.readFloatLE(5),
@@ -287,10 +298,7 @@ export class EngineClient {
   async getAllEntities(): Promise<Array<{ id: string; name: string }>> {
     const response = await this.sendCommandRaw(CommandType.GetAllEntities, Buffer.alloc(0))
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.EntityList) {
-      throw new Error(`Expected EntityList, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.EntityList, "EntityList")
 
     const entities: Array<{ id: string; name: string }> = []
     let offset = 5
@@ -358,10 +366,7 @@ export class EngineClient {
 
     const response = await this.sendCommandRaw(CommandType.GetEntityTransform, payload)
 
-    const type = response.readUInt8(0)
-    if (type !== ResponseType.EntityTransform) {
-      throw new Error(`Expected EntityTransform, got ${type}`)
-    }
+    this.expectResponse(response, ResponseType.EntityTransform, "EntityTransform")
 
     let offset = 5
     return {
@@ -407,5 +412,33 @@ export class EngineClient {
   async rescanAssets(): Promise<void> {
     const response = await this.sendCommandRaw(CommandType.RescanAssets, Buffer.alloc(0))
     this.expectOk(response)
+  }
+
+  // ==================== Engine Health ====================
+
+  /**
+   * Per-subsystem status (window, renderer, audio, ...); healthy is false when any of them failed
+   */
+  async getEngineHealth(): Promise<EngineHealthResponse> {
+    const response = await this.sendCommandRaw(CommandType.GetEngineHealth, Buffer.alloc(0))
+    this.expectResponse(response, ResponseType.EngineHealth, "EngineHealth")
+
+    let offset = 5
+    const healthy = response.readUInt8(offset) !== 0
+    offset += 1
+    const count = response.readUInt32LE(offset)
+    offset += 4
+
+    const subsystems: SubsystemStatus[] = []
+    for (let i = 0; i < count; i++) {
+      const nameRes = readString(response, offset)
+      const stateRes = readString(response, nameRes.offset)
+      const detailRes = readString(response, stateRes.offset)
+      offset = detailRes.offset
+
+      subsystems.push({ name: nameRes.value, state: stateRes.value, detail: detailRes.value })
+    }
+
+    return { healthy, count, subsystems }
   }
 }

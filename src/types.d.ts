@@ -2,6 +2,18 @@ interface SceneData {
   sceneJson: string
 }
 
+interface SubsystemStatus {
+  name: string
+  state: string
+  detail: string
+}
+
+interface EngineHealth {
+  healthy: boolean
+  count: number
+  subsystems: SubsystemStatus[]
+}
+
 interface EngineAPI {
   // Connection
   connect(host?: string, port?: number): Promise<void>
@@ -25,6 +37,9 @@ interface EngineAPI {
 
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
+
+  // Diagnostics
+  getEngineHealth(): Promise<EngineHealth>
 
   // Entity management
   createEntity(name: string): Promise<string>

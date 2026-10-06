@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("engine", {
   createScript: (name: string) => client.createScript(name),
   rescanAssets: () => client.rescanAssets(),
 
+  // Diagnostics
+  getEngineHealth: () => client.getEngineHealth(),
+
   // Entity management
   createEntity: (name: string) => client.createEntity(name),
   destroyEntity: (entityId: string) => client.destroyEntity(entityId),

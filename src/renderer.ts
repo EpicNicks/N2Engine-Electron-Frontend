@@ -559,7 +559,10 @@ function stopRenderLoop(): void {
 
 const resizeObserver = new ResizeObserver(() => {
   if (window.engine.isConnected()) {
-    window.engine.setViewportSize(canvas.width, canvas.height)
+    // The server rejects sizes outside 1..MaxViewportDimension with an Error
+    window.engine.setViewportSize(canvas.width, canvas.height).catch((e) => {
+      console.error("Failed to set viewport size:", e)
+    })
   }
 })
 resizeObserver.observe(canvas)
