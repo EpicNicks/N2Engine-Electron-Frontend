@@ -44,6 +44,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // The engine's audio starts playing on connect, without waiting for a click
+      autoplayPolicy: "no-user-gesture-required",
     },
     backgroundColor: "#1e1e1e",
   })

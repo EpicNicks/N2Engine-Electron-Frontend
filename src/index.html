@@ -45,6 +45,8 @@
         opacity: 0.6;
       }
       .toolbar .separator { width: 1px; height: 20px; background: #555; margin: 0 4px; }
+      .toolbar .audio-status { color: #888; font-size: 12px; }
+      .toolbar .audio-status.warning { color: #ff9800; }
       .toolbar .status { margin-left: auto; color: #888; font-size: 12px; }
       .toolbar .status.connected { color: #4caf50; font-weight: 500; }
 
@@ -462,6 +464,9 @@
         <button id="saveBtn" disabled>Save Scene</button>
         <button id="playBtn" disabled>▶ Play</button>
         <button id="stopBtn" disabled>■ Stop</button>
+        <div class="separator"></div>
+        <button id="muteBtn" title="Mute or unmute the engine's audio">🔊 Mute</button>
+        <span id="audio-status" class="audio-status">Audio: off</span>
         <span id="status" class="status">Disconnected</span>
         <span id="project-name" style="margin-left: 12px; color: #888;"></span>
       </div>

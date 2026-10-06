@@ -14,6 +14,15 @@ interface EngineHealth {
   subsystems: SubsystemStatus[]
 }
 
+interface AudioSamples {
+  sampleRate: number
+  channels: number
+  sampleFormat: "float32" | "int16"
+  frameCount: number
+  droppedFrames: number
+  samples: Float32Array
+}
+
 interface EngineAPI {
   // Connection
   connect(host?: string, port?: number): Promise<void>
@@ -23,6 +32,7 @@ interface EngineAPI {
   // Rendering
   renderFrame(): Promise<{ width: number; height: number; pixels: Uint8Array }>
   setViewportSize(width: number, height: number): Promise<void>
+  getAudio(): Promise<AudioSamples | null>
 
   // Camera
   setCameraPosition(x: number, y: number, z: number): Promise<void>
@@ -58,6 +68,26 @@ interface EngineAPI {
   }>
 }
 
+interface AudioStatus {
+  state: "stopped" | "playing" | "muted" | "suspended" | "unavailable" | "error"
+  message: string
+  bufferedMs: number
+  sampleRate: number
+  channels: number
+  sampleFormat: string
+  underruns: number
+  gaps: number
+  serverDroppedFrames: number
+}
+
+interface AudioAPI {
+  start(): void
+  stop(): void
+  setMuted(muted: boolean): void
+  isMuted(): boolean
+  onStatus(listener: (status: AudioStatus) => void): void
+}
+
 interface FileInfo {
   name: string
   path: string
@@ -89,5 +119,6 @@ interface FileSystemAPI {
 
 interface Window {
   engine: EngineAPI
+  audio: AudioAPI
   fileSystem: FileSystemAPI
 }

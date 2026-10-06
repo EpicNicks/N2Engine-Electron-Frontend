@@ -101,9 +101,9 @@ export function float32FromBytes(bytes: Uint8Array): Float32Array {
 /**
  * Splits interleaved samples into one array per channel (what AudioBuffer.copyToChannel takes)
  */
-export function deinterleave(samples: Float32Array, channels: number): Float32Array[] {
+export function deinterleave(samples: Float32Array, channels: number): Float32Array<ArrayBuffer>[] {
   const frames = Math.floor(samples.length / channels)
-  const out: Float32Array[] = []
+  const out: Float32Array<ArrayBuffer>[] = []
   for (let c = 0; c < channels; c++) {
     const channel = new Float32Array(frames)
     for (let i = 0; i < frames; i++) {
