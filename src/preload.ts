@@ -18,7 +18,8 @@ contextBridge.exposeInMainWorld("engine", {
 
   // Rendering
   renderFrame: () => client.renderFrame(),
-  getAudio: () => client.getAudio(),
+  // No getAudio here: each GetAudio drains the server's stream, so a call from the page would steal audio from the
+  // player. Use window.audio.
   setViewportSize: (width: number, height: number) => client.setViewportSize(width, height),
 
   // Camera
