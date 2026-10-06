@@ -1,7 +1,7 @@
-import { AudioSamples, JitterBuffer, applyFadeIn, deinterleave, resampleLinear } from "./audio-stream"
+import { AudioSamples, JitterBuffer, applyFadeIn, deinterleave, resampleLinear } from "../audio-stream"
 
-// Plays the engine's mixed audio (GetAudio) through Web Audio. Runs in the preload script, next to the EngineClient,
-// so the samples never cross the context bridge; the renderer drives it through window.audio.
+// Plays the engine's mixed audio (GetAudio) through Web Audio. Runs in the page; the samples come from the main
+// process's EngineClient through window.engine.getAudio (already decoded to float32).
 
 /** Time between the end of one GetAudio and the start of the next (requests never overlap) */
 const PollIntervalMilliseconds = 25

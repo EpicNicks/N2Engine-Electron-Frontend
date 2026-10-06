@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from "node:test"
 import * as assert from "node:assert/strict"
-import { AudioPlayer, AudioPlayerStatus } from "../audio-player"
+import { AudioPlayer, AudioPlayerStatus } from "../renderer/audio-player"
 import { AudioSamples } from "../audio-stream"
 
 // Just enough of Web Audio for AudioPlayer, recording what it schedules
