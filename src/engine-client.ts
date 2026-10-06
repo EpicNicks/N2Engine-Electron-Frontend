@@ -16,40 +16,51 @@ interface PendingRequest {
   reject: (error: Error) => void
 }
 
+/** Opens the connection; a parameter so tests can substitute a fake socket */
+export type SocketFactory = (options: net.NetConnectOpts, onConnect: () => void) => net.Socket
+
 export class EngineClient {
   private socket: net.Socket | null = null
   private buffer: Buffer = Buffer.alloc(0)
   private requestQueue: PendingRequest[] = []
+
+  constructor(
+    private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)
+  ) {}
 
   get isConnected(): boolean {
     return this.socket !== null && !this.socket.destroyed
   }
 
   connect(host: string = "localhost", port: number = 9999): Promise<void> {
+    // Nothing from a previous connection (a partial response, requests it never answered) may leak into this one
+    this.closeSocket(new Error("Reconnected"))
+
     return new Promise((resolve, reject) => {
-      this.socket = net.connect({ host, port }, () => {
+      const socket = this.createSocket({ host, port }, () => {
         resolve()
       })
+      this.socket = socket
 
-      this.socket.on("data", (chunk: Buffer) => {
+      // Each handler only acts while its socket is the current one: an old socket's events can arrive after a reconnect
+      socket.on("data", (chunk: Buffer) => {
+        if (this.socket !== socket) return
         this.buffer = Buffer.concat([this.buffer, chunk])
         this.processBuffer()
       })
 
-      this.socket.on("error", (err: Error) => {
-        while (this.requestQueue.length > 0) {
-          const req = this.requestQueue.shift()!
-          req.reject(err)
+      socket.on("error", (err: Error) => {
+        if (this.socket === socket) {
+          this.rejectPending(err)
         }
         reject(err)
       })
 
-      this.socket.on("close", () => {
+      socket.on("close", () => {
+        if (this.socket !== socket) return
         this.socket = null
-        while (this.requestQueue.length > 0) {
-          const req = this.requestQueue.shift()!
-          req.reject(new Error("Connection closed"))
-        }
+        this.buffer = Buffer.alloc(0)
+        this.rejectPending(new Error("Connection closed"))
       })
     })
   }
@@ -57,8 +68,25 @@ export class EngineClient {
   disconnect(): void {
     if (this.socket) {
       this.sendCommandRaw(CommandType.Shutdown, Buffer.alloc(0)).catch(() => {})
-      this.socket.destroy()
-      this.socket = null
+      this.closeSocket(new Error("Disconnected"))
+    }
+  }
+
+  /** Destroys the current socket (if any), drops any partial response and rejects every pending request */
+  private closeSocket(error: Error): void {
+    const socket = this.socket
+    this.socket = null
+    this.buffer = Buffer.alloc(0)
+    if (socket) {
+      socket.destroy()
+    }
+    this.rejectPending(error)
+  }
+
+  private rejectPending(error: Error): void {
+    while (this.requestQueue.length > 0) {
+      const req = this.requestQueue.shift()!
+      req.reject(error)
     }
   }
 
