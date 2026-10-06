@@ -157,10 +157,15 @@ export function applyFadeIn(samples: Float32Array, channels: number, frames: num
 export interface JitterBufferOptions {
   /** Audio scheduled ahead of playback right after a chunk is added; also the playback latency */
   targetSeconds: number
-  /** Drift correction starts when the buffer is further than this from the target */
+  /** Drift correction starts when the (smoothed) buffer level is further than this from the target */
   toleranceSeconds: number
   /** ...and stops once it is back within this of the target */
   settleSeconds: number
+  /**
+   * Weight of each new measurement in the smoothed buffer level (an exponential moving average over chunks), which
+   * filters out poll timing, server mix timing and a coarse playback clock
+   */
+  smoothing: number
   /** Above this, the excess is dropped at once instead of corrected gradually */
   maxSeconds: number
   /** Nothing is scheduled closer to now than this; a buffer that ran below it has underrun */
@@ -174,10 +179,11 @@ export interface JitterBufferOptions {
 export const DefaultJitterBufferOptions: JitterBufferOptions = {
   targetSeconds: 0.1,
   toleranceSeconds: 0.02,
-  settleSeconds: 0.005,
+  settleSeconds: 0.01,
+  smoothing: 0.1,
   maxSeconds: 0.25,
   minLeadSeconds: 0.01,
-  maxCorrection: 0.005,
+  maxCorrection: 0.001,
   fadeInSeconds: 0.003,
 }
 
@@ -232,6 +238,7 @@ export class JitterBuffer {
   private scheduledUntil: number | null = null
   private sampleRate = 0
   private correcting = false
+  private smoothedError: number | null = null
   private pendingReason: ScheduleReason = "start"
   private _stats: JitterBufferStats = JitterBuffer.emptyStats()
 
@@ -252,6 +259,7 @@ export class JitterBuffer {
   reset(reason: ScheduleReason = "start"): void {
     this.nextStartTime = null
     this.correcting = false
+    this.smoothedError = null
     this.pendingReason = reason
   }
 
@@ -319,19 +327,23 @@ export class JitterBuffer {
       const outputFrames = frameCount - skipFrames
       this._stats.skippedFrames += skipFrames
       this.correcting = false
+      this.smoothedError = null
       const fadeInFrames = skipFrames > 0 ? this.fadeInFrames(outputFrames) : 0
       return this.finish({ startTime, skipFrames, outputFrames, fadeInFrames, reason: "overflow" })
     }
 
-    // Hysteresis, so transport jitter inside the band doesn't keep nudging the pitch
-    if (Math.abs(error) > o.toleranceSeconds) this.correcting = true
-    else if (Math.abs(error) < o.settleSeconds) this.correcting = false
+    // Correct the smoothed level, with hysteresis, so jitter inside the band doesn't keep nudging the pitch
+    const smoothed =
+      this.smoothedError === null ? error : this.smoothedError + o.smoothing * (error - this.smoothedError)
+    this.smoothedError = smoothed
+    if (Math.abs(smoothed) > o.toleranceSeconds) this.correcting = true
+    else if (Math.abs(smoothed) < o.settleSeconds) this.correcting = false
 
     let outputFrames = frameCount
     let reason: ScheduleReason = "steady"
     if (this.correcting) {
       const maxFrames = Math.max(1, Math.floor(frameCount * o.maxCorrection))
-      const correction = Math.max(-maxFrames, Math.min(maxFrames, Math.round(error * sampleRate)))
+      const correction = Math.max(-maxFrames, Math.min(maxFrames, Math.round(smoothed * sampleRate)))
       if (correction !== 0) {
         outputFrames = frameCount - correction
         reason = "drift"

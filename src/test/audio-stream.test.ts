@@ -242,45 +242,79 @@ describe("JitterBuffer", () => {
     assert.equal(d.outputFrames, 1200)
   })
 
-  // The server mixes by its own clock, while playback runs on the sound card's
-  function simulateDrift(playbackSpeed: number, seconds: number): { jitter: JitterBuffer; finalAhead: number } {
+  interface DriftResult {
+    jitter: JitterBuffer
+    reasons: Record<string, number>
+    /** Times drift correction switched between dropping and repeating frames */
+    flips: number
+    minAhead: number
+    maxAhead: number
+  }
+
+  // The server mixes by its own clock (in main-loop iterations, so what a poll gets lags real time by 0 to 16 ms),
+  // while playback runs on the sound card's at playbackSpeed, read through a currentTime that moves in 10 ms steps
+  function simulateDrift(playbackSpeed: number, seconds: number, seed: number = 1): DriftResult {
     const jitter = new JitterBuffer()
-    let serverFrames = 0 // frames mixed so far
-    let taken = 0
-    let now = 0
-    let finalAhead = 0
-    let seed = 1
     const random = (): number => {
       seed = (seed * 16807) % 2147483647
       return seed / 2147483647
     }
 
-    while (now < seconds) {
-      now += 0.015 + random() * 0.03 // irregular polls, 15 to 45 ms apart
-      serverFrames = Math.floor((now / playbackSpeed) * rate)
-      const frames = serverFrames - taken
-      taken = serverFrames
+    let t = 0
+    let taken = 0
+    let flips = 0
+    let lastSign = 0
+    let minAhead = Infinity
+    let maxAhead = 0
+    const reasons: Record<string, number> = {}
+
+    while (t < seconds) {
+      t += 0.025 + random() * 0.02 // 25 ms after the previous response, plus 0 to 20 ms for the request
+      const now = Math.floor((t * playbackSpeed) / 0.01) * 0.01
+      const mixed = Math.max(taken, Math.floor((t - random() * 0.016) * rate))
+      const frames = mixed - taken
+      taken = mixed
+
       const d = jitter.schedule(now, frames, rate)
-      if (d) finalAhead = endOf(d) - now
+      if (!d) continue
+      reasons[d.reason] = (reasons[d.reason] ?? 0) + 1
+      if (d.reason === "drift") {
+        const sign = Math.sign(frames - d.skipFrames - d.outputFrames)
+        if (lastSign !== 0 && sign !== lastSign) flips++
+        lastSign = sign
+      }
+      if (t > 5) {
+        const ahead = endOf(d) - now
+        minAhead = Math.min(minAhead, ahead)
+        maxAhead = Math.max(maxAhead, ahead)
+      }
     }
-    return { jitter, finalAhead }
+    return { jitter, reasons, flips, minAhead, maxAhead }
   }
 
-  test("corrects a playback clock that runs fast, without underruns", () => {
-    const { jitter, finalAhead } = simulateDrift(1.002, 120)
-    const o = jitter.options
-    assert.equal(jitter.stats.underruns, 0)
-    assert.ok(jitter.stats.correctedFrames < 0, "frames are repeated")
-    assert.ok(Math.abs(finalAhead - o.targetSeconds) <= o.toleranceSeconds + 0.01, `ahead ${finalAhead}`)
-  })
+  for (const [name, speed] of [
+    ["fast", 1.0005],
+    ["slow", 0.9995],
+    ["matching", 1],
+  ] as const) {
+    test(`holds a ${name} playback clock steady with a noisy clock and mix timing`, () => {
+      for (const seed of [1, 2, 3]) {
+        const { jitter, reasons, flips, minAhead, maxAhead } = simulateDrift(speed, 300, seed * 7919)
+        const o = jitter.options
+        const label = `seed ${seed}: ${JSON.stringify(reasons)}`
 
-  test("corrects a playback clock that runs slow, without overflows", () => {
-    const { jitter, finalAhead } = simulateDrift(0.998, 120)
-    const o = jitter.options
-    assert.equal(jitter.stats.skippedFrames, 0)
-    assert.ok(jitter.stats.correctedFrames > 0, "frames are dropped")
-    assert.ok(Math.abs(finalAhead - o.targetSeconds) <= o.toleranceSeconds + 0.01, `ahead ${finalAhead}`)
-  })
+        assert.equal(jitter.stats.underruns, 0, label)
+        assert.equal(reasons.overflow ?? 0, 0, label)
+        assert.equal(jitter.stats.skippedFrames, 0, label)
+        assert.ok(flips <= 2, `${flips} correction direction flips, ${label}`)
+        assert.ok(minAhead > o.minLeadSeconds + 0.03, `buffer fell to ${minAhead}`)
+        assert.ok(maxAhead < o.targetSeconds + 0.05, `buffer rose to ${maxAhead}`)
+        if (speed > 1) assert.ok(jitter.stats.correctedFrames < 0, "frames are repeated")
+        if (speed < 1) assert.ok(jitter.stats.correctedFrames > 0, "frames are dropped")
+        if (speed === 1) assert.equal(reasons.drift ?? 0, 0, label)
+      }
+    })
+  }
 
   test("reset starts afresh", () => {
     const jitter = new JitterBuffer()
