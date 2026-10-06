@@ -302,16 +302,6 @@
       .hierarchy-item.selected { background: #094771; }
 
       /* Inspector */
-      .health-item {
-        padding: 3px 8px;
-        font-size: 12px;
-      }
-      .health-item .state { margin-left: 6px; font-weight: 500; }
-      .health-item .state.running { color: #4caf50; }
-      .health-item .state.failed { color: #f44336; }
-      .health-item .state.other { color: #888; }
-      .health-item .detail { color: #888; font-size: 11px; padding-left: 8px; }
-
       .inspector-section {
         margin-bottom: 12px;
       }
@@ -360,6 +350,17 @@
         flex: 1;
         min-width: 0;
       }
+
+      /* Engine Health */
+      .health-item {
+        padding: 3px 8px;
+        font-size: 12px;
+      }
+      .health-item .state { margin-left: 6px; font-weight: 500; }
+      .health-item .state.running { color: #4caf50; }
+      .health-item .state.failed { color: #f44336; }
+      .health-item .state.other { color: #888; }
+      .health-item .detail { color: #888; font-size: 11px; padding-left: 8px; }
 
       /* Modal */
       #modal-overlay {

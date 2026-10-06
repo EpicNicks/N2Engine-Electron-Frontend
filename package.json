@@ -6,6 +6,9 @@
   "author": "Nicholas Cerisano",
   "type": "commonjs",
   "main": "dist/main.js",
+  "engines": {
+    "node": ">=21"
+  },
   "scripts": {
     "build": "tsc",
     "start": "npm run build && electron .",
