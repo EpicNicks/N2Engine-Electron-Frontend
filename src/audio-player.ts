@@ -1,4 +1,4 @@
-import { AudioSamples, JitterBuffer, deinterleave, resampleLinear } from "./audio-stream"
+import { AudioSamples, JitterBuffer, applyFadeIn, deinterleave, resampleLinear } from "./audio-stream"
 
 // Plays the engine's mixed audio (GetAudio) through Web Audio. Runs in the preload script, next to the EngineClient,
 // so the samples never cross the context bridge; the renderer drives it through window.audio.
@@ -240,6 +240,9 @@ export class AudioPlayer {
     let samples = chunk.samples.subarray(decision.skipFrames * channels)
     if (decision.outputFrames !== chunk.frameCount - decision.skipFrames) {
       samples = resampleLinear(samples, channels, decision.outputFrames)
+    }
+    if (decision.fadeInFrames > 0) {
+      applyFadeIn(samples, channels, decision.fadeInFrames)
     }
 
     const buffer = context.createBuffer(channels, decision.outputFrames, chunk.sampleRate)

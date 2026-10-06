@@ -138,6 +138,20 @@ export function resampleLinear(samples: Float32Array, channels: number, outFrame
   return out
 }
 
+/**
+ * Ramps the first `frames` interleaved frames up from silence, in place, so audio that starts after a
+ * discontinuity (a resync) doesn't click
+ */
+export function applyFadeIn(samples: Float32Array, channels: number, frames: number): void {
+  const count = Math.min(frames, Math.floor(samples.length / channels))
+  for (let i = 0; i < count; i++) {
+    const gain = (i + 1) / (count + 1)
+    for (let c = 0; c < channels; c++) {
+      samples[i * channels + c] *= gain
+    }
+  }
+}
+
 // ==================== Jitter Buffer ====================
 
 export interface JitterBufferOptions {
@@ -153,6 +167,8 @@ export interface JitterBufferOptions {
   minLeadSeconds: number
   /** At most this fraction of a chunk's frames is dropped or repeated by drift correction (a pitch change) */
   maxCorrection: number
+  /** The first chunk after a resync fades in over this long */
+  fadeInSeconds: number
 }
 
 export const DefaultJitterBufferOptions: JitterBufferOptions = {
@@ -162,6 +178,7 @@ export const DefaultJitterBufferOptions: JitterBufferOptions = {
   maxSeconds: 0.25,
   minLeadSeconds: 0.01,
   maxCorrection: 0.005,
+  fadeInSeconds: 0.003,
 }
 
 /**
@@ -182,6 +199,8 @@ export interface ScheduleDecision {
   skipFrames: number
   /** The remaining frames are played resampled to this many (equal to them unless correcting drift); 0 plays nothing */
   outputFrames: number
+  /** Fade in this many leading output frames (see applyFadeIn): the chunk follows a discontinuity */
+  fadeInFrames: number
   reason: ScheduleReason
 }
 
@@ -208,6 +227,9 @@ export interface JitterBufferStats {
 export class JitterBuffer {
   readonly options: JitterBufferOptions
   private nextStartTime: number | null = null
+  // The end of everything scheduled so far. Unlike nextStartTime it survives a reset, so a resync never schedules
+  // over audio that is still to play.
+  private scheduledUntil: number | null = null
   private sampleRate = 0
   private correcting = false
   private pendingReason: ScheduleReason = "start"
@@ -270,12 +292,21 @@ export class JitterBuffer {
       const reason = this.pendingReason
       this.pendingReason = "steady"
       const fitFrames = Math.max(1, Math.round((o.targetSeconds - o.minLeadSeconds) * sampleRate))
-      const skipFrames = Math.max(0, frameCount - fitFrames)
-      const outputFrames = frameCount - skipFrames
-      const startTime = now + o.targetSeconds - outputFrames / sampleRate
+      let skipFrames = Math.max(0, frameCount - fitFrames)
+      let outputFrames = frameCount - skipFrames
+      let startTime = now + o.targetSeconds - outputFrames / sampleRate
+
+      // Audio scheduled before the reset may still be playing past that point: start where it ends instead,
+      // dropping as many more of the oldest frames (the chunk's end stays targetSeconds ahead)
+      if (this.scheduledUntil !== null && this.scheduledUntil > startTime) {
+        const overlapFrames = Math.min(outputFrames, Math.round((this.scheduledUntil - startTime) * sampleRate))
+        skipFrames += overlapFrames
+        outputFrames -= overlapFrames
+        startTime = this.scheduledUntil
+      }
+
       this._stats.skippedFrames += skipFrames
-      this.nextStartTime = startTime + outputFrames / sampleRate
-      return { startTime, skipFrames, outputFrames, reason }
+      return this.finish({ startTime, skipFrames, outputFrames, fadeInFrames: this.fadeInFrames(outputFrames), reason })
     }
 
     const startTime = this.nextStartTime
@@ -288,8 +319,8 @@ export class JitterBuffer {
       const outputFrames = frameCount - skipFrames
       this._stats.skippedFrames += skipFrames
       this.correcting = false
-      this.nextStartTime = startTime + outputFrames / sampleRate
-      return { startTime, skipFrames, outputFrames, reason: "overflow" }
+      const fadeInFrames = skipFrames > 0 ? this.fadeInFrames(outputFrames) : 0
+      return this.finish({ startTime, skipFrames, outputFrames, fadeInFrames, reason: "overflow" })
     }
 
     // Hysteresis, so transport jitter inside the band doesn't keep nudging the pitch
@@ -308,8 +339,17 @@ export class JitterBuffer {
       }
     }
 
-    this.nextStartTime = startTime + outputFrames / sampleRate
-    return { startTime, skipFrames: 0, outputFrames, reason }
+    return this.finish({ startTime, skipFrames: 0, outputFrames, fadeInFrames: 0, reason })
+  }
+
+  private finish(decision: ScheduleDecision): ScheduleDecision {
+    this.nextStartTime = decision.startTime + decision.outputFrames / this.sampleRate
+    this.scheduledUntil = Math.max(this.scheduledUntil ?? this.nextStartTime, this.nextStartTime)
+    return decision
+  }
+
+  private fadeInFrames(outputFrames: number): number {
+    return Math.min(outputFrames, Math.round(this.options.fadeInSeconds * this.sampleRate))
   }
 
   private static emptyStats(): JitterBufferStats {

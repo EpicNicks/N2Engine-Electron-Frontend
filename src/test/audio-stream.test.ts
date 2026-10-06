@@ -6,6 +6,7 @@ import {
   int16ToFloat32,
   JitterBuffer,
   resampleLinear,
+  applyFadeIn,
   ScheduleDecision,
 } from "../audio-stream"
 
@@ -116,6 +117,14 @@ describe("sample helpers", () => {
   })
 })
 
+describe("applyFadeIn", () => {
+  test("ramps the leading frames up from silence and leaves the rest", () => {
+    const samples = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1]) // 4 stereo frames
+    applyFadeIn(samples, 2, 3)
+    assert.deepEqual(Array.from(samples), [0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1, 1])
+  })
+})
+
 describe("JitterBuffer", () => {
   const rate = 48000
 
@@ -183,6 +192,25 @@ describe("JitterBuffer", () => {
     assert.equal(jitter.schedule(1, 1200, rate, 4800)!.reason, "start")
     assert.equal(jitter.stats.gaps, 0)
     assert.equal(jitter.stats.serverDroppedFrames, 0)
+  })
+
+  test("a gap resync doesn't overlap audio that is still scheduled", () => {
+    const jitter = new JitterBuffer({ targetSeconds: 0.1, minLeadSeconds: 0.01, fadeInSeconds: 0.003 })
+    const first = jitter.schedule(0, 4800, rate)! // 100 ms, ends at 0.1
+    const d = jitter.schedule(0.01, 4800, rate, 2400)! // a gap, with 100 ms of new audio
+
+    assert.equal(d.reason, "gap")
+    assert.ok(d.startTime >= endOf(first) - 1e-9, `starts at ${d.startTime}, before ${endOf(first)}`)
+    assert.ok(Math.abs(endOf(d) - 0.11) < 1 / rate) // still ends targetSeconds ahead
+    assert.equal(d.skipFrames + d.outputFrames, 4800)
+    assert.equal(d.fadeInFrames, 144)
+  })
+
+  test("fades in only after a discontinuity", () => {
+    const jitter = new JitterBuffer({ fadeInSeconds: 0.003 })
+    assert.equal(jitter.schedule(0, 1200, rate)!.fadeInFrames, 144) // start
+    assert.equal(jitter.schedule(0.025, 1200, rate)!.fadeInFrames, 0) // steady
+    assert.equal(jitter.schedule(1, 1200, rate)!.fadeInFrames, 144) // underrun
   })
 
   test("resyncs after an underrun", () => {
