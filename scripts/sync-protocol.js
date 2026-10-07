@@ -25,12 +25,16 @@ for (const required of [generator, vectorsSource]) {
   }
 }
 
-/**
- * Writes text with the line endings the file already has (LF for a new file), so a sync on any OS changes only what
- * the protocol changed: git may have checked the file out with either
- */
-function writeKeepingLineEndings(file, text) {
-  const crlf = fs.existsSync(file) && fs.readFileSync(file, "utf-8").includes("\r\n")
+/** Whether the file exists with CRLF line endings */
+const isCrlf = (file) => fs.existsSync(file) && fs.readFileSync(file, "utf-8").includes("\r\n")
+
+// The line endings each file had before this run: git may have checked it out with either, and a sync on any OS
+// must change only what the protocol changed. Recorded first, since the generator rewrites a changed file with LF.
+const codecsCrlf = isCrlf(codecsPath)
+const vectorsCrlf = isCrlf(vectorsPath)
+
+/** Writes text with the given line endings, leaving the file alone when it already holds exactly that */
+function writeWithLineEndings(file, text, crlf) {
   const lf = text.replace(/\r\n/g, "\n")
   const wanted = crlf ? lf.replace(/\n/g, "\r\n") : lf
   if (!fs.existsSync(file) || fs.readFileSync(file, "utf-8") !== wanted) {
@@ -65,6 +69,6 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1)
 }
 
-writeKeepingLineEndings(codecsPath, fs.readFileSync(codecsPath, "utf-8"))
-writeKeepingLineEndings(vectorsPath, fs.readFileSync(vectorsSource, "utf-8"))
+writeWithLineEndings(codecsPath, fs.readFileSync(codecsPath, "utf-8"), codecsCrlf)
+writeWithLineEndings(vectorsPath, fs.readFileSync(vectorsSource, "utf-8"), vectorsCrlf)
 console.log(`Copied ${vectorsSource} to ${vectorsPath}`)
