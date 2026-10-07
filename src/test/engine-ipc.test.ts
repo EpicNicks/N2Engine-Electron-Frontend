@@ -1,7 +1,10 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost, EngineHostOptions, ownedViews } from "../main/engine-ipc"
+import { EngineHost, EngineHostOptions, MaxUnusedViewBytes, ownedViews } from "../main/engine-ipc"
+import { Commands } from "../protocol/codec"
+import { FrameReader } from "../protocol/framing"
+import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
 import { ConnectOptions, EngineClient } from "../protocol/engine-client"
 import type { ServerInfoResponse } from "../protocol/protocol.generated"
 import { Channels, ConnectionState, IpcResult } from "../shared/api"
@@ -266,7 +269,8 @@ describe("EngineHost Hello", () => {
 describe("results sent over IPC", () => {
   test("a frame's pixels are copied out of the larger buffer they view", async () => {
     const { ipc, client, editor } = setup()
-    const chunk = Buffer.alloc(64, 0xee)
+    // A socket chunk: a frame, with other frames around it
+    const chunk = Buffer.alloc(64 * 1024, 0xee)
     const pixels = chunk.subarray(13, 21)
     pixels.set([1, 2, 3, 4, 5, 6, 7, 8])
     client.frame = { width: 2, height: 1, pixels }
@@ -286,11 +290,30 @@ describe("results sent over IPC", () => {
     assert.deepEqual([...sent], [1, 2, 3, 4, 5, 6, 7, 8])
   })
 
-  test("ownedViews copies only views onto part of a buffer, wherever they are in the value", () => {
+  test("a frame assembled from several chunks is posted without a copy", () => {
+    const width = 64
+    const height = 64
+    const pixels = new Uint8Array(width * height * 4).map((_, i) => i & 0xff)
+    const wire = Buffer.from(encodeFrame(ResponseType.FrameData, encodeFrameDataResponse({ width, height, pixels })))
+
+    const reader = new FrameReader()
+    const frames = [0, 1000, 9000].flatMap((start, i, starts) =>
+      reader.push(wire.subarray(start, starts[i + 1] ?? wire.length))
+    )
+    assert.equal(frames.length, 1)
+    const frame = Commands.RenderFrame.decode(frames[0].payload)
+    assert.deepEqual([...frame.pixels], [...pixels])
+    assert.equal(frame.pixels.buffer.byteLength - frame.pixels.byteLength, 8, "the payload's own buffer")
+
+    const posted = ownedViews(frame)
+    assert.equal(posted.pixels, frame.pixels)
+  })
+
+  test("ownedViews copies only views onto a small part of a buffer, wherever they are in the value", () => {
     const whole = new Float32Array([1, 2, 3])
     assert.equal(ownedViews(whole), whole)
 
-    const backing = new ArrayBuffer(32)
+    const backing = new ArrayBuffer(MaxUnusedViewBytes + 32)
     const floats = new Float32Array(backing, 8, 2)
     floats.set([0.5, -0.5])
     const value = ownedViews({ list: [{ floats }], view: new DataView(backing, 4, 4), n: 1, s: "s" })

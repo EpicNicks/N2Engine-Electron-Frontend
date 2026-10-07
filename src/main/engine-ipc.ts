@@ -52,14 +52,22 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
 const hasOwn = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key)
 
 /**
- * The value with every typed array or DataView that is a view onto part of a larger buffer replaced by a copy of
+ * A view leaving at most this many bytes of its buffer unused is posted as it is. A frame assembled from several
+ * socket chunks has a buffer of its own, of exactly the payload's size, and its pixels skip only the 8-byte
+ * width and height; copying them would cost a whole frame's copy for nothing.
+ */
+export const MaxUnusedViewBytes = 4096
+
+/**
+ * The value with every typed array or DataView that views a small part of a larger buffer replaced by a copy of
  * just its bytes. Decoded bytes fields (FrameData's pixels) are views into the payload, which can be a view of a
- * socket chunk holding other frames; IPC's structured clone copies a view's whole underlying buffer, so posting one
- * would send (and keep alive) all of it. Views that already span their buffer are passed on as they are.
+ * socket chunk (or Node's shared allocation pool) holding other data; IPC's structured clone copies a view's whole
+ * underlying buffer, so posting one would send (and keep alive) all of it. A view that spans its buffer, or all but
+ * MaxUnusedViewBytes of it, is passed on as it is.
  */
 export function ownedViews<T>(value: T): T {
   if (ArrayBuffer.isView(value)) {
-    if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) return value
+    if (value.buffer.byteLength - value.byteLength <= MaxUnusedViewBytes) return value
     // A plain Uint8Array over the same bytes, whose slice copies (a Buffer's slice would be another view)
     const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
     if (value instanceof DataView) return new DataView(bytes.buffer) as T
