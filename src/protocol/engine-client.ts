@@ -20,6 +20,12 @@ export function isEventType(type: number): boolean {
   return type >= FirstEventType && type <= LastEventType
 }
 
+/** The engine refuses requests with a larger payload (EditorServer::MaxPayloadBytes) */
+export const MaxRequestPayloadBytes = 64 * 1024 * 1024
+
+/** After Shutdown is written, how long to wait for the reply (or the server closing) before dropping the socket */
+export const ShutdownGraceMilliseconds = 1000
+
 interface PendingRequest {
   resolve: (frame: Frame) => void
   reject: (error: Error) => void
@@ -50,6 +56,8 @@ export class EngineClient {
   private requestQueue: PendingRequest[] = []
   private eventListener: ((frame: Frame) => void) | null = null
   private closeListeners: Array<() => void> = []
+  /** The connect() whose socket hasn't connected yet: it must settle however the socket ends */
+  private pendingConnect: { socket: net.Socket; reject: (error: Error) => void } | null = null
 
   constructor(
     private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)
@@ -75,9 +83,11 @@ export class EngineClient {
 
     return new Promise((resolve, reject) => {
       const socket = this.createSocket({ host, port }, () => {
+        if (this.pendingConnect?.socket === socket) this.pendingConnect = null
         resolve()
       })
       this.socket = socket
+      this.pendingConnect = { socket, reject }
 
       // Each handler only acts while its socket is the current one: an old socket's events can arrive after a reconnect
       socket.on("data", (chunk: Buffer) => {
@@ -89,10 +99,12 @@ export class EngineClient {
         if (this.socket === socket) {
           this.rejectPending(err)
         }
-        reject(err)
+        this.failConnect(socket, err)
       })
 
       socket.on("close", () => {
+        // Before the early return: a socket closed before it connected must still settle its connect()
+        this.failConnect(socket, new Error("Connection closed before it opened"))
         if (this.socket !== socket) return
         this.socket = null
         this.reader.reset()
@@ -102,11 +114,25 @@ export class EngineClient {
     })
   }
 
-  /** Asks the server to shut down, then closes the connection */
+  /**
+   * Asks the server to shut down and closes the connection. The connection is over for this client at once
+   * (pending requests are rejected), but the socket is only ended, so the Shutdown request is still delivered; it
+   * is destroyed on the reply, or after ShutdownGraceMilliseconds.
+   */
   disconnect(): void {
-    if (this.socket) {
-      this.send(Commands.Shutdown, {}).catch(() => {})
-      this.closeSocket(new Error("Disconnected"))
+    const socket = this.socket
+    if (!socket) return
+    this.detach(new Error("Disconnected"))
+
+    const timer = setTimeout(() => socket.destroy(), ShutdownGraceMilliseconds)
+    timer.unref?.()
+    socket.once("close", () => clearTimeout(timer))
+    socket.on("data", () => socket.destroy()) // the reply
+    try {
+      socket.write(encodeFrame(Commands.Shutdown.command, Commands.Shutdown.encode({})))
+      socket.end()
+    } catch {
+      socket.destroy()
     }
   }
 
@@ -131,15 +157,24 @@ export class EngineClient {
     return spec.decode(frame.payload)
   }
 
-  /** Sends a frame and resolves with the next response frame (FIFO) */
+  /**
+   * Sends a frame and resolves with the next response frame (FIFO). Payloads over MaxRequestPayloadBytes are
+   * refused here, since the engine would drop the connection.
+   */
   sendRaw(type: number, payload: Uint8Array): Promise<Frame> {
     return new Promise((resolve, reject) => {
       if (!this.socket) {
         reject(new Error("Not connected"))
         return
       }
+      if (payload.length > MaxRequestPayloadBytes) {
+        reject(new Error(`Request payload too large (${payload.length} bytes, the limit is ${MaxRequestPayloadBytes})`))
+        return
+      }
+      // Encode first: the request joins the queue only once its frame exists, so a throw can't desync the FIFO
+      const frame = encodeFrame(type, payload)
       this.requestQueue.push({ resolve, reject })
-      this.socket.write(encodeFrame(type, payload))
+      this.socket.write(frame)
     })
   }
 
@@ -280,16 +315,32 @@ export class EngineClient {
 
   /** Destroys the current socket (if any), drops any partial response and rejects every pending request */
   private closeSocket(error: Error): void {
+    const socket = this.detach(error)
+    socket?.destroy()
+  }
+
+  /**
+   * Ends the current connection for this client without touching the socket: the socket stops being current, a
+   * connect() still waiting on it and every pending request are rejected, and close listeners are told
+   */
+  private detach(error: Error): net.Socket | null {
     const socket = this.socket
     this.socket = null
     this.reader.reset()
-    if (socket) {
-      socket.destroy()
-    }
+    if (socket) this.failConnect(socket, error)
     this.rejectPending(error)
     if (socket) {
       this.emitClose()
     }
+    return socket
+  }
+
+  /** Rejects the connect() waiting on socket, if any */
+  private failConnect(socket: net.Socket, error: Error): void {
+    if (this.pendingConnect?.socket !== socket) return
+    const { reject } = this.pendingConnect
+    this.pendingConnect = null
+    reject(error)
   }
 
   private rejectPending(error: Error): void {
