@@ -38,10 +38,13 @@ export const MaxRequestPayloadBytes = 64 * 1024 * 1024
 export const MaxPayloadBytesBeforeHello = 64 * 1024
 
 /**
- * How long connect() waits for Hello's answer. A host with an access token closes a connection that hasn't
- * completed a Hello within 5 s of accepting it; Hello is sent as soon as the socket connects.
+ * How long connect() waits for Hello's answer, from when the socket connects (Hello is sent then). A host with an
+ * access token closes a connection that hasn't completed a Hello within 5 s, but its clock starts at accept(),
+ * which can come well after the connection was made (the host serves one connection at a time, and accepts the next
+ * only when it's done). So the host's limit, plus a margin for a slow or busy host; one that never answers still
+ * fails the connect.
  */
-export const HelloTimeoutMilliseconds = 5000
+export const HelloTimeoutMilliseconds = 10000
 
 /** The clientName sent in Hello (the host logs it) */
 export const DefaultClientName = "N2Engine Electron editor"
