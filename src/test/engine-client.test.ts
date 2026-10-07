@@ -2,22 +2,67 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import * as net from "node:net"
-import { EngineClient, EngineError, MaxRequestPayloadBytes, ShutdownGraceMilliseconds } from "../protocol/engine-client"
-import { encodeFrame } from "../protocol/protocol.generated"
+import {
+  DefaultClientName,
+  EngineClient,
+  EngineError,
+  HelloError,
+  HelloTimeoutMilliseconds,
+  MaxPayloadBytesBeforeHello,
+  MaxRequestPayloadBytes,
+  ShutdownGraceMilliseconds,
+} from "../protocol/engine-client"
+import {
+  CommandType,
+  HelloRequest,
+  PROTOCOL_VERSION,
+  ResponseType,
+  ServerInfoResponse,
+  decodeHelloRequest,
+  encodeErrorResponse,
+  encodeFrame,
+  encodeServerInfoResponse,
+} from "../protocol/protocol.generated"
 
-// Enough of a net.Socket for EngineClient: data, error and close events, write, end and destroy
+const serverInfo = (protocolVersion: string = PROTOCOL_VERSION): ServerInfoResponse => ({
+  protocolVersion,
+  engineVersion: "0.9.0",
+  capabilities: [],
+  projectLoaded: true,
+})
+
+/** The host's answer to a Hello: a whole response frame, or null for none */
+type HelloAnswer = (hello: HelloRequest) => Buffer | null
+
+const acceptHello: HelloAnswer = () =>
+  Buffer.from(encodeFrame(ResponseType.ServerInfo, encodeServerInfoResponse(serverInfo())))
+
+// Enough of a net.Socket for EngineClient: data, error and close events, write, end and destroy. It answers Hello
+// itself (on the next turn, with answerHello), so written holds only what the client sent after it.
 class FakeSocket extends EventEmitter {
   destroyed = false
   ended = false
   written: Buffer[] = []
+  hellos: HelloRequest[] = []
+
+  constructor(private readonly answerHello: HelloAnswer) {
+    super()
+  }
 
   end(): this {
     this.ended = true
     return this
   }
 
-  write(data: Buffer): boolean {
-    this.written.push(data)
+  write(data: Uint8Array): boolean {
+    if (data[0] === CommandType.Hello && this.hellos.length === 0) {
+      const hello = decodeHelloRequest(data.subarray(5))
+      this.hellos.push(hello)
+      const answer = this.answerHello(hello)
+      if (answer) setImmediate(() => this.emit("data", answer))
+      return true
+    }
+    this.written.push(Buffer.from(data))
     return true
   }
 
@@ -31,11 +76,17 @@ class FakeSocket extends EventEmitter {
   }
 }
 
-/** A client whose sockets connect on the next turn, or never when autoConnect is false */
-function connectFake(autoConnect: boolean = true): { client: EngineClient; sockets: FakeSocket[] } {
+/**
+ * A client whose sockets connect on the next turn (or never when autoConnect is false), and whose host answers
+ * Hello with answerHello
+ */
+function connectFake(
+  autoConnect: boolean = true,
+  answerHello: HelloAnswer = acceptHello
+): { client: EngineClient; sockets: FakeSocket[] } {
   const sockets: FakeSocket[] = []
   const client = new EngineClient((_options, onConnect) => {
-    const socket = new FakeSocket()
+    const socket = new FakeSocket(answerHello)
     sockets.push(socket)
     if (autoConnect) setImmediate(onConnect)
     return socket as unknown as net.Socket
@@ -281,5 +332,119 @@ describe("EngineClient request limits", () => {
     const next = client.getCameraPosition()
     sockets[0].emit("data", cameraPositionResponse(1, 2, 3))
     assert.deepEqual(await next, { x: 1, y: 2, z: 3 })
+  })
+})
+
+describe("EngineClient Hello", () => {
+  test("connect says Hello first, with this editor's protocol version, and resolves with ServerInfo", async () => {
+    const { client, sockets } = connectFake()
+    const info = await client.connect()
+
+    assert.deepEqual(sockets[0].hellos, [
+      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "" },
+    ])
+    assert.deepEqual(info, serverInfo())
+    assert.deepEqual(client.serverInfo, serverInfo())
+    assert.equal(client.isConnected, true)
+  })
+
+  test("the token and client name are sent in Hello", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { token: "the-access-token", clientName: "Test" })
+    assert.deepEqual(sockets[0].hellos, [
+      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token" },
+    ])
+  })
+
+  test("nothing else is sent, and the client isn't connected, until Hello succeeds", async () => {
+    const { client, sockets } = connectFake(true, () => null)
+    const connecting = client.connect()
+    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+
+    assert.equal(client.isConnected, false)
+    assert.equal(client.serverInfo, null)
+    await assert.rejects(client.getCameraPosition(), /Hello hasn't completed/)
+    assert.equal(sockets[0].written.length, 0)
+
+    sockets[0].emit("data", acceptHello(sockets[0].hellos[0]))
+    await connecting
+    assert.equal(client.isConnected, true)
+  })
+
+  test("a refused Hello rejects connect with the host's message and closes the connection", async () => {
+    const refuse: HelloAnswer = () =>
+      Buffer.from(encodeFrame(ResponseType.Error, encodeErrorResponse({ message: "Invalid access token" })))
+    const { client, sockets } = connectFake(true, refuse)
+    let closes = 0
+    client.onClose(() => closes++)
+
+    await assert.rejects(
+      client.connect("localhost", 9999, { token: "wrong" }),
+      (e: Error) => e instanceof HelloError && /refused Hello: Invalid access token/.test(e.message)
+    )
+    assert.equal(sockets[0].destroyed, true)
+    assert.equal(client.isConnected, false)
+    assert.equal(client.serverInfo, null)
+    assert.equal(closes, 1)
+    await assert.rejects(client.getCameraPosition(), /Not connected/)
+  })
+
+  test("a host with a different major protocol version is refused", async () => {
+    const major = Number(PROTOCOL_VERSION.split(".")[0])
+    const { client, sockets } = connectFake(true, () =>
+      Buffer.from(encodeFrame(ResponseType.ServerInfo, encodeServerInfoResponse(serverInfo(`${major + 1}.0.0`))))
+    )
+    await assert.rejects(client.connect(), (e: Error) => e instanceof HelloError && /major versions/.test(e.message))
+    assert.equal(sockets[0].destroyed, true)
+    assert.equal(client.isConnected, false)
+  })
+
+  test("an answer that isn't ServerInfo or Error fails Hello", async () => {
+    const { client, sockets } = connectFake(true, () => Buffer.from(encodeFrame(ResponseType.Ok, new Uint8Array(0))))
+    await assert.rejects(client.connect(), HelloError)
+    assert.equal(sockets[0].destroyed, true)
+  })
+
+  test("no answer within the Hello timeout fails Hello and closes the connection", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const { client, sockets } = connectFake(true, () => null)
+    const connecting = client.connect()
+    // setImmediate isn't mocked, so the fake socket still connects
+    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+
+    t.mock.timers.tick(HelloTimeoutMilliseconds - 1)
+    assert.equal(sockets[0].destroyed, false)
+    t.mock.timers.tick(1)
+    await assert.rejects(connecting, (e: Error) => e instanceof HelloError && /didn't answer Hello/.test(e.message))
+    assert.equal(sockets[0].destroyed, true)
+  })
+
+  test("a Hello over the host's pre-Hello payload limit is refused without being sent", async () => {
+    const { client, sockets } = connectFake()
+    await assert.rejects(
+      client.connect("localhost", 9999, { token: "x".repeat(MaxPayloadBytesBeforeHello) }),
+      /payload too large/
+    )
+    assert.equal(sockets[0].hellos.length, 0)
+    assert.equal(sockets[0].destroyed, true)
+  })
+
+  test("each connection says Hello again", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    await client.connect()
+    assert.equal(sockets[0].hellos.length, 1)
+    assert.equal(sockets[1].hellos.length, 1)
+    assert.equal(client.isConnected, true)
+  })
+
+  test("disconnect while saying Hello closes without sending Shutdown", async () => {
+    const { client, sockets } = connectFake(true, () => null)
+    const connecting = client.connect()
+    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+    client.disconnect()
+    await assert.rejects(connecting, /Disconnected/)
+    assert.equal(sockets[0].written.length, 0)
+    assert.equal(sockets[0].destroyed, true)
   })
 })
