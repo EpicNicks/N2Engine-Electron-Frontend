@@ -51,6 +51,31 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
 
 const hasOwn = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key)
 
+/**
+ * The value with every typed array or DataView that is a view onto part of a larger buffer replaced by a copy of
+ * just its bytes. Decoded bytes fields (FrameData's pixels) are views into the payload, which can be a view of a
+ * socket chunk holding other frames; IPC's structured clone copies a view's whole underlying buffer, so posting one
+ * would send (and keep alive) all of it. Views that already span their buffer are passed on as they are.
+ */
+export function ownedViews<T>(value: T): T {
+  if (ArrayBuffer.isView(value)) {
+    if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) return value
+    // A plain Uint8Array over the same bytes, whose slice copies (a Buffer's slice would be another view)
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
+    if (value instanceof DataView) return new DataView(bytes.buffer) as T
+    if (value instanceof Uint8Array) return bytes as T
+    const TypedArray = value.constructor as new (buffer: ArrayBufferLike) => T
+    return new TypedArray(bytes.buffer)
+  }
+  if (Array.isArray(value)) return value.map(ownedViews) as T
+  if (typeof value === "object" && value !== null) {
+    const copy: Record<string, unknown> = {}
+    for (const [key, field] of Object.entries(value)) copy[key] = ownedViews(field)
+    return copy as T
+  }
+  return value
+}
+
 export class EngineHost {
   private epoch = 0
   private readonly commands: EngineCommands
@@ -101,7 +126,7 @@ export class EngineHost {
     return this.bump()
   }
 
-  private call(name: unknown, args: unknown): unknown {
+  private async call(name: unknown, args: unknown): Promise<unknown> {
     if (typeof name !== "string" || !hasOwn(EngineCommandArgs, name)) {
       throw new Error(`Unknown engine command ${String(name)}`)
     }
@@ -114,7 +139,8 @@ export class EngineHost {
     }
     const checked = kinds.map((kind, i) => checkArg(kind, args[i], `${name} argument ${i + 1}`))
     const method = this.commands[name as EngineCommandName] as (...a: unknown[]) => Promise<unknown>
-    return method.apply(this.client, checked)
+    // The result goes over IPC: never as a view onto a larger buffer
+    return ownedViews(await method.apply(this.client, checked))
   }
 
   private bump(): ConnectionState {

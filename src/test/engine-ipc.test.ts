@@ -1,7 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost } from "../main/engine-ipc"
+import { EngineHost, ownedViews } from "../main/engine-ipc"
 import { EngineClient } from "../protocol/engine-client"
 import { Channels, ConnectionState, IpcResult } from "../shared/api"
 
@@ -70,6 +70,14 @@ class FakeClient {
 
   async setEntityTransform(...args: unknown[]): Promise<void> {
     this.calls.push(["setEntityTransform", args])
+  }
+
+  /** What renderFrame resolves with: by default a frame whose pixels are a view into a larger (socket) buffer */
+  frame: unknown = null
+
+  async renderFrame(): Promise<unknown> {
+    this.calls.push(["renderFrame", []])
+    return this.frame
   }
 }
 
@@ -197,5 +205,46 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const result = (await ipc.invoke(Channels.engineAttach, editor)) as { value: ConnectionState }
     assert.equal(result.value.connected, false)
     assert.equal(client.connected, false)
+  })
+})
+
+describe("results sent over IPC", () => {
+  test("a frame's pixels are copied out of the larger buffer they view", async () => {
+    const { ipc, client, editor } = setup()
+    const chunk = Buffer.alloc(64, 0xee)
+    const pixels = chunk.subarray(13, 21)
+    pixels.set([1, 2, 3, 4, 5, 6, 7, 8])
+    client.frame = { width: 2, height: 1, pixels }
+
+    const result = (await ipc.invoke(Channels.engineCall, editor, "renderFrame", [])) as {
+      value: { width: number; height: number; pixels: Uint8Array }
+    }
+    const sent = result.value.pixels
+    assert.notEqual(sent.buffer, chunk.buffer)
+    assert.equal(sent.byteOffset, 0)
+    assert.equal(sent.buffer.byteLength, 8)
+    assert.deepEqual([...sent], [1, 2, 3, 4, 5, 6, 7, 8])
+    assert.deepEqual({ ...result.value, pixels: null }, { width: 2, height: 1, pixels: null })
+
+    // The copy is independent of the socket's buffer
+    chunk.fill(0)
+    assert.deepEqual([...sent], [1, 2, 3, 4, 5, 6, 7, 8])
+  })
+
+  test("ownedViews copies only views onto part of a buffer, wherever they are in the value", () => {
+    const whole = new Float32Array([1, 2, 3])
+    assert.equal(ownedViews(whole), whole)
+
+    const backing = new ArrayBuffer(32)
+    const floats = new Float32Array(backing, 8, 2)
+    floats.set([0.5, -0.5])
+    const value = ownedViews({ list: [{ floats }], view: new DataView(backing, 4, 4), n: 1, s: "s" })
+    const copied = value.list[0].floats
+    assert.ok(copied instanceof Float32Array)
+    assert.equal(copied.buffer.byteLength, 8)
+    assert.deepEqual([...copied], [0.5, -0.5])
+    assert.equal(value.view.buffer.byteLength, 4)
+    assert.equal(value.n, 1)
+    assert.equal(value.s, "s")
   })
 })
