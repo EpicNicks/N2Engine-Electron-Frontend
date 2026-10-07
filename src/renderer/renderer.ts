@@ -1,5 +1,6 @@
 import { AudioPlayer, AudioPlayerStatus } from "./audio-player"
 import { basename, extname, join } from "./paths"
+import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 import type { FileInfo } from "../shared/api"
 
 // The page is sandboxed: window.engine (the engine connection) and window.project (the open project's files) are
@@ -85,6 +86,8 @@ const statusEl = document.getElementById("status")!
 async function connectToEngine(): Promise<void> {
   try {
     await window.engine.connect()
+    // Before the first RenderFrame (requests are answered in order), so the first frame is already the right size
+    syncViewportSize(true)
     statusEl.textContent = "Connected"
     statusEl.classList.add("connected")
     connectBtn.disabled = true
@@ -717,6 +720,7 @@ function startRenderLoop(): void {
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
         canvas.width = frame.width
         canvas.height = frame.height
+        showCanvasAtDevicePixels()
       }
 
       // A view of the received pixels, not a copy (they arrive in a plain ArrayBuffer, never a shared one)
@@ -746,15 +750,75 @@ function stopRenderLoop(): void {
   }
 }
 
-const resizeObserver = new ResizeObserver(() => {
-  if (window.engine.isConnected()) {
-    // The server rejects sizes outside 1..MaxViewportDimension with an Error
-    window.engine.setViewportSize(canvas.width, canvas.height).catch((e) => {
-      console.error("Failed to set viewport size:", e)
-    })
+// The engine renders at the viewport container's size in device pixels, and the canvas shows each frame 1:1: its
+// drawing buffer is the frame's size and its CSS size is that divided by devicePixelRatio. The canvas is positioned
+// absolutely, so its size never feeds back into the layout; while a resize is pending, a stale frame is shown
+// unscaled (cropped or bordered) rather than stretched.
+const viewportContainer = document.getElementById("viewport-container")!
+/** After the container stops changing size for this long, the new size is sent (on the next animation frame) */
+const ViewportSettleMilliseconds = 100
+
+let sentViewportSize: PixelSize | null = null
+let viewportSettleTimer: number | null = null
+
+/** Sizes and centres the canvas so one frame pixel is one device pixel */
+function showCanvasAtDevicePixels(): void {
+  const ratio = window.devicePixelRatio || 1
+  const css = cssSizeForPixels({ width: canvas.width, height: canvas.height }, ratio)
+  const container = viewportContainer.getBoundingClientRect()
+  canvas.style.width = `${css.width}px`
+  canvas.style.height = `${css.height}px`
+  // Offsets rounded to whole device pixels, so the frame isn't resampled by a half-pixel shift
+  canvas.style.left = `${Math.round(((container.width - css.width) / 2) * ratio) / ratio}px`
+  canvas.style.top = `${Math.round(((container.height - css.height) / 2) * ratio) / ratio}px`
+}
+
+/** Sends the container's device-pixel size to the engine, if it changed (or always, when forced) */
+function syncViewportSize(force: boolean = false): void {
+  if (!window.engine.isConnected()) {
+    sentViewportSize = null
+    return
   }
-})
-resizeObserver.observe(canvas)
+  const rect = viewportContainer.getBoundingClientRect()
+  const size = viewportPixelSize(rect.width, rect.height, window.devicePixelRatio)
+  if (!size) return // hidden
+  if (!force && sentViewportSize?.width === size.width && sentViewportSize?.height === size.height) return
+
+  sentViewportSize = size
+  window.engine.setViewportSize(size.width, size.height).catch((e) => {
+    console.error("Failed to set viewport size:", e)
+    sentViewportSize = null
+  })
+}
+
+function scheduleViewportSync(): void {
+  if (viewportSettleTimer !== null) window.clearTimeout(viewportSettleTimer)
+  viewportSettleTimer = window.setTimeout(() => {
+    viewportSettleTimer = null
+    requestAnimationFrame(() => syncViewportSize())
+  }, ViewportSettleMilliseconds)
+}
+
+new ResizeObserver(() => {
+  showCanvasAtDevicePixels()
+  scheduleViewportSync()
+}).observe(viewportContainer)
+
+/** devicePixelRatio changes when the window moves to a monitor with another scale, or the page zoom changes */
+function watchDevicePixelRatio(): void {
+  matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener(
+    "change",
+    () => {
+      showCanvasAtDevicePixels()
+      scheduleViewportSync()
+      watchDevicePixelRatio()
+    },
+    { once: true }
+  )
+}
+
+showCanvasAtDevicePixels()
+watchDevicePixelRatio()
 
 // ==================== Hierarchy ====================
 const hierarchyEl = document.getElementById("hierarchy")!

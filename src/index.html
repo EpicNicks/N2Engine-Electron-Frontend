@@ -120,18 +120,16 @@
       }
       #viewport-container {
         flex: 1;
-        display: flex;
-        justify-content: center;
-        align-items: center;
+        position: relative;
         background: #0a0a0a;
         overflow: hidden;
         min-height: 0;
+        min-width: 0;
       }
+      /* Sized and centred by the page (showCanvasAtDevicePixels): one frame pixel per device pixel */
       #viewport {
+        position: absolute;
         background: #000;
-        max-width: 100%;
-        max-height: 100%;
-        image-rendering: pixelated;
       }
 
       /* Right Panel - Inspector */
