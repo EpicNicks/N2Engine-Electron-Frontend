@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'" />
     <title>N2Engine Editor</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -120,18 +120,16 @@
       }
       #viewport-container {
         flex: 1;
-        display: flex;
-        justify-content: center;
-        align-items: center;
+        position: relative;
         background: #0a0a0a;
         overflow: hidden;
         min-height: 0;
+        min-width: 0;
       }
+      /* Sized and centred by the page (showCanvasAtDevicePixels): one frame pixel per device pixel */
       #viewport {
+        position: absolute;
         background: #000;
-        max-width: 100%;
-        max-height: 100%;
-        image-rendering: pixelated;
       }
 
       /* Right Panel - Inspector */
@@ -538,6 +536,6 @@
       </div>
     </div>
 
-    <script src="../dist/renderer.js"></script>
+    <script src="../dist/bundle/renderer.js"></script>
   </body>
 </html>

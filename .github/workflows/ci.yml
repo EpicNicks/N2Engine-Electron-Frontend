@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Type check, build and test
+    runs-on: ubuntu-latest
+    env:
+      # The tests run under Node; nothing here launches Electron
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type check (Node side and page)
+        run: npm run typecheck
+      - name: Build and test (node --test)
+        run: npm test
+
+  protocol:
+    name: Generated protocol matches the pinned engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the pinned engine ref
+        id: engine
+        run: echo "ref=$(tr -d '[:space:]' < engine-ref.txt)" >> "$GITHUB_OUTPUT"
+      - name: Check out the engine's protocol at that ref
+        uses: actions/checkout@v4
+        with:
+          repository: EpicNicks/N2Engine
+          ref: ${{ steps.engine.outputs.ref }}
+          path: engine
+          sparse-checkout: editor-server/protocol
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate src/protocol/protocol.generated.ts
+        run: node scripts/sync-protocol.js engine
+      - name: Fail if it differs from the committed file
+        run: |
+          if ! git diff --exit-code -- src/protocol/protocol.generated.ts; then
+            echo "::error::src/protocol/protocol.generated.ts is out of date with the engine at $(cat engine-ref.txt). Run npm run sync-protocol against that engine commit and commit the result."
+            exit 1
+          fi

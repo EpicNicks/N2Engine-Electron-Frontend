@@ -1,3 +1,11 @@
+import { AudioPlayer, AudioPlayerStatus } from "./audio-player"
+import { basename, extname, join } from "./paths"
+import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
+import type { FileInfo } from "../shared/api"
+
+// The page is sandboxed: window.engine (the engine connection) and window.project (the open project's files) are
+// the typed IPC API the preload exposes (src/shared/api.ts); there is no Node here.
+
 // ==================== State Management ====================
 let selectedEntityId: string | null = null
 let entities: Array<{ id: string; name: string }> = []
@@ -17,33 +25,40 @@ const createProjectBtn = document.getElementById("createProjectBtn")!
 const recentProjectsEl = document.getElementById("recent-projects")!
 
 async function loadRecentProjects(): Promise<void> {
-  const recent = await window.fileSystem.getRecentProjects()
+  const recent = await window.project.getRecent()
   if (recent.length === 0) {
     recentProjectsEl.innerHTML = '<h3>Recent Projects</h3><p style="color: #666;">No recent projects</p>'
     return
   }
 
-  recentProjectsEl.innerHTML =
-    "<h3>Recent Projects</h3>" +
-    recent.map((p) => `<div class="recent-item" data-path="${p}">${window.fileSystem.basename(p)}</div>`).join("")
-
-  recentProjectsEl.querySelectorAll(".recent-item").forEach((el) => {
-    el.addEventListener("click", async () => {
-      const path = (el as HTMLElement).dataset.path!
-      await openProject(path)
+  recentProjectsEl.innerHTML = "<h3>Recent Projects</h3>"
+  recent.forEach((projectPath) => {
+    // Paths are set as text, not HTML
+    const item = document.createElement("div")
+    item.className = "recent-item"
+    item.title = projectPath
+    item.textContent = basename(projectPath)
+    item.addEventListener("click", async () => {
+      try {
+        await openProject(await window.project.openRecent(projectPath))
+      } catch (e) {
+        console.error("Failed to open project:", e)
+        alert("Failed to open project: " + e)
+      }
     })
+    recentProjectsEl.appendChild(item)
   })
 }
 
 openProjectBtn.addEventListener("click", async () => {
-  const projectPath = await window.fileSystem.openProjectDialog()
+  const projectPath = await window.project.openDialog()
   if (projectPath) {
     await openProject(projectPath)
   }
 })
 
 createProjectBtn.addEventListener("click", async () => {
-  const projectPath = await window.fileSystem.createProjectDialog()
+  const projectPath = await window.project.createDialog()
   if (projectPath) {
     await openProject(projectPath)
   }
@@ -55,9 +70,9 @@ async function openProject(projectPath: string): Promise<void> {
   editor.style.display = "flex"
 
   const projectNameEl = document.getElementById("project-name")!
-  projectNameEl.textContent = window.fileSystem.basename(projectPath)
+  projectNameEl.textContent = basename(projectPath)
 
-  refreshFileTree()
+  await refreshFileTree()
   await connectToEngine()
 }
 
@@ -71,6 +86,8 @@ const statusEl = document.getElementById("status")!
 async function connectToEngine(): Promise<void> {
   try {
     await window.engine.connect()
+    // Before the first RenderFrame (requests are answered in order), so the first frame is already the right size
+    syncViewportSize(true)
     statusEl.textContent = "Connected"
     statusEl.classList.add("connected")
     connectBtn.disabled = true
@@ -78,7 +95,7 @@ async function connectToEngine(): Promise<void> {
 
     await refreshSceneState()
     startRenderLoop()
-    window.audio.start()
+    audio.start()
     refreshHealthBtn.disabled = false
     await refreshEngineHealth()
   } catch (e) {
@@ -89,16 +106,31 @@ async function connectToEngine(): Promise<void> {
 
 connectBtn.addEventListener("click", connectToEngine)
 
-disconnectBtn.addEventListener("click", () => {
-  window.audio.stop()
-  window.engine.disconnect()
-  statusEl.textContent = "Disconnected"
+function showDisconnected(status: string): void {
+  audio.stop()
+  statusEl.textContent = status
   statusEl.classList.remove("connected")
   connectBtn.disabled = false
   disconnectBtn.disabled = true
   stopRenderLoop()
   refreshHealthBtn.disabled = true
   refreshEngineHealth()
+}
+
+disconnectBtn.addEventListener("click", async () => {
+  try {
+    await window.engine.disconnect()
+  } catch (e) {
+    console.error("Failed to disconnect:", e)
+  }
+  showDisconnected("Disconnected")
+})
+
+// The host can drop the connection (it exited or crashed)
+window.engine.onConnectionChange((connected) => {
+  if (!connected && !disconnectBtn.disabled) {
+    showDisconnected("Connection lost")
+  }
 })
 
 // ==================== Audio ====================
@@ -106,7 +138,13 @@ const muteBtn = document.getElementById("muteBtn") as HTMLButtonElement
 const audioStatusEl = document.getElementById("audio-status")!
 const MutedStorageKey = "audioMuted"
 
-let audioState: AudioStatus["state"] = "stopped"
+// Polls GetAudio through window.engine and plays it with Web Audio (see audio-player.ts)
+const audio = new AudioPlayer({
+  getAudio: () => window.engine.getAudio(),
+  isConnected: () => window.engine.isConnected(),
+})
+
+let audioState: AudioPlayerStatus["state"] = "stopped"
 
 function loadMutedSetting(): boolean {
   try {
@@ -128,21 +166,21 @@ function updateMuteButton(): void {
   if (audioState === "suspended") {
     muteBtn.textContent = "🔇 Enable audio"
   } else {
-    muteBtn.textContent = window.audio.isMuted() ? "🔇 Unmute" : "🔊 Mute"
+    muteBtn.textContent = audio.isMuted ? "🔇 Unmute" : "🔊 Mute"
   }
 }
 
 muteBtn.addEventListener("click", () => {
   // A click is a user gesture, so unmuting also resumes audio the autoplay policy suspended
-  const muted = audioState === "suspended" ? false : !window.audio.isMuted()
-  window.audio.setMuted(muted)
+  const muted = audioState === "suspended" ? false : !audio.isMuted
+  audio.setMuted(muted)
   saveMutedSetting(muted)
   updateMuteButton()
 })
 
-window.audio.setMuted(loadMutedSetting())
+audio.setMuted(loadMutedSetting())
 
-window.audio.onStatus((status) => {
+audio.onStatus((status) => {
   if (status.state !== audioState && (status.state === "error" || status.state === "unavailable")) {
     console.warn(`Audio ${status.state}: ${status.message}`)
   }
@@ -281,19 +319,27 @@ function updateUIForSceneState(): void {
 // ==================== File Tree ====================
 const fileTreeEl = document.getElementById("file-tree")!
 
-interface FileTreeNode {
-  name: string
-  path: string
-  isDirectory: boolean
-  children?: FileTreeNode[]
-}
+type FileTreeNode = FileInfo
 
-function refreshFileTree(): void {
+let fileTree: FileTreeNode[] = []
+
+/** Re-reads the project's files */
+async function refreshFileTree(): Promise<void> {
   if (!currentProjectPath) return
 
-  const files = window.fileSystem.readDirectory(currentProjectPath)
+  try {
+    fileTree = await window.project.listFiles()
+  } catch (e) {
+    console.error("Failed to list the project's files:", e)
+    fileTree = []
+  }
+  renderFileTree()
+}
+
+/** Redraws the tree from the last listing (folding a folder needn't re-read it) */
+function renderFileTree(): void {
   fileTreeEl.innerHTML = ""
-  files.forEach((file) => renderFileNode(file, fileTreeEl, 0))
+  fileTree.forEach((file) => renderFileNode(file, fileTreeEl, 0))
 }
 
 function renderFileNode(node: FileTreeNode, parentEl: HTMLElement, depth: number): void {
@@ -330,7 +376,7 @@ function renderFileNode(node: FileTreeNode, parentEl: HTMLElement, depth: number
       } else {
         collapsedFolders.add(node.path)
       }
-      refreshFileTree()
+      renderFileTree()
     })
 
     itemEl.addEventListener("contextmenu", (e) => {
@@ -348,7 +394,7 @@ function renderFileNode(node: FileTreeNode, parentEl: HTMLElement, depth: number
     const icon = document.createElement("span")
     icon.className = "icon"
 
-    const ext = window.fileSystem.extname(node.name)
+    const ext = extname(node.name)
     if (ext === ".lua") icon.textContent = "📜"
     else if (ext === ".json") icon.textContent = "⚙️"
     else if (ext === ".scene") icon.textContent = "🎬"
@@ -379,7 +425,7 @@ async function loadSceneFile(scenePath: string): Promise<void> {
   }
 
   try {
-    const sceneJson = window.fileSystem.readFile(scenePath)
+    const sceneJson = await window.project.readTextFile(scenePath)
     console.log("Loading scene JSON:", sceneJson) // DEBUG
 
     await window.engine.loadScene(sceneJson)
@@ -475,13 +521,8 @@ async function createNewScene(dirPath: string): Promise<void> {
 
   // Determine target directory (scenes folder inside assets)
   let targetDir = dirPath
-  const baseName = window.fileSystem.basename(dirPath)
-
-  if (baseName !== "scenes") {
-    targetDir = window.fileSystem.join(dirPath, "scenes")
-    if (!window.fileSystem.exists(targetDir)) {
-      window.fileSystem.createDirectory(targetDir)
-    }
+  if (basename(dirPath) !== "scenes") {
+    targetDir = join(dirPath, "scenes")
   }
 
   // Use the name from the JSON response instead of the prompt
@@ -493,12 +534,13 @@ async function createNewScene(dirPath: string): Promise<void> {
     const sceneJson = JSON.parse(sceneData.sceneJson)
     const sceneName = sceneJson.name || name
 
-    const scenePath = window.fileSystem.join(targetDir, sceneName + ".scene")
+    const scenePath = join(targetDir, sceneName + ".scene")
 
     // Write the scene JSON to file
-    window.fileSystem.writeFile(scenePath, sceneData.sceneJson)
+    await window.project.createDirectory(targetDir)
+    await window.project.writeTextFile(scenePath, sceneData.sceneJson)
 
-    refreshFileTree()
+    await refreshFileTree()
     await refreshSceneState()
     console.log("Scene created:", scenePath)
   } catch (e) {
@@ -518,44 +560,39 @@ async function createNewScript(dirPath: string): Promise<void> {
 
   // Determine target directory (scripts folder inside assets)
   let targetDir = dirPath
-  const baseName = window.fileSystem.basename(dirPath)
-
-  if (baseName !== "scripts") {
-    targetDir = window.fileSystem.join(dirPath, "scripts")
-    if (!window.fileSystem.exists(targetDir)) {
-      window.fileSystem.createDirectory(targetDir)
-    }
+  if (basename(dirPath) !== "scripts") {
+    targetDir = join(dirPath, "scripts")
   }
 
-  const scriptPath = window.fileSystem.join(targetDir, name + ".lua")
+  const scriptPath = join(targetDir, name + ".lua")
 
   try {
+    await window.project.createDirectory(targetDir)
+
     // Create empty file first
-    window.fileSystem.createFile(scriptPath)
+    await window.project.writeTextFile(scriptPath, "")
 
     // Get template from engine
     const scriptTemplate = await window.engine.createScript(name)
 
     // Write template to file
-    window.fileSystem.writeFile(scriptPath, scriptTemplate)
+    await window.project.writeTextFile(scriptPath, scriptTemplate)
 
     // Trigger asset rescan on server
     // The ResourceLoader will detect the new file and generate metadata
     await window.engine.rescanAssets() // Add this command
 
-    refreshFileTree()
-    openScriptTab(scriptPath)
+    await refreshFileTree()
+    await openScriptTab(scriptPath)
     console.log("Script created:", scriptPath)
   } catch (e) {
     console.error("Failed to create script:", e)
 
-    // Clean up empty file if it exists
-    if (window.fileSystem.exists(scriptPath)) {
-      try {
-        window.fileSystem.deleteFile(scriptPath)
-      } catch (cleanupError) {
-        console.error("Failed to clean up file:", cleanupError)
-      }
+    // Clean up the empty file if it was created (deleting a missing file is not an error)
+    try {
+      await window.project.deleteFile(scriptPath)
+    } catch (cleanupError) {
+      console.error("Failed to clean up file:", cleanupError)
     }
 
     alert("Failed to create script: " + e)
@@ -567,8 +604,15 @@ const bottomPanel = document.getElementById("bottom-panel")!
 const scriptTabs = document.getElementById("script-tabs")!
 const scriptEditor = document.getElementById("script-editor") as HTMLTextAreaElement
 
-function openScriptTab(filePath: string): void {
-  const content = window.fileSystem.readFile(filePath)
+async function openScriptTab(filePath: string): Promise<void> {
+  let content: string
+  try {
+    content = await window.project.readTextFile(filePath)
+  } catch (e) {
+    console.error("Failed to open file:", e)
+    alert("Failed to open file: " + e)
+    return
+  }
   openScriptTabs.set(filePath, content)
   activeScriptTab = filePath
 
@@ -578,35 +622,30 @@ function openScriptTab(filePath: string): void {
 }
 
 function renderScriptTabs(): void {
-  scriptTabs.innerHTML = Array.from(openScriptTabs.keys())
-    .map((path) => {
-      const isActive = path === activeScriptTab
-      const fileName = window.fileSystem.basename(path)
-      return `
-        <div class="tab ${isActive ? "active" : ""}" data-path="${path}">
-          <span>${fileName}</span>
-          <span class="close" data-path="${path}">×</span>
-        </div>
-      `
-    })
-    .join("")
+  // Built as elements with text content: file names come from disk and are never parsed as HTML
+  scriptTabs.replaceChildren()
+  for (const path of openScriptTabs.keys()) {
+    const tab = document.createElement("div")
+    tab.className = path === activeScriptTab ? "tab active" : "tab"
+    tab.title = path
 
-  scriptTabs.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", (e) => {
-      const target = e.target as HTMLElement
-      if (target.classList.contains("close")) return
+    const name = document.createElement("span")
+    name.textContent = basename(path)
+    tab.appendChild(name)
 
-      const path = (tab as HTMLElement).dataset.path!
+    const closeBtn = document.createElement("span")
+    closeBtn.className = "close"
+    closeBtn.textContent = "×"
+    tab.appendChild(closeBtn)
+
+    tab.addEventListener("click", () => {
       activeScriptTab = path
       renderScriptTabs()
       scriptEditor.value = openScriptTabs.get(path) || ""
     })
-  })
 
-  scriptTabs.querySelectorAll(".close").forEach((closeBtn) => {
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation()
-      const path = (closeBtn as HTMLElement).dataset.path!
       openScriptTabs.delete(path)
 
       if (activeScriptTab === path) {
@@ -624,7 +663,9 @@ function renderScriptTabs(): void {
         scriptEditor.value = ""
       }
     })
-  })
+
+    scriptTabs.appendChild(tab)
+  }
 }
 
 scriptEditor.addEventListener("input", () => {
@@ -637,8 +678,14 @@ scriptEditor.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "s") {
     e.preventDefault()
     if (activeScriptTab) {
-      window.fileSystem.writeFile(activeScriptTab, scriptEditor.value)
-      console.log("Saved:", activeScriptTab)
+      const path = activeScriptTab
+      window.project.writeTextFile(path, scriptEditor.value).then(
+        () => console.log("Saved:", path),
+        (err) => {
+          console.error("Failed to save:", err)
+          alert("Failed to save: " + err)
+        }
+      )
     }
   }
 })
@@ -648,11 +695,19 @@ const canvas = document.getElementById("viewport") as HTMLCanvasElement
 const ctx = canvas.getContext("2d")!
 
 let renderLoopId: number | null = null
+let renderLoopRunning = false
+// Bumped by every start and stop: a loop whose generation is stale ends at its next check, including one that
+// was awaiting a frame when it was stopped, so a quick stop and start never leaves two loops running
+let renderGeneration = 0
 
 function startRenderLoop(): void {
-  if (renderLoopId !== null) return
+  if (renderLoopRunning) return
+  renderLoopRunning = true
+  const generation = ++renderGeneration
 
   async function render(): Promise<void> {
+    renderLoopId = null
+    if (generation !== renderGeneration) return
     if (!window.engine.isConnected()) {
       stopRenderLoop()
       return
@@ -660,18 +715,24 @@ function startRenderLoop(): void {
 
     try {
       const frame = await window.engine.renderFrame()
+      if (generation !== renderGeneration) return
 
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
         canvas.width = frame.width
         canvas.height = frame.height
+        showCanvasAtDevicePixels()
       }
 
-      const imageData = ctx.createImageData(frame.width, frame.height)
-      imageData.data.set(frame.pixels)
-      ctx.putImageData(imageData, 0, 0)
+      // A view of the received pixels, not a copy (they arrive in a plain ArrayBuffer, never a shared one)
+      const { buffer, byteOffset, byteLength } = frame.pixels
+      const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
+      ctx.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
     } catch (e) {
-      console.error("Render error:", e)
-      stopRenderLoop()
+      if (generation === renderGeneration) {
+        console.error("Render error:", e)
+        stopRenderLoop()
+      }
+      return
     }
 
     renderLoopId = requestAnimationFrame(render)
@@ -681,21 +742,83 @@ function startRenderLoop(): void {
 }
 
 function stopRenderLoop(): void {
+  renderLoopRunning = false
+  renderGeneration++
   if (renderLoopId !== null) {
     cancelAnimationFrame(renderLoopId)
     renderLoopId = null
   }
 }
 
-const resizeObserver = new ResizeObserver(() => {
-  if (window.engine.isConnected()) {
-    // The server rejects sizes outside 1..MaxViewportDimension with an Error
-    window.engine.setViewportSize(canvas.width, canvas.height).catch((e) => {
-      console.error("Failed to set viewport size:", e)
-    })
+// The engine renders at the viewport container's size in device pixels, and the canvas shows each frame 1:1: its
+// drawing buffer is the frame's size and its CSS size is that divided by devicePixelRatio. The canvas is positioned
+// absolutely, so its size never feeds back into the layout; while a resize is pending, a stale frame is shown
+// unscaled (cropped or bordered) rather than stretched.
+const viewportContainer = document.getElementById("viewport-container")!
+/** After the container stops changing size for this long, the new size is sent (on the next animation frame) */
+const ViewportSettleMilliseconds = 100
+
+let sentViewportSize: PixelSize | null = null
+let viewportSettleTimer: number | null = null
+
+/** Sizes and centres the canvas so one frame pixel is one device pixel */
+function showCanvasAtDevicePixels(): void {
+  const ratio = window.devicePixelRatio || 1
+  const css = cssSizeForPixels({ width: canvas.width, height: canvas.height }, ratio)
+  const container = viewportContainer.getBoundingClientRect()
+  canvas.style.width = `${css.width}px`
+  canvas.style.height = `${css.height}px`
+  // Offsets rounded to whole device pixels, so the frame isn't resampled by a half-pixel shift
+  canvas.style.left = `${Math.round(((container.width - css.width) / 2) * ratio) / ratio}px`
+  canvas.style.top = `${Math.round(((container.height - css.height) / 2) * ratio) / ratio}px`
+}
+
+/** Sends the container's device-pixel size to the engine, if it changed (or always, when forced) */
+function syncViewportSize(force: boolean = false): void {
+  if (!window.engine.isConnected()) {
+    sentViewportSize = null
+    return
   }
-})
-resizeObserver.observe(canvas)
+  const rect = viewportContainer.getBoundingClientRect()
+  const size = viewportPixelSize(rect.width, rect.height, window.devicePixelRatio)
+  if (!size) return // hidden
+  if (!force && sentViewportSize?.width === size.width && sentViewportSize?.height === size.height) return
+
+  sentViewportSize = size
+  window.engine.setViewportSize(size.width, size.height).catch((e) => {
+    console.error("Failed to set viewport size:", e)
+    sentViewportSize = null
+  })
+}
+
+function scheduleViewportSync(): void {
+  if (viewportSettleTimer !== null) window.clearTimeout(viewportSettleTimer)
+  viewportSettleTimer = window.setTimeout(() => {
+    viewportSettleTimer = null
+    requestAnimationFrame(() => syncViewportSize())
+  }, ViewportSettleMilliseconds)
+}
+
+new ResizeObserver(() => {
+  showCanvasAtDevicePixels()
+  scheduleViewportSync()
+}).observe(viewportContainer)
+
+/** devicePixelRatio changes when the window moves to a monitor with another scale, or the page zoom changes */
+function watchDevicePixelRatio(): void {
+  matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener(
+    "change",
+    () => {
+      showCanvasAtDevicePixels()
+      scheduleViewportSync()
+      watchDevicePixelRatio()
+    },
+    { once: true }
+  )
+}
+
+showCanvasAtDevicePixels()
+watchDevicePixelRatio()
 
 // ==================== Hierarchy ====================
 const hierarchyEl = document.getElementById("hierarchy")!
