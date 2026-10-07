@@ -619,35 +619,30 @@ async function openScriptTab(filePath: string): Promise<void> {
 }
 
 function renderScriptTabs(): void {
-  scriptTabs.innerHTML = Array.from(openScriptTabs.keys())
-    .map((path) => {
-      const isActive = path === activeScriptTab
-      const fileName = basename(path)
-      return `
-        <div class="tab ${isActive ? "active" : ""}" data-path="${path}">
-          <span>${fileName}</span>
-          <span class="close" data-path="${path}">×</span>
-        </div>
-      `
-    })
-    .join("")
+  // Built as elements with text content: file names come from disk and are never parsed as HTML
+  scriptTabs.replaceChildren()
+  for (const path of openScriptTabs.keys()) {
+    const tab = document.createElement("div")
+    tab.className = path === activeScriptTab ? "tab active" : "tab"
+    tab.title = path
 
-  scriptTabs.querySelectorAll(".tab").forEach((tab) => {
-    tab.addEventListener("click", (e) => {
-      const target = e.target as HTMLElement
-      if (target.classList.contains("close")) return
+    const name = document.createElement("span")
+    name.textContent = basename(path)
+    tab.appendChild(name)
 
-      const path = (tab as HTMLElement).dataset.path!
+    const closeBtn = document.createElement("span")
+    closeBtn.className = "close"
+    closeBtn.textContent = "×"
+    tab.appendChild(closeBtn)
+
+    tab.addEventListener("click", () => {
       activeScriptTab = path
       renderScriptTabs()
       scriptEditor.value = openScriptTabs.get(path) || ""
     })
-  })
 
-  scriptTabs.querySelectorAll(".close").forEach((closeBtn) => {
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation()
-      const path = (closeBtn as HTMLElement).dataset.path!
       openScriptTabs.delete(path)
 
       if (activeScriptTab === path) {
@@ -665,7 +660,9 @@ function renderScriptTabs(): void {
         scriptEditor.value = ""
       }
     })
-  })
+
+    scriptTabs.appendChild(tab)
+  }
 }
 
 scriptEditor.addEventListener("input", () => {
@@ -695,11 +692,19 @@ const canvas = document.getElementById("viewport") as HTMLCanvasElement
 const ctx = canvas.getContext("2d")!
 
 let renderLoopId: number | null = null
+let renderLoopRunning = false
+// Bumped by every start and stop: a loop whose generation is stale ends at its next check, including one that
+// was awaiting a frame when it was stopped, so a quick stop and start never leaves two loops running
+let renderGeneration = 0
 
 function startRenderLoop(): void {
-  if (renderLoopId !== null) return
+  if (renderLoopRunning) return
+  renderLoopRunning = true
+  const generation = ++renderGeneration
 
   async function render(): Promise<void> {
+    renderLoopId = null
+    if (generation !== renderGeneration) return
     if (!window.engine.isConnected()) {
       stopRenderLoop()
       return
@@ -707,18 +712,23 @@ function startRenderLoop(): void {
 
     try {
       const frame = await window.engine.renderFrame()
+      if (generation !== renderGeneration) return
 
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
         canvas.width = frame.width
         canvas.height = frame.height
       }
 
-      const imageData = ctx.createImageData(frame.width, frame.height)
-      imageData.data.set(frame.pixels)
-      ctx.putImageData(imageData, 0, 0)
+      // A view of the received pixels, not a copy (they arrive in a plain ArrayBuffer, never a shared one)
+      const { buffer, byteOffset, byteLength } = frame.pixels
+      const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
+      ctx.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
     } catch (e) {
-      console.error("Render error:", e)
-      stopRenderLoop()
+      if (generation === renderGeneration) {
+        console.error("Render error:", e)
+        stopRenderLoop()
+      }
+      return
     }
 
     renderLoopId = requestAnimationFrame(render)
@@ -728,6 +738,8 @@ function startRenderLoop(): void {
 }
 
 function stopRenderLoop(): void {
+  renderLoopRunning = false
+  renderGeneration++
   if (renderLoopId !== null) {
     cancelAnimationFrame(renderLoopId)
     renderLoopId = null

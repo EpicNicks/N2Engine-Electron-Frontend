@@ -75,8 +75,13 @@ export const Commands = {
       const r = reader(payload, "FrameData")
       const width = r.uint32()
       const height = r.uint32()
-      // A copy: the payload can be a view of a socket chunk shared with other frames
-      return { width, height, pixels: new Uint8Array(r.rest()) }
+      const rest = r.rest()
+      // A payload that owns its whole buffer (FrameReader assembled it from several chunks) is used in place. One
+      // that is a view of a socket chunk is copied, since the chunk can hold other frames and would be kept alive
+      // (and sent over IPC whole) along with the pixels.
+      const ownsBuffer = payload.byteOffset === 0 && payload.byteLength === payload.buffer.byteLength
+      const pixels = ownsBuffer ? new Uint8Array(rest.buffer, rest.byteOffset, rest.byteLength) : new Uint8Array(rest)
+      return { width, height, pixels }
     }
   ),
   SetViewportSize: spec<SetViewportSizeRequest, void>(

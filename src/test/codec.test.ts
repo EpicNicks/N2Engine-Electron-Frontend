@@ -52,6 +52,22 @@ describe("response decoding", () => {
     assert.deepEqual([...frame.pixels], [1, 2, 3, 4, 5, 6, 7, 8])
   })
 
+  test("FrameData pixels are used in place when the payload owns its buffer, else copied", () => {
+    const owned = Buffer.from(new ArrayBuffer(8 + 4))
+    owned.writeUInt32LE(1, 0)
+    owned.writeUInt32LE(1, 4)
+    const inPlace = Commands.RenderFrame.decode(owned)
+    assert.equal(inPlace.pixels.buffer, owned.buffer)
+
+    const chunk = Buffer.alloc(100)
+    const view = chunk.subarray(10, 10 + 12)
+    view.writeUInt32LE(1, 0)
+    view.writeUInt32LE(1, 4)
+    const copied = Commands.RenderFrame.decode(view)
+    assert.notEqual(copied.pixels.buffer, chunk.buffer)
+    assert.equal(copied.pixels.buffer.byteLength, 4)
+  })
+
   test("EntityList: a count, then id and name per entity", () => {
     const payload = new PayloadWriter().uint32(2).string("a").string("Alpha").string("b").string("Beta").finish()
     assert.deepEqual(Commands.GetAllEntities.decode(payload), {
