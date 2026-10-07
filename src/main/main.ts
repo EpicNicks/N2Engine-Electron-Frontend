@@ -8,6 +8,12 @@ import { registerProjectIpc } from "./project-ipc"
 import { ProjectFiles } from "./project-files"
 import { RecentProjects } from "./recent-projects"
 
+// The editor host's access token, for a host started with one. Until the editor launches its own host with a token
+// it generates, it can be given in N2_EDITOR_TOKEN, the variable the host will read it from once it has --token-env
+// (engine #74). Taken out of the environment before any window or child process starts, so none inherits it.
+const accessToken = process.env.N2_EDITOR_TOKEN
+delete process.env.N2_EDITOR_TOKEN
+
 // dist/main/main.js: the repo root is two levels up
 const appRoot = path.join(__dirname, "..", "..")
 const pagePath = path.join(appRoot, "src", "index.html")
@@ -24,9 +30,7 @@ const page: EditorPage = {
   url: pathToFileURL(pagePath).href,
 }
 
-// A host started with an access token (N2EditorHost --token-env) needs it in Hello. Until the editor launches its
-// own host with a token it generates, one can be given here: N2_EDITOR_TOKEN, the variable the host reads it from.
-const engine = new EngineHost(new EngineClient(), page, { token: process.env.N2_EDITOR_TOKEN })
+const engine = new EngineHost(new EngineClient(), page, { token: accessToken })
 engine.register(ipcMain)
 
 registerProjectIpc(

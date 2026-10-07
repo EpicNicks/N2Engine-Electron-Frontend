@@ -86,8 +86,8 @@ export function ownedViews<T>(value: T): T {
 
 export interface EngineHostOptions {
   /**
-   * The editor host's access token, sent in each connection's Hello; empty or missing for a host without one. It
-   * stays in the main process: the page can't read it, or connect with another.
+   * The editor host's access token, sent in each connection's Hello; empty or missing for a host without one. It is
+   * never sent to the page (not in ConnectionState, results or errors), so the page can't read it or choose another.
    */
   token?: string
 }
