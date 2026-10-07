@@ -6,7 +6,13 @@ import * as assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import * as path from "node:path"
 import { CommandName, Commands, decodeError } from "../protocol/codec"
-import { CommandResponse, CommandType, PROTOCOL_VERSION, ResponseType } from "../protocol/protocol.generated"
+import {
+  CommandResponse,
+  CommandType,
+  PROTOCOL_VERSION,
+  ResponseCodecs,
+  ResponseType,
+} from "../protocol/protocol.generated"
 
 interface Vector {
   id: string
@@ -99,7 +105,16 @@ describe("responses decode to the engine's vectors", () => {
     })
   }
 
-  test("AudioSamples: the generated decoder's fields, checked and converted to float32", () => {
+  test("AudioSamples: the generated decoder gives the vector's fields", () => {
+    const vector = vectors.responses.find((v) => v.response === "AudioSamples")!
+    const decoded = ResponseCodecs.AudioSamples.decode(fromHex(vector.payload))
+    for (const [field, expected] of Object.entries(vector.fields)) {
+      assert.deepEqual(withHexBytes(decoded[field as keyof typeof decoded]), expected, field)
+    }
+    assert.deepEqual(Object.keys(decoded).sort(), Object.keys(vector.fields).sort())
+  })
+
+  test("AudioSamples: GetAudio's spec checks the decoded fields before converting the samples", () => {
     const vector = vectors.responses.find((v) => v.response === "AudioSamples")!
     // The vector's fields are placeholders (no real sample format), so the editor refuses them
     assert.throws(() => Commands.GetAudio.decode(fromHex(vector.payload)), /Unsupported audio sample format/)

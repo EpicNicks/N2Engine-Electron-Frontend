@@ -254,6 +254,28 @@ describe("EngineHost Hello", () => {
     assert.deepEqual(client.connectOptions, { token: undefined })
   })
 
+  test("the token is in nothing sent to the page: results, errors or state pushes", async () => {
+    const token = "the-access-token"
+    const { ipc, client, editor, sent } = setup({ token })
+    const results: unknown[] = []
+    results.push(await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999))
+    client.drop()
+    client.refuseHello = "The editor host refused Hello: Invalid access token"
+    const refused = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.equal(refused.ok, false)
+    results.push(refused)
+    results.push(await ipc.invoke(Channels.engineAttach, editor))
+
+    assert.ok(sent.length >= 2)
+    for (const [channel, value] of sent) {
+      assert.equal(channel, Channels.engineState)
+      assert.ok(!JSON.stringify(value).includes(token), `state push ${JSON.stringify(value)}`)
+    }
+    for (const result of results) {
+      assert.ok(!JSON.stringify(result).includes(token), `result ${JSON.stringify(result)}`)
+    }
+  })
+
   test("a failed Hello is an error result, and leaves the page disconnected", async () => {
     const { ipc, client, editor, sent } = setup({ token: "wrong" })
     client.refuseHello = "The editor host refused Hello: Invalid access token"

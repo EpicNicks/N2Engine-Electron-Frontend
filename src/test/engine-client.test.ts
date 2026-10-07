@@ -107,6 +107,18 @@ function cameraPositionResponse(x: number, y: number, z: number): Buffer {
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
+/** Waits (a turn at a time) until done() holds; fails rather than hanging when it doesn't within maxTurns */
+async function until(done: () => boolean, maxTurns: number = 100): Promise<void> {
+  for (let turn = 0; !done(); turn++) {
+    if (turn === maxTurns) assert.fail(`still waiting after ${maxTurns} turns`)
+    await tick()
+  }
+}
+
+/** Until the client has said Hello on its socket'th connection */
+const saidHello = (sockets: FakeSocket[], socket: number = 0) => () =>
+  sockets.length > socket && sockets[socket].hellos.length > 0
+
 describe("EngineClient reconnects", () => {
   test("a partial response from a dropped connection doesn't corrupt the next one", async () => {
     const { client, sockets } = connectFake()
@@ -359,7 +371,7 @@ describe("EngineClient Hello", () => {
   test("nothing else is sent, and the client isn't connected, until Hello succeeds", async () => {
     const { client, sockets } = connectFake(true, () => null)
     const connecting = client.connect()
-    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+    await until(saidHello(sockets))
 
     assert.equal(client.isConnected, false)
     assert.equal(client.serverInfo, null)
@@ -410,7 +422,7 @@ describe("EngineClient Hello", () => {
     const { client, sockets } = connectFake(true, () => null)
     const connecting = client.connect()
     // setImmediate isn't mocked, so the fake socket still connects
-    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+    await until(saidHello(sockets))
 
     t.mock.timers.tick(HelloTimeoutMilliseconds - 1)
     assert.equal(sockets[0].destroyed, false)
@@ -438,10 +450,30 @@ describe("EngineClient Hello", () => {
     assert.equal(client.isConnected, true)
   })
 
+  test("a second connect() while the first is saying Hello rejects the first and says Hello again", async () => {
+    let answered = 0
+    const { client, sockets } = connectFake(true, (hello) => (answered++ === 0 ? null : acceptHello(hello)))
+    const first = client.connect()
+    await until(saidHello(sockets))
+
+    const second = client.connect()
+    await assert.rejects(first, /Reconnected/)
+    assert.deepEqual(await second, serverInfo())
+    assert.equal(sockets[0].destroyed, true)
+    assert.equal(sockets[1].hellos.length, 1)
+    assert.equal(client.isConnected, true)
+
+    // The new connection works, and the old socket's late close doesn't touch it
+    await tick()
+    const pending = client.getCameraPosition()
+    sockets[1].emit("data", cameraPositionResponse(1, 2, 3))
+    assert.deepEqual(await pending, { x: 1, y: 2, z: 3 })
+  })
+
   test("disconnect while saying Hello closes without sending Shutdown", async () => {
     const { client, sockets } = connectFake(true, () => null)
     const connecting = client.connect()
-    while (sockets.length === 0 || sockets[0].hellos.length === 0) await tick()
+    await until(saidHello(sockets))
     client.disconnect()
     await assert.rejects(connecting, /Disconnected/)
     assert.equal(sockets[0].written.length, 0)
