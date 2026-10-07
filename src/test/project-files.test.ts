@@ -3,14 +3,14 @@ import * as assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { ProjectFiles, ProjectPathError } from "../main/project-files"
+import { MaxReadBytes, ProjectFiles, ProjectPathError } from "../main/project-files"
 
 let temp: string
 let root: string
 let files: ProjectFiles
 
 beforeEach(() => {
-  temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "n2-project-")))
+  temp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "n2-project-")))
   root = path.join(temp, "project")
   fs.mkdirSync(path.join(root, "assets", "scripts"), { recursive: true })
   fs.writeFileSync(path.join(root, "assets", "scripts", "main.lua"), "-- main")
@@ -70,6 +70,61 @@ describe("ProjectFiles", () => {
     }
     assert.throws(() => files.readTextFile(path.join(root, "link", "outside.txt")), /Outside the project/)
     assert.throws(() => files.writeTextFile(path.join(root, "link", "new.txt"), "x"), /Outside the project/)
+  })
+
+  test("refuses to write through a dangling file link (it would create the target outside)", (t) => {
+    const target = path.join(temp, "pwned.lua")
+    try {
+      fs.symlinkSync(target, path.join(root, "evil.lua"), "file")
+    } catch {
+      t.skip("can't create file links here (Windows without Developer Mode)")
+      return
+    }
+    assert.throws(() => files.writeTextFile(path.join(root, "evil.lua"), "x"), /A link that leads nowhere/)
+    assert.throws(() => files.writeTextFile("evil.lua", "x"), ProjectPathError)
+    assert.equal(fs.existsSync(target), false)
+  })
+
+  test("refuses to write under a dangling directory link", () => {
+    const target = path.join(temp, "missing-dir")
+    fs.mkdirSync(target)
+    fs.symlinkSync(target, path.join(root, "evil"), "junction")
+    fs.rmdirSync(target) // now the link leads nowhere
+    assert.throws(() => files.writeTextFile(path.join(root, "evil", "pwned.lua"), "x"), /A link that leads nowhere/)
+    assert.throws(() => files.createDirectory(path.join(root, "evil", "sub")), /A link that leads nowhere/)
+    assert.equal(fs.existsSync(target), false)
+  })
+
+  test("a link that stays inside the project is followed", () => {
+    fs.symlinkSync(path.join(root, "assets"), path.join(root, "alias"), "junction")
+    assert.equal(files.readTextFile(path.join(root, "alias", "scripts", "main.lua")), "-- main")
+  })
+
+  test("refuses alternate data streams, device names and names ending in a dot or space", () => {
+    for (const bad of [
+      "f.exe:s.lua",
+      "assets/x.lua:stream",
+      "CON",
+      "nul.lua",
+      "assets/COM1.txt",
+      "lpt9.scene",
+      "aux.tar.json",
+      "assets./x.lua",
+      "x.lua.",
+      "x.lua ",
+    ]) {
+      assert.throws(() => files.writeTextFile(bad, "x"), ProjectPathError, bad)
+    }
+    // Names that merely start like a device name are fine
+    files.writeTextFile("console.lua", "x")
+    files.writeTextFile("com10.lua", "x")
+  })
+
+  test("refuses to read a file over the size limit", () => {
+    const big = path.join(root, "big.txt")
+    fs.writeFileSync(big, "")
+    fs.truncateSync(big, MaxReadBytes + 1)
+    assert.throws(() => files.readTextFile(big), /Too large to open/)
   })
 
   test("deletes files only, and a missing file is not an error", () => {
