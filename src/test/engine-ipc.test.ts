@@ -1,8 +1,12 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost } from "../main/engine-ipc"
-import { EngineClient } from "../protocol/engine-client"
+import { EngineHost, EngineHostOptions, MaxUnusedViewBytes, ownedViews } from "../main/engine-ipc"
+import { Commands } from "../protocol/codec"
+import { FrameReader } from "../protocol/framing"
+import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
+import { ConnectOptions, EngineClient } from "../protocol/engine-client"
+import type { ServerInfoResponse } from "../protocol/protocol.generated"
 import { Channels, ConnectionState, IpcResult } from "../shared/api"
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
@@ -20,24 +24,45 @@ class FakeIpcMain {
   }
 }
 
+const info: ServerInfoResponse = {
+  protocolVersion: "1.1.0",
+  engineVersion: "0.9.0",
+  capabilities: [],
+  projectLoaded: true,
+}
+
 /** Just the EngineClient surface EngineHost uses */
 class FakeClient {
   connected = false
   calls: Array<[string, unknown[]]> = []
   connectedTo: [string, number] | null = null
+  connectOptions: ConnectOptions | null = null
+  /** Set to make connect's Hello fail with this message */
+  refuseHello: string | null = null
   private closeListeners: Array<() => void> = []
 
   get isConnected(): boolean {
     return this.connected
   }
 
+  get serverInfo(): ServerInfoResponse | null {
+    return this.connected ? info : null
+  }
+
   onClose(listener: () => void): void {
     this.closeListeners.push(listener)
   }
 
-  async connect(host: string, port: number): Promise<void> {
+  async connect(host: string, port: number, options: ConnectOptions): Promise<ServerInfoResponse> {
     this.connectedTo = [host, port]
+    this.connectOptions = options
+    if (this.refuseHello !== null) {
+      // As EngineClient does: the connection is closed (and the close reported) before connect rejects
+      this.closeListeners.forEach((l) => l())
+      throw new Error(this.refuseHello)
+    }
     this.connected = true
+    return info
   }
 
   disconnect(): void {
@@ -71,11 +96,19 @@ class FakeClient {
   async setEntityTransform(...args: unknown[]): Promise<void> {
     this.calls.push(["setEntityTransform", args])
   }
+
+  /** What renderFrame resolves with: by default a frame whose pixels are a view into a larger (socket) buffer */
+  frame: unknown = null
+
+  async renderFrame(): Promise<unknown> {
+    this.calls.push(["renderFrame", []])
+    return this.frame
+  }
 }
 
 const PageUrl = "file:///C:/editor/src/index.html"
 
-function setup() {
+function setup(options: EngineHostOptions = {}) {
   const sent: Array<[string, unknown]> = []
   const editor = {
     mainFrame: { url: PageUrl },
@@ -83,10 +116,14 @@ function setup() {
     send: (channel: string, value: unknown) => sent.push([channel, value]),
   }
   const client = new FakeClient()
-  const host = new EngineHost(client as unknown as EngineClient, {
-    getEditor: () => editor as unknown as WebContents,
-    url: PageUrl,
-  })
+  const host = new EngineHost(
+    client as unknown as EngineClient,
+    {
+      getEditor: () => editor as unknown as WebContents,
+      url: PageUrl,
+    },
+    options
+  )
   const ipc = new FakeIpcMain()
   host.register(ipc as unknown as IpcMain)
   return { ipc, client, editor, sent }
@@ -197,5 +234,117 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const result = (await ipc.invoke(Channels.engineAttach, editor)) as { value: ConnectionState }
     assert.equal(result.value.connected, false)
     assert.equal(client.connected, false)
+  })
+})
+
+describe("EngineHost Hello", () => {
+  test("connects with the host's access token, and reports the ServerInfo in the state", async () => {
+    const { ipc, client, editor } = setup({ token: "the-access-token" })
+    const result = (await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)) as { value: ConnectionState }
+    assert.deepEqual(client.connectOptions, { token: "the-access-token" })
+    assert.equal(result.value.connected, true)
+    assert.deepEqual(result.value.serverInfo, info)
+    // The token stays in the main process
+    assert.ok(!JSON.stringify(result).includes("the-access-token"))
+  })
+
+  test("without a token, Hello carries none", async () => {
+    const { ipc, client, editor } = setup()
+    await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.deepEqual(client.connectOptions, { token: undefined })
+  })
+
+  test("the token is in nothing sent to the page: results, errors or state pushes", async () => {
+    const token = "the-access-token"
+    const { ipc, client, editor, sent } = setup({ token })
+    const results: unknown[] = []
+    results.push(await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999))
+    client.drop()
+    client.refuseHello = "The editor host refused Hello: Invalid access token"
+    const refused = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.equal(refused.ok, false)
+    results.push(refused)
+    results.push(await ipc.invoke(Channels.engineAttach, editor))
+
+    assert.ok(sent.length >= 2)
+    for (const [channel, value] of sent) {
+      assert.equal(channel, Channels.engineState)
+      assert.ok(!JSON.stringify(value).includes(token), `state push ${JSON.stringify(value)}`)
+    }
+    for (const result of results) {
+      assert.ok(!JSON.stringify(result).includes(token), `result ${JSON.stringify(result)}`)
+    }
+  })
+
+  test("a failed Hello is an error result, and leaves the page disconnected", async () => {
+    const { ipc, client, editor, sent } = setup({ token: "wrong" })
+    client.refuseHello = "The editor host refused Hello: Invalid access token"
+    const result = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.deepEqual(result, { ok: false, error: "The editor host refused Hello: Invalid access token" })
+    const [channel, state] = sent[sent.length - 1] as [string, ConnectionState]
+    assert.equal(channel, Channels.engineState)
+    assert.equal(state.connected, false)
+    assert.equal(state.serverInfo, null)
+  })
+})
+
+describe("results sent over IPC", () => {
+  test("a frame's pixels are copied out of the larger buffer they view", async () => {
+    const { ipc, client, editor } = setup()
+    // A socket chunk: a frame, with other frames around it
+    const chunk = Buffer.alloc(64 * 1024, 0xee)
+    const pixels = chunk.subarray(13, 21)
+    pixels.set([1, 2, 3, 4, 5, 6, 7, 8])
+    client.frame = { width: 2, height: 1, pixels }
+
+    const result = (await ipc.invoke(Channels.engineCall, editor, "renderFrame", [])) as {
+      value: { width: number; height: number; pixels: Uint8Array }
+    }
+    const sent = result.value.pixels
+    assert.notEqual(sent.buffer, chunk.buffer)
+    assert.equal(sent.byteOffset, 0)
+    assert.equal(sent.buffer.byteLength, 8)
+    assert.deepEqual([...sent], [1, 2, 3, 4, 5, 6, 7, 8])
+    assert.deepEqual({ ...result.value, pixels: null }, { width: 2, height: 1, pixels: null })
+
+    // The copy is independent of the socket's buffer
+    chunk.fill(0)
+    assert.deepEqual([...sent], [1, 2, 3, 4, 5, 6, 7, 8])
+  })
+
+  test("a frame assembled from several chunks is posted without a copy", () => {
+    const width = 64
+    const height = 64
+    const pixels = new Uint8Array(width * height * 4).map((_, i) => i & 0xff)
+    const wire = Buffer.from(encodeFrame(ResponseType.FrameData, encodeFrameDataResponse({ width, height, pixels })))
+
+    const reader = new FrameReader()
+    const frames = [0, 1000, 9000].flatMap((start, i, starts) =>
+      reader.push(wire.subarray(start, starts[i + 1] ?? wire.length))
+    )
+    assert.equal(frames.length, 1)
+    const frame = Commands.RenderFrame.decode(frames[0].payload)
+    assert.deepEqual([...frame.pixels], [...pixels])
+    assert.equal(frame.pixels.buffer.byteLength - frame.pixels.byteLength, 8, "the payload's own buffer")
+
+    const posted = ownedViews(frame)
+    assert.equal(posted.pixels, frame.pixels)
+  })
+
+  test("ownedViews copies only views onto a small part of a buffer, wherever they are in the value", () => {
+    const whole = new Float32Array([1, 2, 3])
+    assert.equal(ownedViews(whole), whole)
+
+    const backing = new ArrayBuffer(MaxUnusedViewBytes + 32)
+    const floats = new Float32Array(backing, 8, 2)
+    floats.set([0.5, -0.5])
+    const value = ownedViews({ list: [{ floats }], view: new DataView(backing, 4, 4), n: 1, s: "s" })
+    const copied = value.list[0].floats
+    assert.ok(copied instanceof Float32Array)
+    assert.equal(copied.buffer.byteLength, 8)
+    assert.deepEqual([...copied], [0.5, -0.5])
+    assert.equal(value.view.buffer.byteLength, 4)
+    assert.equal(value.n, 1)
+    assert.equal(value.s, "s")
   })
 })

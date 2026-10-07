@@ -1,114 +1,128 @@
+// The command specs (codec.ts) against the engine's golden vectors (src/protocol/test-vectors.json, copied from the
+// engine by npm run sync-protocol): every request encodes to the engine's bytes, and every response decodes to its
+// fields, through the same specs EngineClient uses.
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import { Commands } from "../protocol/codec"
-import { CommandType, ResponseType } from "../protocol/protocol.generated"
-import { PayloadWriter } from "../protocol/serialization"
+import { readFileSync } from "node:fs"
+import * as path from "node:path"
+import { CommandName, Commands, decodeError } from "../protocol/codec"
+import {
+  CommandResponse,
+  CommandType,
+  PROTOCOL_VERSION,
+  ResponseCodecs,
+  ResponseType,
+} from "../protocol/protocol.generated"
 
-const bytes = (b: Buffer): number[] => [...b]
+interface Vector {
+  id: string
+  fields: Record<string, unknown>
+  payload: string
+}
+interface Vectors {
+  protocolVersion: string
+  requests: Array<Vector & { command: string }>
+  responses: Array<Vector & { response: string }>
+}
 
-describe("request encoding", () => {
-  test("SetViewportSize: two int32s", () => {
-    assert.deepEqual(bytes(Commands.SetViewportSize.encode({ width: 640, height: 480 })), [
-      0x80, 0x02, 0, 0, 0xe0, 0x01, 0, 0,
-    ])
+// dist/test/codec.test.js: the source tree is two levels up
+const vectors: Vectors = JSON.parse(
+  readFileSync(path.join(__dirname, "..", "..", "src", "protocol", "test-vectors.json"), "utf-8")
+)
+
+const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex")
+const fromHex = (text: string): Uint8Array => new Uint8Array(Buffer.from(text, "hex"))
+
+// The vectors write bytes fields as hex strings
+function withHexBytes(value: unknown): unknown {
+  if (value instanceof Uint8Array) return hex(value)
+  if (Array.isArray(value)) return value.map(withHexBytes)
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, withHexBytes(field)]))
+  }
+  return value
+}
+
+const commandNames = Object.keys(CommandType) as CommandName[]
+const spec = (name: string) =>
+  Commands[name as CommandName] as { encode(request: unknown): Uint8Array; decode(payload: Uint8Array): unknown }
+
+test("the vectors are the synced protocol's", () => {
+  assert.equal(vectors.protocolVersion, PROTOCOL_VERSION)
+})
+
+describe("command specs", () => {
+  test("every command has a spec with its generated ids", () => {
+    assert.deepEqual(Object.keys(Commands).sort(), [...commandNames].sort())
+    for (const name of commandNames) {
+      assert.equal(Commands[name].name, name)
+      assert.equal(Commands[name].command, CommandType[name], name)
+      assert.equal(Commands[name].response, ResponseType[CommandResponse[name]], name)
+    }
   })
 
-  test("CreateEntity: a length-prefixed UTF-8 string", () => {
-    assert.deepEqual(bytes(Commands.CreateEntity.encode({ name: "Hé" })), [3, 0, 0, 0, 0x48, 0xc3, 0xa9])
+  test("commands with no request fields send an empty payload", () => {
+    const withFields = new Set(vectors.requests.map((v) => v.command))
+    for (const name of commandNames.filter((n) => !withFields.has(n))) {
+      assert.equal(spec(name).encode({}).length, 0, name)
+    }
   })
 
-  test("SetEntityTransform: id, then position, rotation and scale as float32 triples", () => {
-    const encoded = Commands.SetEntityTransform.encode({
-      entityId: "e",
-      position: { x: 1, y: 2, z: 3 },
-      rotation: { x: 4, y: 5, z: 6 },
-      scale: { x: 7, y: 8, z: 9 },
-    })
-    assert.equal(encoded.length, 4 + 1 + 9 * 4)
-    assert.equal(encoded.toString("utf-8", 4, 5), "e")
-    const floats = Array.from({ length: 9 }, (_, i) => encoded.readFloatLE(5 + i * 4))
-    assert.deepEqual(floats, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+  test("Ok is decoded as undefined (the client's void)", () => {
+    assert.equal(Commands.RescanAssets.decode(new Uint8Array(0)), undefined)
   })
 
-  test("commands with no fields send an empty payload", () => {
-    assert.equal(Commands.RenderFrame.encode({}).length, 0)
-    assert.equal(Commands.GetEngineHealth.encode({}).length, 0)
-  })
-
-  test("every spec carries its generated command and response ids", () => {
-    assert.equal(Commands.RenderFrame.command, CommandType.RenderFrame)
-    assert.equal(Commands.RenderFrame.response, ResponseType.FrameData)
-    assert.equal(Commands.GetAllEntities.response, ResponseType.EntityList)
-    assert.equal(Commands.LoadScene.response, ResponseType.Ok)
+  test("an Error payload is the message as raw UTF-8", () => {
+    const vector = vectors.responses.find((v) => v.response === "Error")!
+    assert.equal(decodeError(fromHex(vector.payload)), vector.fields.message)
   })
 })
 
-describe("response decoding", () => {
-  test("FrameData: width, height, then the pixels to the end", () => {
-    const payload = new PayloadWriter().uint32(2).uint32(1).finish()
-    const frame = Commands.RenderFrame.decode(Buffer.concat([payload, Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])]))
-    assert.equal(frame.width, 2)
-    assert.equal(frame.height, 1)
-    assert.deepEqual([...frame.pixels], [1, 2, 3, 4, 5, 6, 7, 8])
-  })
-
-  test("FrameData pixels are used in place when the payload owns its buffer, else copied", () => {
-    const owned = Buffer.from(new ArrayBuffer(8 + 4))
-    owned.writeUInt32LE(1, 0)
-    owned.writeUInt32LE(1, 4)
-    const inPlace = Commands.RenderFrame.decode(owned)
-    assert.equal(inPlace.pixels.buffer, owned.buffer)
-
-    const chunk = Buffer.alloc(100)
-    const view = chunk.subarray(10, 10 + 12)
-    view.writeUInt32LE(1, 0)
-    view.writeUInt32LE(1, 4)
-    const copied = Commands.RenderFrame.decode(view)
-    assert.notEqual(copied.pixels.buffer, chunk.buffer)
-    assert.equal(copied.pixels.buffer.byteLength, 4)
-  })
-
-  test("EntityList: a count, then id and name per entity", () => {
-    const payload = new PayloadWriter().uint32(2).string("a").string("Alpha").string("b").string("Beta").finish()
-    assert.deepEqual(Commands.GetAllEntities.decode(payload), {
-      count: 2,
-      entities: [
-        { id: "a", name: "Alpha" },
-        { id: "b", name: "Beta" },
-      ],
+describe("requests encode to the engine's vectors", () => {
+  for (const vector of vectors.requests) {
+    test(vector.command, () => {
+      assert.equal(Commands[vector.command as CommandName].command, Number.parseInt(vector.id, 16))
+      assert.equal(hex(spec(vector.command).encode(vector.fields)), vector.payload)
     })
+  }
+})
+
+describe("responses decode to the engine's vectors", () => {
+  for (const vector of vectors.responses) {
+    // Ok and Error have no command of their own; AudioSamples is converted to float32 (below, and audio-stream.test)
+    const name = commandNames.find((n) => CommandResponse[n] === vector.response)
+    if (vector.response === "Ok" || vector.response === "Error" || vector.response === "AudioSamples") continue
+
+    test(`${vector.response} (${name})`, () => {
+      assert.ok(name, `a command answers with ${vector.response}`)
+      assert.equal(Commands[name].response, Number.parseInt(vector.id, 16))
+      // Decode a view with an offset into a larger buffer, as the socket's chunks are, with bytes after it
+      const payload = fromHex(vector.payload)
+      const padded = new Uint8Array(3 + payload.length + 4)
+      padded.set(payload, 3)
+      const decoded = spec(name).decode(padded.subarray(3, 3 + payload.length))
+      assert.deepEqual(withHexBytes(decoded), vector.fields)
+    })
+  }
+
+  test("AudioSamples: the generated decoder gives the vector's fields", () => {
+    const vector = vectors.responses.find((v) => v.response === "AudioSamples")!
+    const decoded = ResponseCodecs.AudioSamples.decode(fromHex(vector.payload))
+    for (const [field, expected] of Object.entries(vector.fields)) {
+      assert.deepEqual(withHexBytes(decoded[field as keyof typeof decoded]), expected, field)
+    }
+    assert.deepEqual(Object.keys(decoded).sort(), Object.keys(vector.fields).sort())
   })
 
-  test("EngineHealth", () => {
-    const payload = new PayloadWriter()
-      .bool(true)
-      .uint32(1)
-      .string("Audio")
-      .string("Running")
-      .string("Loopback")
-      .finish()
-    assert.deepEqual(Commands.GetEngineHealth.decode(payload), {
-      healthy: true,
-      count: 1,
-      subsystems: [{ name: "Audio", state: "Running", detail: "Loopback" }],
-    })
-  })
-
-  test("EntityTransform", () => {
-    const payload = new PayloadWriter()
-      .vec3({ x: 1, y: 2, z: 3 })
-      .vec3({ x: 0, y: 90, z: 0 })
-      .vec3({ x: 1, y: 1, z: 1 })
-      .finish()
-    assert.deepEqual(Commands.GetEntityTransform.decode(payload), {
-      position: { x: 1, y: 2, z: 3 },
-      rotation: { x: 0, y: 90, z: 0 },
-      scale: { x: 1, y: 1, z: 1 },
-    })
+  test("AudioSamples: GetAudio's spec checks the decoded fields before converting the samples", () => {
+    const vector = vectors.responses.find((v) => v.response === "AudioSamples")!
+    // The vector's fields are placeholders (no real sample format), so the editor refuses them
+    assert.throws(() => Commands.GetAudio.decode(fromHex(vector.payload)), /Unsupported audio sample format/)
   })
 
   test("a truncated payload throws instead of reading garbage", () => {
-    const payload = new PayloadWriter().uint32(3).string("a").string("Alpha").finish()
-    assert.throws(() => Commands.GetAllEntities.decode(payload), /EntityList too short/)
+    const vector = vectors.responses.find((v) => v.response === "EntityList")!
+    const payload = fromHex(vector.payload)
+    assert.throws(() => Commands.GetAllEntities.decode(payload.subarray(0, payload.length - 1)), RangeError)
   })
 })

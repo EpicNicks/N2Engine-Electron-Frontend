@@ -51,13 +51,55 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
 
 const hasOwn = (object: object, key: string): boolean => Object.prototype.hasOwnProperty.call(object, key)
 
+/**
+ * A view leaving at most this many bytes of its buffer unused is posted as it is. A frame assembled from several
+ * socket chunks has a buffer of its own, of exactly the payload's size, and its pixels skip only the 8-byte
+ * width and height; copying them would cost a whole frame's copy for nothing.
+ */
+export const MaxUnusedViewBytes = 4096
+
+/**
+ * The value with every typed array or DataView that views a small part of a larger buffer replaced by a copy of
+ * just its bytes. Decoded bytes fields (FrameData's pixels) are views into the payload, which can be a view of a
+ * socket chunk (or Node's shared allocation pool) holding other data; IPC's structured clone copies a view's whole
+ * underlying buffer, so posting one would send (and keep alive) all of it. A view that spans its buffer, or all but
+ * MaxUnusedViewBytes of it, is passed on as it is.
+ */
+export function ownedViews<T>(value: T): T {
+  if (ArrayBuffer.isView(value)) {
+    if (value.buffer.byteLength - value.byteLength <= MaxUnusedViewBytes) return value
+    // A plain Uint8Array over the same bytes, whose slice copies (a Buffer's slice would be another view)
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength).slice()
+    if (value instanceof DataView) return new DataView(bytes.buffer) as T
+    if (value instanceof Uint8Array) return bytes as T
+    const TypedArray = value.constructor as new (buffer: ArrayBufferLike) => T
+    return new TypedArray(bytes.buffer)
+  }
+  if (Array.isArray(value)) return value.map(ownedViews) as T
+  if (typeof value === "object" && value !== null) {
+    const copy: Record<string, unknown> = {}
+    for (const [key, field] of Object.entries(value)) copy[key] = ownedViews(field)
+    return copy as T
+  }
+  return value
+}
+
+export interface EngineHostOptions {
+  /**
+   * The editor host's access token, sent in each connection's Hello; empty or missing for a host without one. It is
+   * never sent to the page (not in ConnectionState, results or errors), so the page can't read it or choose another.
+   */
+  token?: string
+}
+
 export class EngineHost {
   private epoch = 0
   private readonly commands: EngineCommands
 
   constructor(
     readonly client: EngineClient,
-    private readonly page: EditorPage
+    private readonly page: EditorPage,
+    private readonly options: EngineHostOptions = {}
   ) {
     // EngineClient must implement every forwarded command with the API's signature
     this.commands = client
@@ -65,7 +107,7 @@ export class EngineHost {
   }
 
   get state(): ConnectionState {
-    return { connected: this.client.isConnected, epoch: this.epoch }
+    return { connected: this.client.isConnected, epoch: this.epoch, serverInfo: this.client.serverInfo }
   }
 
   register(ipcMain: IpcMain): void {
@@ -97,11 +139,12 @@ export class EngineHost {
     if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error(`Invalid port ${String(port)}`)
     }
-    await this.client.connect(host, port)
+    // A failed Hello rejects here, with the connection already closed (and the close published)
+    await this.client.connect(host, port, { token: this.options.token })
     return this.bump()
   }
 
-  private call(name: unknown, args: unknown): unknown {
+  private async call(name: unknown, args: unknown): Promise<unknown> {
     if (typeof name !== "string" || !hasOwn(EngineCommandArgs, name)) {
       throw new Error(`Unknown engine command ${String(name)}`)
     }
@@ -114,7 +157,8 @@ export class EngineHost {
     }
     const checked = kinds.map((kind, i) => checkArg(kind, args[i], `${name} argument ${i + 1}`))
     const method = this.commands[name as EngineCommandName] as (...a: unknown[]) => Promise<unknown>
-    return method.apply(this.client, checked)
+    // The result goes over IPC: never as a view onto a larger buffer
+    return ownedViews(await method.apply(this.client, checked))
   }
 
   private bump(): ConnectionState {

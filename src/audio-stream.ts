@@ -1,6 +1,8 @@
 // Audio streaming logic with no DOM, Electron or Node dependencies, so it can be unit tested (npm test):
 // decoding GetAudio's AudioSamples payload, and the jitter buffer that decides when each chunk plays.
 
+import { AudioSamplesResponse, decodeAudioSamplesResponse } from "./protocol/protocol.generated"
+
 export type SampleFormat = "float32" | "int16"
 
 /**
@@ -18,38 +20,17 @@ export interface AudioSamples {
   samples: Float32Array
 }
 
-const utf8 = new TextDecoder("utf-8")
-
 /**
- * Decodes an AudioSamples payload (everything after the 5-byte response header): sampleRate, channels,
- * sampleFormat (string), frameCount, droppedFrames, then the raw little-endian samples to the end of the payload
+ * Decodes an AudioSamples payload (everything after the 5-byte response header) with the generated decoder, then
+ * checks it and converts the samples (audioSamplesFromResponse)
  */
 export function decodeAudioSamples(payload: Uint8Array): AudioSamples {
-  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
-  let offset = 0
+  return audioSamplesFromResponse(decodeAudioSamplesResponse(payload))
+}
 
-  function need(bytes: number, what: string): void {
-    if (offset + bytes > payload.byteLength) {
-      throw new Error(`AudioSamples payload too short for ${what} (${payload.byteLength} bytes)`)
-    }
-  }
-
-  need(8, "sampleRate and channels")
-  const sampleRate = view.getUint32(0, true)
-  const channels = view.getUint32(4, true)
-  offset = 8
-
-  need(4, "sampleFormat")
-  const formatLength = view.getUint32(offset, true)
-  offset += 4
-  need(formatLength, "sampleFormat")
-  const sampleFormat = utf8.decode(payload.subarray(offset, offset + formatLength))
-  offset += formatLength
-
-  need(8, "frameCount and droppedFrames")
-  const frameCount = view.getUint32(offset, true)
-  const droppedFrames = view.getUint32(offset + 4, true)
-  offset += 8
+/** Checks a decoded AudioSamples response and converts its raw little-endian samples to float32 */
+export function audioSamplesFromResponse(response: AudioSamplesResponse): AudioSamples {
+  const { sampleRate, channels, sampleFormat, frameCount, droppedFrames, samples: sampleBytes } = response
 
   if (sampleFormat !== "float32" && sampleFormat !== "int16") {
     throw new Error(`Unsupported audio sample format "${sampleFormat}"`)
@@ -59,7 +40,6 @@ export function decodeAudioSamples(payload: Uint8Array): AudioSamples {
   }
 
   const bytesPerSample = sampleFormat === "float32" ? 4 : 2
-  const sampleBytes = payload.subarray(offset)
   const expectedBytes = frameCount * channels * bytesPerSample
   if (sampleBytes.byteLength !== expectedBytes) {
     throw new Error(

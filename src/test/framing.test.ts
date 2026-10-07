@@ -1,6 +1,10 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import { FrameReader, FrameTooLargeError, encodeFrame, Frame, HeaderBytes } from "../protocol/framing"
+import { FrameReader, FrameTooLargeError, Frame } from "../protocol/framing"
+import { FRAME_HEADER_BYTES as HeaderBytes, encodeFrame as encodeGeneratedFrame } from "../protocol/protocol.generated"
+
+/** A frame as a Buffer, as the socket delivers it */
+const encodeFrame = (type: number, payload: Uint8Array): Buffer => Buffer.from(encodeGeneratedFrame(type, payload))
 
 /** A payload whose bytes depend on seed and position, so misordered or shifted bytes are caught */
 function payload(length: number, seed: number): Buffer {
@@ -131,12 +135,5 @@ describe("FrameReader", () => {
     reader.reset()
     assert.equal(reader.bufferedBytes, 0)
     assertFrames(reader.push(encodeFrame(0x04, payload(3, 2))), [{ type: 0x04, payload: payload(3, 2) }])
-  })
-})
-
-describe("encodeFrame", () => {
-  test("writes the type, the little-endian payload length and the payload", () => {
-    const frame = encodeFrame(0x32, Buffer.from([1, 2, 3]))
-    assert.deepEqual([...frame], [0x32, 3, 0, 0, 0, 1, 2, 3])
   })
 })

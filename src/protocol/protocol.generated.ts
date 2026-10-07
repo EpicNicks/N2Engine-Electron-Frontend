@@ -1,9 +1,24 @@
-// Auto-generated from protocol.json - do not edit
+// Auto-generated from protocol.json by generate_typescript.py - do not edit
+
+/** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
+export const PROTOCOL_VERSION = "1.1.0";
+
+// ==================== Types ====================
+
+/** 16 numbers, column-major (element col * 4 + row) for column vectors: the translation is elements 12, 13, 14 */
+export type Mat4 = number[];
 
 export interface Vec3 {
   x: number;
   y: number;
   z: number;
+}
+
+export interface Quat {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
 }
 
 export interface EntityInfo {
@@ -17,10 +32,13 @@ export interface SubsystemStatus {
   detail: string;
 }
 
+// ==================== Ids ====================
+
 export const CommandType = {
   RenderFrame: 0x01,
   SetViewportSize: 0x02,
   GetAudio: 0x03,
+  Hello: 0x04,
   SetCameraPosition: 0x10,
   GetCameraPosition: 0x12,
   CreateScene: 0x20,
@@ -53,13 +71,46 @@ export const ResponseType = {
   ScriptData: 0x08,
   EngineHealth: 0x09,
   AudioSamples: 0x0A,
+  ServerInfo: 0x0B,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
 
+/** The response each command answers with when it succeeds (any command may answer Error instead) */
+export const CommandResponse = {
+  RenderFrame: "FrameData",
+  SetViewportSize: "Ok",
+  GetAudio: "AudioSamples",
+  Hello: "ServerInfo",
+  SetCameraPosition: "Ok",
+  GetCameraPosition: "CameraPosition",
+  CreateScene: "SceneData",
+  LoadScene: "Ok",
+  SaveScene: "SceneData",
+  DeleteScene: "Ok",
+  GetCurrentScene: "SceneData",
+  CreateEntity: "EntityCreated",
+  DestroyEntity: "Ok",
+  SetEntityTransform: "Ok",
+  GetEntityTransform: "EntityTransform",
+  GetAllEntities: "EntityList",
+  CreateScript: "ScriptData",
+  RescanAssets: "Ok",
+  GetEngineHealth: "EngineHealth",
+  Shutdown: "Ok",
+} as const;
+
+// ==================== Messages ====================
+
 export interface SetViewportSizeRequest {
   width: number;
   height: number;
+}
+
+export interface HelloRequest {
+  clientName: string;
+  protocolVersion: string;
+  token: string;
 }
 
 export interface SetCameraPositionRequest {
@@ -103,6 +154,14 @@ export interface CreateScriptRequest {
   name: string;
 }
 
+/** Ok has no payload */
+export type OkResponse = Record<string, never>;
+
+/** Error's payload is the message's raw UTF-8 bytes (not a length-prefixed string) */
+export interface ErrorResponse {
+  message: string;
+}
+
 export interface FrameDataResponse {
   width: number;
   height: number;
@@ -116,6 +175,13 @@ export interface AudioSamplesResponse {
   frameCount: number;
   droppedFrames: number;
   samples: Uint8Array;
+}
+
+export interface ServerInfoResponse {
+  protocolVersion: string;
+  engineVersion: string;
+  capabilities: string[];
+  projectLoaded: boolean;
 }
 
 export interface CameraPositionResponse {
@@ -152,3 +218,684 @@ export interface EngineHealthResponse {
   count: number;
   subsystems: SubsystemStatus[];
 }
+
+// ==================== Codec runtime ====================
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+/** Builds a payload: little-endian numbers, uint32-length-prefixed UTF-8 strings */
+export class ProtocolWriter {
+  private buffer: Uint8Array = new Uint8Array(64);
+  private view: DataView = new DataView(this.buffer.buffer);
+  private length = 0;
+
+  u8(value: number): void {
+    checkInteger(value, 0, 0xff, "uint8");
+    this.reserve(1);
+    this.view.setUint8(this.length, value);
+    this.length += 1;
+  }
+
+  u32(value: number): void {
+    checkInteger(value, 0, 0xffffffff, "uint32");
+    this.reserve(4);
+    this.view.setUint32(this.length, value, true);
+    this.length += 4;
+  }
+
+  i32(value: number): void {
+    checkInteger(value, -0x80000000, 0x7fffffff, "int32");
+    this.reserve(4);
+    this.view.setInt32(this.length, value, true);
+    this.length += 4;
+  }
+
+  /** Rounded to the nearest float32 */
+  f32(value: number): void {
+    this.reserve(4);
+    this.view.setFloat32(this.length, value, true);
+    this.length += 4;
+  }
+
+  bool(value: boolean): void {
+    this.u8(value ? 1 : 0);
+  }
+
+  string(value: string): void {
+    const bytes = textEncoder.encode(value);
+    this.u32(bytes.length);
+    this.bytes(bytes);
+  }
+
+  /** JSON.stringify's text, as a string */
+  json(value: unknown): void {
+    const text = JSON.stringify(value);
+    if (text === undefined) {
+      throw new TypeError("Value has no JSON representation");
+    }
+    this.string(text);
+  }
+
+  /** 16 numbers, column-major */
+  mat4(value: Mat4): void {
+    if (value.length !== 16) {
+      throw new RangeError(`A mat4 has 16 elements, not ${value.length}`);
+    }
+    for (const element of value) {
+      this.f32(element);
+    }
+  }
+
+  /** Raw bytes, no length prefix */
+  bytes(value: Uint8Array): void {
+    this.reserve(value.length);
+    this.buffer.set(value, this.length);
+    this.length += value.length;
+  }
+
+  /** The bytes written so far (a copy) */
+  finish(): Uint8Array {
+    return this.buffer.slice(0, this.length);
+  }
+
+  private reserve(count: number): void {
+    const needed = this.length + count;
+    if (needed <= this.buffer.length) {
+      return;
+    }
+    let size = this.buffer.length * 2;
+    while (size < needed) {
+      size *= 2;
+    }
+    const grown = new Uint8Array(size);
+    grown.set(this.buffer.subarray(0, this.length));
+    this.buffer = grown;
+    this.view = new DataView(grown.buffer);
+  }
+}
+
+/** Reads a payload; reading past its end throws a RangeError, as the server's BufferReader does */
+export class ProtocolReader {
+  private readonly data: Uint8Array;
+  private readonly view: DataView;
+  private offset = 0;
+
+  constructor(data: Uint8Array) {
+    this.data = data;
+    this.view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  }
+
+  get remaining(): number {
+    return this.data.length - this.offset;
+  }
+
+  u8(): number {
+    this.require(1);
+    const value = this.view.getUint8(this.offset);
+    this.offset += 1;
+    return value;
+  }
+
+  u32(): number {
+    this.require(4);
+    const value = this.view.getUint32(this.offset, true);
+    this.offset += 4;
+    return value;
+  }
+
+  i32(): number {
+    this.require(4);
+    const value = this.view.getInt32(this.offset, true);
+    this.offset += 4;
+    return value;
+  }
+
+  f32(): number {
+    this.require(4);
+    const value = this.view.getFloat32(this.offset, true);
+    this.offset += 4;
+    return value;
+  }
+
+  /** Any non-zero byte is true */
+  bool(): boolean {
+    return this.u8() !== 0;
+  }
+
+  string(): string {
+    const length = this.u32();
+    return textDecoder.decode(this.take(length));
+  }
+
+  /** A string holding JSON text, parsed */
+  json(): unknown {
+    return JSON.parse(this.string());
+  }
+
+  mat4(): Mat4 {
+    const value: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      value.push(this.f32());
+    }
+    return value;
+  }
+
+  /** The rest of the payload: a view into it, not a copy */
+  rest(): Uint8Array {
+    return this.take(this.remaining);
+  }
+
+  private take(count: number): Uint8Array {
+    this.require(count);
+    const value = this.data.subarray(this.offset, this.offset + count);
+    this.offset += count;
+    return value;
+  }
+
+  private require(count: number): void {
+    if (count > this.remaining) {
+      throw new RangeError(`Malformed payload: read of ${count} bytes with ${this.remaining} remaining`);
+    }
+  }
+}
+
+function checkInteger(value: number, min: number, max: number, type: string): void {
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new RangeError(`${value} is not a ${type}`);
+  }
+}
+
+function readArray<T>(reader: ProtocolReader, count: number, read: (reader: ProtocolReader) => T): T[] {
+  const values: T[] = [];
+  for (let i = 0; i < count; i++) {
+    values.push(read(reader));
+  }
+  return values;
+}
+
+/** Bytes in a frame header: [type: uint8][payload length: uint32] */
+export const FRAME_HEADER_BYTES = 5;
+
+/** A whole frame: the header, then the payload */
+export function encodeFrame(type: number, payload: Uint8Array): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u8(type);
+  writer.u32(payload.length);
+  writer.bytes(payload);
+  return writer.finish();
+}
+
+/**
+ * The first complete frame at the start of data, and its size in bytes; null until all of it has arrived.
+ * The payload is a view into data, not a copy.
+ */
+export function decodeFrame(data: Uint8Array): { type: number; payload: Uint8Array; size: number } | null {
+  if (data.length < FRAME_HEADER_BYTES) {
+    return null;
+  }
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const length = view.getUint32(1, true);
+  const size = FRAME_HEADER_BYTES + length;
+  if (data.length < size) {
+    return null;
+  }
+  return { type: view.getUint8(0), payload: data.subarray(FRAME_HEADER_BYTES, size), size };
+}
+
+/** major.minor.patch as numbers; null for anything else */
+export function parseProtocolVersion(version: string): { major: number; minor: number; patch: number } | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!match) {
+    return null;
+  }
+  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+}
+
+/**
+ * Whether a server speaking version can talk to this client: the same major version. A server with a newer minor
+ * version has commands this client doesn't know; one with an older minor version lacks some this client knows.
+ */
+export function isProtocolCompatible(version: string): boolean {
+  const theirs = parseProtocolVersion(version);
+  const ours = parseProtocolVersion(PROTOCOL_VERSION);
+  return theirs !== null && ours !== null && theirs.major === ours.major;
+}
+
+// ==================== Codecs ====================
+
+export function writeVec3(writer: ProtocolWriter, value: Vec3): void {
+  writer.f32(value.x);
+  writer.f32(value.y);
+  writer.f32(value.z);
+}
+
+export function readVec3(reader: ProtocolReader): Vec3 {
+  return { x: reader.f32(), y: reader.f32(), z: reader.f32() };
+}
+
+export function writeQuat(writer: ProtocolWriter, value: Quat): void {
+  writer.f32(value.x);
+  writer.f32(value.y);
+  writer.f32(value.z);
+  writer.f32(value.w);
+}
+
+export function readQuat(reader: ProtocolReader): Quat {
+  return { x: reader.f32(), y: reader.f32(), z: reader.f32(), w: reader.f32() };
+}
+
+export function writeEntityInfo(writer: ProtocolWriter, value: EntityInfo): void {
+  writer.string(value.id);
+  writer.string(value.name);
+}
+
+export function readEntityInfo(reader: ProtocolReader): EntityInfo {
+  return { id: reader.string(), name: reader.string() };
+}
+
+export function writeSubsystemStatus(writer: ProtocolWriter, value: SubsystemStatus): void {
+  writer.string(value.name);
+  writer.string(value.state);
+  writer.string(value.detail);
+}
+
+export function readSubsystemStatus(reader: ProtocolReader): SubsystemStatus {
+  return { name: reader.string(), state: reader.string(), detail: reader.string() };
+}
+
+/** SetViewportSize's request payload (without the frame header) */
+export function encodeSetViewportSizeRequest(value: SetViewportSizeRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.i32(value.width);
+  writer.i32(value.height);
+  return writer.finish();
+}
+
+/** Reads SetViewportSize's request payload; bytes after the last field are ignored */
+export function decodeSetViewportSizeRequest(payload: Uint8Array): SetViewportSizeRequest {
+  const reader = new ProtocolReader(payload);
+  const width = reader.i32();
+  const height = reader.i32();
+  return { width, height };
+}
+
+/** Hello's request payload (without the frame header) */
+export function encodeHelloRequest(value: HelloRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.clientName);
+  writer.string(value.protocolVersion);
+  writer.string(value.token);
+  return writer.finish();
+}
+
+/** Reads Hello's request payload; bytes after the last field are ignored */
+export function decodeHelloRequest(payload: Uint8Array): HelloRequest {
+  const reader = new ProtocolReader(payload);
+  const clientName = reader.string();
+  const protocolVersion = reader.string();
+  const token = reader.string();
+  return { clientName, protocolVersion, token };
+}
+
+/** SetCameraPosition's request payload (without the frame header) */
+export function encodeSetCameraPositionRequest(value: SetCameraPositionRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.f32(value.x);
+  writer.f32(value.y);
+  writer.f32(value.z);
+  return writer.finish();
+}
+
+/** Reads SetCameraPosition's request payload; bytes after the last field are ignored */
+export function decodeSetCameraPositionRequest(payload: Uint8Array): SetCameraPositionRequest {
+  const reader = new ProtocolReader(payload);
+  const x = reader.f32();
+  const y = reader.f32();
+  const z = reader.f32();
+  return { x, y, z };
+}
+
+/** CreateScene's request payload (without the frame header) */
+export function encodeCreateSceneRequest(value: CreateSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.name);
+  return writer.finish();
+}
+
+/** Reads CreateScene's request payload; bytes after the last field are ignored */
+export function decodeCreateSceneRequest(payload: Uint8Array): CreateSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const name = reader.string();
+  return { name };
+}
+
+/** LoadScene's request payload (without the frame header) */
+export function encodeLoadSceneRequest(value: LoadSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.sceneJson);
+  return writer.finish();
+}
+
+/** Reads LoadScene's request payload; bytes after the last field are ignored */
+export function decodeLoadSceneRequest(payload: Uint8Array): LoadSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const sceneJson = reader.string();
+  return { sceneJson };
+}
+
+/** DeleteScene's request payload (without the frame header) */
+export function encodeDeleteSceneRequest(value: DeleteSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.sceneName);
+  return writer.finish();
+}
+
+/** Reads DeleteScene's request payload; bytes after the last field are ignored */
+export function decodeDeleteSceneRequest(payload: Uint8Array): DeleteSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const sceneName = reader.string();
+  return { sceneName };
+}
+
+/** CreateEntity's request payload (without the frame header) */
+export function encodeCreateEntityRequest(value: CreateEntityRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.name);
+  return writer.finish();
+}
+
+/** Reads CreateEntity's request payload; bytes after the last field are ignored */
+export function decodeCreateEntityRequest(payload: Uint8Array): CreateEntityRequest {
+  const reader = new ProtocolReader(payload);
+  const name = reader.string();
+  return { name };
+}
+
+/** DestroyEntity's request payload (without the frame header) */
+export function encodeDestroyEntityRequest(value: DestroyEntityRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads DestroyEntity's request payload; bytes after the last field are ignored */
+export function decodeDestroyEntityRequest(payload: Uint8Array): DestroyEntityRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** SetEntityTransform's request payload (without the frame header) */
+export function encodeSetEntityTransformRequest(value: SetEntityTransformRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writeVec3(writer, value.position);
+  writeVec3(writer, value.rotation);
+  writeVec3(writer, value.scale);
+  return writer.finish();
+}
+
+/** Reads SetEntityTransform's request payload; bytes after the last field are ignored */
+export function decodeSetEntityTransformRequest(payload: Uint8Array): SetEntityTransformRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const position = readVec3(reader);
+  const rotation = readVec3(reader);
+  const scale = readVec3(reader);
+  return { entityId, position, rotation, scale };
+}
+
+/** GetEntityTransform's request payload (without the frame header) */
+export function encodeGetEntityTransformRequest(value: GetEntityTransformRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads GetEntityTransform's request payload; bytes after the last field are ignored */
+export function decodeGetEntityTransformRequest(payload: Uint8Array): GetEntityTransformRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** CreateScript's request payload (without the frame header) */
+export function encodeCreateScriptRequest(value: CreateScriptRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.name);
+  return writer.finish();
+}
+
+/** Reads CreateScript's request payload; bytes after the last field are ignored */
+export function decodeCreateScriptRequest(payload: Uint8Array): CreateScriptRequest {
+  const reader = new ProtocolReader(payload);
+  const name = reader.string();
+  return { name };
+}
+
+/** Ok's (empty) payload */
+export function encodeOkResponse(_value: OkResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  return writer.finish();
+}
+
+/** Ok has no fields */
+export function decodeOkResponse(_payload: Uint8Array): OkResponse {
+  return {};
+}
+
+/** Error's payload: the message's raw UTF-8 bytes */
+export function encodeErrorResponse(value: ErrorResponse): Uint8Array {
+  return textEncoder.encode(value.message);
+}
+
+/** Error's message: the whole payload as UTF-8 */
+export function decodeErrorResponse(payload: Uint8Array): ErrorResponse {
+  return { message: textDecoder.decode(payload) };
+}
+
+/** FrameData's payload (without the frame header) */
+export function encodeFrameDataResponse(value: FrameDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.width);
+  writer.u32(value.height);
+  writer.bytes(value.pixels);
+  return writer.finish();
+}
+
+/** Reads FrameData's payload; bytes after the last field are ignored */
+export function decodeFrameDataResponse(payload: Uint8Array): FrameDataResponse {
+  const reader = new ProtocolReader(payload);
+  const width = reader.u32();
+  const height = reader.u32();
+  const pixels = reader.rest();
+  return { width, height, pixels };
+}
+
+/** AudioSamples's payload (without the frame header) */
+export function encodeAudioSamplesResponse(value: AudioSamplesResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.sampleRate);
+  writer.u32(value.channels);
+  writer.string(value.sampleFormat);
+  writer.u32(value.frameCount);
+  writer.u32(value.droppedFrames);
+  writer.bytes(value.samples);
+  return writer.finish();
+}
+
+/** Reads AudioSamples's payload; bytes after the last field are ignored */
+export function decodeAudioSamplesResponse(payload: Uint8Array): AudioSamplesResponse {
+  const reader = new ProtocolReader(payload);
+  const sampleRate = reader.u32();
+  const channels = reader.u32();
+  const sampleFormat = reader.string();
+  const frameCount = reader.u32();
+  const droppedFrames = reader.u32();
+  const samples = reader.rest();
+  return { sampleRate, channels, sampleFormat, frameCount, droppedFrames, samples };
+}
+
+/** ServerInfo's payload (without the frame header) */
+export function encodeServerInfoResponse(value: ServerInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.protocolVersion);
+  writer.string(value.engineVersion);
+  writer.json(value.capabilities);
+  writer.bool(value.projectLoaded);
+  return writer.finish();
+}
+
+/** Reads ServerInfo's payload; bytes after the last field are ignored */
+export function decodeServerInfoResponse(payload: Uint8Array): ServerInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const protocolVersion = reader.string();
+  const engineVersion = reader.string();
+  const capabilities = reader.json() as string[];
+  const projectLoaded = reader.bool();
+  return { protocolVersion, engineVersion, capabilities, projectLoaded };
+}
+
+/** CameraPosition's payload (without the frame header) */
+export function encodeCameraPositionResponse(value: CameraPositionResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.f32(value.x);
+  writer.f32(value.y);
+  writer.f32(value.z);
+  return writer.finish();
+}
+
+/** Reads CameraPosition's payload; bytes after the last field are ignored */
+export function decodeCameraPositionResponse(payload: Uint8Array): CameraPositionResponse {
+  const reader = new ProtocolReader(payload);
+  const x = reader.f32();
+  const y = reader.f32();
+  const z = reader.f32();
+  return { x, y, z };
+}
+
+/** SceneData's payload (without the frame header) */
+export function encodeSceneDataResponse(value: SceneDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.sceneJson);
+  return writer.finish();
+}
+
+/** Reads SceneData's payload; bytes after the last field are ignored */
+export function decodeSceneDataResponse(payload: Uint8Array): SceneDataResponse {
+  const reader = new ProtocolReader(payload);
+  const sceneJson = reader.string();
+  return { sceneJson };
+}
+
+/** EntityCreated's payload (without the frame header) */
+export function encodeEntityCreatedResponse(value: EntityCreatedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads EntityCreated's payload; bytes after the last field are ignored */
+export function decodeEntityCreatedResponse(payload: Uint8Array): EntityCreatedResponse {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** EntityTransform's payload (without the frame header) */
+export function encodeEntityTransformResponse(value: EntityTransformResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writeVec3(writer, value.position);
+  writeVec3(writer, value.rotation);
+  writeVec3(writer, value.scale);
+  return writer.finish();
+}
+
+/** Reads EntityTransform's payload; bytes after the last field are ignored */
+export function decodeEntityTransformResponse(payload: Uint8Array): EntityTransformResponse {
+  const reader = new ProtocolReader(payload);
+  const position = readVec3(reader);
+  const rotation = readVec3(reader);
+  const scale = readVec3(reader);
+  return { position, rotation, scale };
+}
+
+/** EntityList's payload (without the frame header) */
+export function encodeEntityListResponse(value: EntityListResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.entities.length);
+  for (const element of value.entities) { writeEntityInfo(writer, element); }
+  return writer.finish();
+}
+
+/** Reads EntityList's payload; bytes after the last field are ignored */
+export function decodeEntityListResponse(payload: Uint8Array): EntityListResponse {
+  const reader = new ProtocolReader(payload);
+  const count = reader.u32();
+  const entities = readArray(reader, count, readEntityInfo);
+  return { count, entities };
+}
+
+/** ScriptData's payload (without the frame header) */
+export function encodeScriptDataResponse(value: ScriptDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.scriptTemplate);
+  return writer.finish();
+}
+
+/** Reads ScriptData's payload; bytes after the last field are ignored */
+export function decodeScriptDataResponse(payload: Uint8Array): ScriptDataResponse {
+  const reader = new ProtocolReader(payload);
+  const scriptTemplate = reader.string();
+  return { scriptTemplate };
+}
+
+/** EngineHealth's payload (without the frame header) */
+export function encodeEngineHealthResponse(value: EngineHealthResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.bool(value.healthy);
+  writer.u32(value.subsystems.length);
+  for (const element of value.subsystems) { writeSubsystemStatus(writer, element); }
+  return writer.finish();
+}
+
+/** Reads EngineHealth's payload; bytes after the last field are ignored */
+export function decodeEngineHealthResponse(payload: Uint8Array): EngineHealthResponse {
+  const reader = new ProtocolReader(payload);
+  const healthy = reader.bool();
+  const count = reader.u32();
+  const subsystems = readArray(reader, count, readSubsystemStatus);
+  return { healthy, count, subsystems };
+}
+
+/** Each command's request codecs, for commands with request fields */
+export const RequestCodecs = {
+  SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
+  Hello: { encode: encodeHelloRequest, decode: decodeHelloRequest },
+  SetCameraPosition: { encode: encodeSetCameraPositionRequest, decode: decodeSetCameraPositionRequest },
+  CreateScene: { encode: encodeCreateSceneRequest, decode: decodeCreateSceneRequest },
+  LoadScene: { encode: encodeLoadSceneRequest, decode: decodeLoadSceneRequest },
+  DeleteScene: { encode: encodeDeleteSceneRequest, decode: decodeDeleteSceneRequest },
+  CreateEntity: { encode: encodeCreateEntityRequest, decode: decodeCreateEntityRequest },
+  DestroyEntity: { encode: encodeDestroyEntityRequest, decode: decodeDestroyEntityRequest },
+  SetEntityTransform: { encode: encodeSetEntityTransformRequest, decode: decodeSetEntityTransformRequest },
+  GetEntityTransform: { encode: encodeGetEntityTransformRequest, decode: decodeGetEntityTransformRequest },
+  CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
+} as const;
+
+/** Each response's codecs */
+export const ResponseCodecs = {
+  Ok: { encode: encodeOkResponse, decode: decodeOkResponse },
+  Error: { encode: encodeErrorResponse, decode: decodeErrorResponse },
+  FrameData: { encode: encodeFrameDataResponse, decode: decodeFrameDataResponse },
+  AudioSamples: { encode: encodeAudioSamplesResponse, decode: decodeAudioSamplesResponse },
+  ServerInfo: { encode: encodeServerInfoResponse, decode: decodeServerInfoResponse },
+  CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
+  SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
+  EntityCreated: { encode: encodeEntityCreatedResponse, decode: decodeEntityCreatedResponse },
+  EntityTransform: { encode: encodeEntityTransformResponse, decode: decodeEntityTransformResponse },
+  EntityList: { encode: encodeEntityListResponse, decode: decodeEntityListResponse },
+  ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
+  EngineHealth: { encode: encodeEngineHealthResponse, decode: decodeEngineHealthResponse },
+} as const;

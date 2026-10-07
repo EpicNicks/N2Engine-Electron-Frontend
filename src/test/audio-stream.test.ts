@@ -90,7 +90,7 @@ describe("decodeAudioSamples", () => {
 
   test("rejects a truncated header", () => {
     const payload = audioPayload("int16", 2, 0, 0, Buffer.alloc(0))
-    assert.throws(() => decodeAudioSamples(payload.subarray(0, payload.length - 2)), /too short/)
+    assert.throws(() => decodeAudioSamples(payload.subarray(0, payload.length - 2)), /Malformed payload/)
   })
 })
 

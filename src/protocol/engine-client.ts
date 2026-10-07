@@ -1,15 +1,21 @@
 import * as net from "net"
 import {
   CameraPositionResponse,
+  CommandType,
   EngineHealthResponse,
   EntityInfo,
   FrameDataResponse,
+  PROTOCOL_VERSION,
   ResponseType,
   SceneDataResponse,
+  ServerInfoResponse,
   Vec3,
+  encodeFrame,
+  isProtocolCompatible,
+  parseProtocolVersion,
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
-import { Frame, FrameReader, encodeFrame } from "./framing"
+import { Frame, FrameReader } from "./framing"
 import { AudioSamples } from "../audio-stream"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */
@@ -22,6 +28,38 @@ export function isEventType(type: number): boolean {
 
 /** The engine refuses requests with a larger payload (EditorServer::MaxPayloadBytes) */
 export const MaxRequestPayloadBytes = 64 * 1024 * 1024
+
+/**
+ * Until a Hello succeeds, a host with an access token refuses a larger payload and closes the connection
+ * (EditorServer::MaxPayloadBytesBeforeHello)
+ */
+export const MaxPayloadBytesBeforeHello = 64 * 1024
+
+/**
+ * How long connect() waits for Hello's answer, from when the socket connects (Hello is sent then). A host with an
+ * access token closes a connection that hasn't completed a Hello within 5 s, but its clock starts at accept(),
+ * which can come well after the connection was made (the host serves one connection at a time, and accepts the next
+ * only when it's done). So the host's limit, plus a margin for a slow or busy host; one that never answers still
+ * fails the connect.
+ */
+export const HelloTimeoutMilliseconds = 10000
+
+/** The clientName sent in Hello (the host logs it) */
+export const DefaultClientName = "N2Engine Electron editor"
+
+export interface ConnectOptions {
+  /** The host's access token; empty (the default) for a host started without one */
+  token?: string
+  clientName?: string
+}
+
+/** connect()'s Hello failed: the host refused it (wrong token, incompatible version), or never answered */
+export class HelloError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "HelloError"
+  }
+}
 
 /** After Shutdown is written, how long to wait for the reply (or the server closing) before dropping the socket */
 export const ShutdownGraceMilliseconds = 1000
@@ -49,6 +87,9 @@ export class EngineError extends Error {
  * The editor protocol client: one TCP connection, requests answered in order. The server handles one request at
  * a time and replies in the order they arrived, so responses are matched to requests first in, first out. Frames
  * with an event type id (0xC0+) are not responses and go to the onEvent listener instead.
+ *
+ * Each connection opens a session with Hello (protocol 1.1) before anything else: connect() resolves with the
+ * host's ServerInfo once Hello succeeds, and until then no other request is sent.
  */
 export class EngineClient {
   private socket: net.Socket | null = null
@@ -58,13 +99,21 @@ export class EngineClient {
   private closeListeners: Array<() => void> = []
   /** The connect() whose socket hasn't connected yet: it must settle however the socket ends */
   private pendingConnect: { socket: net.Socket; reject: (error: Error) => void } | null = null
+  /** The current connection's answer to Hello; null until its Hello succeeds */
+  private session: ServerInfoResponse | null = null
 
   constructor(
     private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)
   ) {}
 
+  /** Whether there is a connection whose Hello succeeded */
   get isConnected(): boolean {
-    return this.socket !== null && !this.socket.destroyed
+    return this.socket !== null && !this.socket.destroyed && this.session !== null
+  }
+
+  /** The host's answer to this connection's Hello; null when not connected */
+  get serverInfo(): ServerInfoResponse | null {
+    return this.isConnected ? this.session : null
   }
 
   /** Server-push frames (type 0xC0-0xFE). Polling (EventPump) is what the server does today; this is for later. */
@@ -77,14 +126,37 @@ export class EngineClient {
     this.closeListeners.push(listener)
   }
 
-  connect(host: string = "localhost", port: number = 9999): Promise<void> {
+  /**
+   * Connects and says Hello, with options.token when the host has an access token. Resolves with the host's
+   * ServerInfo. Rejects, and closes the connection, when the socket fails or Hello does: a HelloError when the host
+   * refused it (a wrong token, an incompatible protocol version) or didn't answer within HelloTimeoutMilliseconds.
+   */
+  async connect(
+    host: string = "localhost",
+    port: number = 9999,
+    options: ConnectOptions = {}
+  ): Promise<ServerInfoResponse> {
+    const socket = await this.open(host, port)
+    try {
+      return await this.hello(socket, options)
+    } catch (e) {
+      const error = e instanceof Error ? e : new Error(String(e))
+      // A host with an access token closes the connection after a failed Hello itself; one without would keep it
+      // open, but the editor treats every failed Hello alike
+      if (this.socket === socket) this.closeSocket(error)
+      throw error
+    }
+  }
+
+  /** Opens a socket, replacing any current one; resolves once it has connected */
+  private open(host: string, port: number): Promise<net.Socket> {
     // Nothing from a previous connection (a partial response, requests it never answered) may leak into this one
     this.closeSocket(new Error("Reconnected"))
 
     return new Promise((resolve, reject) => {
       const socket = this.createSocket({ host, port }, () => {
         if (this.pendingConnect?.socket === socket) this.pendingConnect = null
-        resolve()
+        resolve(socket)
       })
       this.socket = socket
       this.pendingConnect = { socket, reject }
@@ -107,6 +179,7 @@ export class EngineClient {
         this.failConnect(socket, new Error("Connection closed before it opened"))
         if (this.socket !== socket) return
         this.socket = null
+        this.session = null
         this.reader.reset()
         this.rejectPending(new Error("Connection closed"))
         this.emitClose()
@@ -122,6 +195,12 @@ export class EngineClient {
   disconnect(): void {
     const socket = this.socket
     if (!socket) return
+    if (this.session === null) {
+      // Still saying Hello: a host with an access token would refuse Shutdown (and one without a token wasn't asked
+      // for anything yet), so just close
+      this.close()
+      return
+    }
     this.detach(new Error("Disconnected"))
 
     const timer = setTimeout(() => socket.destroy(), ShutdownGraceMilliseconds)
@@ -158,7 +237,8 @@ export class EngineClient {
   }
 
   /**
-   * Sends a frame and resolves with the next response frame (FIFO). Payloads over MaxRequestPayloadBytes are
+   * Sends a frame and resolves with the next response frame (FIFO). Until the connection's Hello has succeeded,
+   * only Hello itself is sent. Payloads over MaxRequestPayloadBytes (MaxPayloadBytesBeforeHello before Hello) are
    * refused here, since the engine would drop the connection.
    */
   sendRaw(type: number, payload: Uint8Array): Promise<Frame> {
@@ -167,8 +247,14 @@ export class EngineClient {
         reject(new Error("Not connected"))
         return
       }
-      if (payload.length > MaxRequestPayloadBytes) {
-        reject(new Error(`Request payload too large (${payload.length} bytes, the limit is ${MaxRequestPayloadBytes})`))
+      const beforeHello = this.session === null
+      if (beforeHello && type !== CommandType.Hello) {
+        reject(new Error("Not connected (the connection's Hello hasn't completed)"))
+        return
+      }
+      const limit = beforeHello ? MaxPayloadBytesBeforeHello : MaxRequestPayloadBytes
+      if (payload.length > limit) {
+        reject(new Error(`Request payload too large (${payload.length} bytes, the limit is ${limit})`))
         return
       }
       // Encode first: the request joins the queue only once its frame exists, so a throw can't desync the FIFO
@@ -288,6 +374,49 @@ export class EngineClient {
 
   // ==================== Internals ====================
 
+  /** Says Hello on the socket that just connected, and opens the session when the host accepts it */
+  private async hello(socket: net.Socket, options: ConnectOptions): Promise<ServerInfoResponse> {
+    const request = {
+      clientName: options.clientName ?? DefaultClientName,
+      protocolVersion: PROTOCOL_VERSION,
+      token: options.token ?? "",
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new HelloError(`The editor host didn't answer Hello within ${HelloTimeoutMilliseconds} ms`)),
+        HelloTimeoutMilliseconds
+      )
+    })
+    let info: ServerInfoResponse
+    try {
+      info = await Promise.race([this.send(Commands.Hello, request), timeout])
+    } catch (e) {
+      if (e instanceof EngineError) throw new HelloError(`The editor host refused Hello: ${e.message}`)
+      throw e
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (!isProtocolCompatible(info.protocolVersion)) {
+      throw new HelloError(
+        `The editor host speaks protocol ${info.protocolVersion}, this editor ${PROTOCOL_VERSION} ` +
+          "(the major versions must match)"
+      )
+    }
+    if (parseProtocolVersion(info.protocolVersion)?.minor !== parseProtocolVersion(PROTOCOL_VERSION)?.minor) {
+      console.warn(
+        `The editor host speaks protocol ${info.protocolVersion}, this editor ${PROTOCOL_VERSION}: ` +
+          "commands only one of them knows will fail"
+      )
+    }
+    // A reconnect or close while waiting rejects the Hello request, but one can come between its answer and here
+    if (this.socket !== socket) throw new Error("Connection closed")
+    this.session = info
+    return info
+  }
+
   private onData(chunk: Buffer): void {
     let frames: Frame[]
     try {
@@ -326,6 +455,7 @@ export class EngineClient {
   private detach(error: Error): net.Socket | null {
     const socket = this.socket
     this.socket = null
+    this.session = null
     this.reader.reset()
     if (socket) this.failConnect(socket, error)
     this.rejectPending(error)

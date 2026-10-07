@@ -45,11 +45,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Regenerate src/protocol/protocol.generated.ts
+      - name: Regenerate src/protocol/protocol.generated.ts and test-vectors.json
         run: node scripts/sync-protocol.js engine
-      - name: Fail if it differs from the committed file
+      - name: Fail if src/protocol differs from what is committed (changed or new files)
         run: |
-          if ! git diff --exit-code -- src/protocol/protocol.generated.ts; then
-            echo "::error::src/protocol/protocol.generated.ts is out of date with the engine at $(cat engine-ref.txt). Run npm run sync-protocol against that engine commit and commit the result."
+          if [ -n "$(git status --porcelain -- src/protocol)" ]; then
+            git status --porcelain -- src/protocol
+            git diff -- src/protocol
+            echo "::error::src/protocol/protocol.generated.ts or test-vectors.json is out of date with the engine at $(cat engine-ref.txt). Run npm run sync-protocol against that engine commit and commit the result."
             exit 1
           fi
