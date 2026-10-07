@@ -62,6 +62,15 @@ class FakeClient {
   async setViewportSize(width: number, height: number): Promise<void> {
     this.calls.push(["setViewportSize", [width, height]])
   }
+
+  async createEntity(name: string): Promise<string> {
+    this.calls.push(["createEntity", [name]])
+    return "id"
+  }
+
+  async setEntityTransform(...args: unknown[]): Promise<void> {
+    this.calls.push(["setEntityTransform", args])
+  }
 }
 
 function setup() {
@@ -96,6 +105,40 @@ describe("EngineHost (the main process's engine IPC)", () => {
       assert.equal(result.ok, false, `${String(name)} is refused`)
     }
     assert.equal((await ipc.invoke(Channels.engineCall, editor, "getCameraPosition", "not an array")).ok, false)
+  })
+
+  test("checks each argument's type before calling the client", async () => {
+    const { ipc, client, editor } = setup()
+    const v = { x: 1, y: 2, z: 3 }
+    const bad: Array<[string, unknown[]]> = [
+      ["createEntity", [["a", "b"]]], // an array where a string is expected
+      ["createEntity", [{ length: 1e9 }]], // Buffer.from would allocate this much
+      ["createEntity", [42]],
+      ["createEntity", []], // too few
+      ["createEntity", ["a", "b"]], // too many
+      ["setViewportSize", [640.5, 480]],
+      ["setViewportSize", [2 ** 31, 480]],
+      ["setViewportSize", ["640", 480]],
+      ["setEntityTransform", ["id", v, v, { x: 1, y: 2 }]],
+      ["setEntityTransform", ["id", v, v, [1, 2, 3]]],
+      ["setEntityTransform", ["id", v, { x: NaN, y: 0, z: 0 }, v]],
+      ["setEntityTransform", ["id", v, v, null]],
+    ]
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+
+    // Only x, y and z of a vec3 are passed on
+    const ok = await ipc.invoke(Channels.engineCall, editor, "setEntityTransform", [
+      "id",
+      { ...v, extra: "ignored" },
+      v,
+      v,
+    ])
+    assert.equal(ok.ok, true)
+    assert.deepEqual(client.calls[0], ["setEntityTransform", ["id", v, v, v]])
   })
 
   test("refuses calls from anything but the editor window's main frame", async () => {

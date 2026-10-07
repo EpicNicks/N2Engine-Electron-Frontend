@@ -45,27 +45,55 @@ export interface EngineCommands {
 
 export type EngineCommandName = keyof EngineCommands
 
-/** Every forwarded command; the main process refuses any other name */
-export const EngineCommandNames: readonly EngineCommandName[] = [
-  "renderFrame",
-  "setViewportSize",
-  "getAudio",
-  "setCameraPosition",
-  "getCameraPosition",
-  "createScene",
-  "loadScene",
-  "saveScene",
-  "deleteScene",
-  "getCurrentScene",
-  "createScript",
-  "rescanAssets",
-  "getEngineHealth",
-  "createEntity",
-  "destroyEntity",
-  "getAllEntities",
-  "setEntityTransform",
-  "getEntityTransform",
-]
+/**
+ * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
+ * trusted to send what the TypeScript types say)
+ */
+export type ArgKind = "string" | "number" | "int32" | "vec3"
+
+/** Every forwarded command and its arguments; the main process refuses any other name */
+export const EngineCommandArgs = {
+  renderFrame: [],
+  setViewportSize: ["int32", "int32"],
+  getAudio: [],
+  setCameraPosition: ["number", "number", "number"],
+  getCameraPosition: [],
+  createScene: ["string"],
+  loadScene: ["string"],
+  saveScene: [],
+  deleteScene: ["string"],
+  getCurrentScene: [],
+  createScript: ["string"],
+  rescanAssets: [],
+  getEngineHealth: [],
+  createEntity: ["string"],
+  destroyEntity: ["string"],
+  getAllEntities: [],
+  setEntityTransform: ["string", "vec3", "vec3", "vec3"],
+  getEntityTransform: ["string"],
+} as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
+
+export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]
+
+// A compile-time check that each command's ArgKinds match its signature in EngineCommands
+interface ArgKindTypes {
+  string: string
+  number: number
+  int32: number
+  vec3: Vec3
+}
+type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
+type ArgsMatch = {
+  [K in EngineCommandName]: [KindsToArgs<(typeof EngineCommandArgs)[K]>] extends [Parameters<EngineCommands[K]>]
+    ? [Parameters<EngineCommands[K]>] extends [KindsToArgs<(typeof EngineCommandArgs)[K]>]
+      ? true
+      : K
+    : K
+}
+/** Names a command whose ArgKinds don't match its signature */
+export type MismatchedCommandArgs = Exclude<ArgsMatch[EngineCommandName], true>
+export const engineCommandArgsMatchSignatures: [MismatchedCommandArgs] extends [never] ? true : MismatchedCommandArgs =
+  true
 
 /** The engine connection as the main process last reported it; a higher epoch is newer */
 export interface ConnectionState {
