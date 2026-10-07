@@ -1,6 +1,8 @@
 {
-  // The Node side: the main process, the preload, the protocol client and the unit tests, compiled to dist for
-  // Electron and node --test. The page has its own config (tsconfig.renderer.json), without Node's types.
+  // The Node side: the main process, the protocol client and the unit tests, compiled to dist for Electron and
+  // node --test. The page (tsconfig.renderer.json) and the preload (tsconfig.preload.json) are bundled by esbuild
+  // and only type checked by their own configs. DOM stays in lib because the audio player's tests (Web Audio,
+  // stubbed) compile here; nothing in src/main or src/protocol uses it.
   "compilerOptions": {
     "target": "ES2022",
     "module": "CommonJS",
@@ -13,5 +15,5 @@
     "skipLibCheck": true
   },
   "include": ["src"],
-  "exclude": ["src/renderer/renderer.ts"]
+  "exclude": ["src/renderer/renderer.ts", "src/preload"]
 }

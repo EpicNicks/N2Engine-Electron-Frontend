@@ -1,7 +1,7 @@
 // The engine connection lives here, in the main process, and the page reaches it through IPC (Channels.engine*).
 // The page never gets a socket: it can only call the commands in EngineCommandArgs, with arguments of the declared
 // types, on an editor host on this machine.
-import { IpcMain, WebContents } from "electron"
+import { IpcMain } from "electron"
 import { EngineClient } from "../protocol/engine-client"
 import {
   ArgKind,
@@ -11,7 +11,7 @@ import {
   EngineCommandName,
   EngineCommands,
 } from "../shared/api"
-import { handleResult } from "./ipc"
+import { EditorPage, handleResult } from "./ipc"
 
 const LoopbackHosts = new Set(["localhost", "127.0.0.1", "::1"])
 
@@ -57,7 +57,7 @@ export class EngineHost {
 
   constructor(
     readonly client: EngineClient,
-    private readonly getEditor: () => WebContents | null
+    private readonly page: EditorPage
   ) {
     // EngineClient must implement every forwarded command with the API's signature
     this.commands = client
@@ -70,7 +70,7 @@ export class EngineHost {
 
   register(ipcMain: IpcMain): void {
     const handle = (channel: string, handler: (...args: unknown[]) => unknown): void =>
-      handleResult(ipcMain, channel, this.getEditor, handler)
+      handleResult(ipcMain, channel, this.page, handler)
 
     handle(Channels.engineCall, (name, args) => this.call(name, args))
     handle(Channels.engineConnect, (host, port) => this.connect(host, port))
@@ -125,7 +125,7 @@ export class EngineHost {
   /** Tells the page the connection changed (it closed, or the host dropped it) */
   private publish(): void {
     const state = this.bump()
-    const editor = this.getEditor()
+    const editor = this.page.getEditor()
     if (editor && !editor.isDestroyed()) {
       editor.send(Channels.engineState, state)
     }

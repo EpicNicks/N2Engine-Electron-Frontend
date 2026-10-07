@@ -64,7 +64,10 @@ describe("FrameReader", () => {
   })
 
   test("many frames in one chunk, including empty payloads", () => {
-    const expected = Array.from({ length: 50 }, (_, i) => ({ type: i % 11, payload: payload(i % 4 === 0 ? 0 : i * 3, i) }))
+    const expected = Array.from({ length: 50 }, (_, i) => ({
+      type: i % 11,
+      payload: payload(i % 4 === 0 ? 0 : i * 3, i),
+    }))
     const data = Buffer.concat(expected.map((f) => encodeFrame(f.type, f.payload)))
     const reader = new FrameReader()
     assertFrames(reader.push(data), expected)

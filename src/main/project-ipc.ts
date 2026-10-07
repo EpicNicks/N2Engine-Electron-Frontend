@@ -3,19 +3,19 @@ import { BrowserWindow, IpcMain, dialog } from "electron"
 import * as fs from "fs"
 import * as path from "path"
 import { Channels } from "../shared/api"
-import { handleResult } from "./ipc"
+import { EditorPage, handleResult } from "./ipc"
 import { ProjectFiles } from "./project-files"
 import { RecentProjects } from "./recent-projects"
 
 export function registerProjectIpc(
   ipcMain: IpcMain,
   getWindow: () => BrowserWindow | null,
+  page: EditorPage,
   files: ProjectFiles,
   recent: RecentProjects
 ): void {
-  const getEditor = () => getWindow()?.webContents ?? null
   const handle = (channel: string, handler: (...args: unknown[]) => unknown): void =>
-    handleResult(ipcMain, channel, getEditor, handler)
+    handleResult(ipcMain, channel, page, handler)
 
   function open(projectPath: string): string {
     const opened = files.open(projectPath)

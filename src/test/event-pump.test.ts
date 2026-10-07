@@ -187,6 +187,38 @@ describe("EventPump", () => {
     assert.deepEqual(received, [["1"], ["2"]])
   })
 
+  test("a handler that throws loses that batch, is reported, and doesn't stop the pump", async () => {
+    const server = new FakeServer()
+    server.add("1", "2")
+    const timers = new FakeTimers()
+    const received: string[][] = []
+    const errors: unknown[] = []
+    let fail = true
+    const pump = new EventPump(
+      server.poll,
+      {
+        onEvents: (events) => {
+          if (fail) {
+            fail = false
+            throw new Error("handler failed")
+          }
+          received.push(events)
+        },
+        onError: (e) => errors.push(e),
+      },
+      { intervalMs: 100, errorRetryMs: 1000, timers }
+    )
+
+    pump.start()
+    await timers.fire()
+    assert.equal(errors.length, 1)
+    assert.equal(pump.nextSeq, 2, "the cursor moved past the lost batch")
+    assert.equal(timers.delay, 100, "the normal interval, not the error retry")
+    server.add("3")
+    await timers.fire()
+    assert.deepEqual(received, [["3"]])
+  })
+
   test("pollNow polls immediately and never overlaps a poll in flight", async () => {
     const server = new FakeServer()
     server.add("1")

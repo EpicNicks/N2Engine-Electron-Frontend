@@ -16,7 +16,7 @@ export interface EventBatch<E> {
 export type PollFunction<E> = (afterSeq: number, maxEvents: number) => Promise<EventBatch<E>>
 
 export interface EventPumpHandlers<E> {
-  /** Each non-empty batch, in order */
+  /** Each non-empty batch, in order. If it throws, the batch is lost (the cursor has moved on) and onError is called. */
   onEvents(events: E[]): void
   /** The server dropped events this client never saw: state built from events should be refetched */
   onDropped?(count: number): void
@@ -106,6 +106,19 @@ export class EventPump<E> {
     return this.runPoll(this.generation)
   }
 
+  /** Runs a handler; one that throws is reported through onError and doesn't stop the pump */
+  private notify(call: () => void): void {
+    try {
+      call()
+    } catch (e) {
+      try {
+        this.handlers.onError?.(e)
+      } catch {
+        // nothing more to do
+      }
+    }
+  }
+
   private schedule(ms: number): void {
     this.cancelTimer()
     const generation = this.generation
@@ -135,19 +148,21 @@ export class EventPump<E> {
   private async pollOnce(generation: number): Promise<void> {
     let delay = this.intervalMs
     try {
-      const afterSeq = this.cursor
-      const batch = await this.poll(afterSeq, this.maxEvents)
+      const batch = await this.poll(this.cursor, this.maxEvents)
       if (!this.running || generation !== this.generation) return
 
-      if (batch.nextSeq < afterSeq) {
-        this.handlers.onReset?.(afterSeq, batch.nextSeq)
-      }
+      // The cursor moves past these events whatever the handlers do. A handler that throws loses them (the error
+      // goes to onError) rather than having the same batch redelivered, and failing, forever.
+      const previous = this.cursor
       this.cursor = batch.nextSeq
+      if (batch.nextSeq < previous) {
+        this.notify(() => this.handlers.onReset?.(previous, batch.nextSeq))
+      }
       if (batch.dropped > 0) {
-        this.handlers.onDropped?.(batch.dropped)
+        this.notify(() => this.handlers.onDropped?.(batch.dropped))
       }
       if (batch.events.length > 0) {
-        this.handlers.onEvents(batch.events)
+        this.notify(() => this.handlers.onEvents(batch.events))
       }
       if (batch.events.length >= this.maxEvents) {
         delay = 0 // more are waiting

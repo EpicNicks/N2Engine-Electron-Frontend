@@ -73,15 +73,20 @@ class FakeClient {
   }
 }
 
+const PageUrl = "file:///C:/editor/src/index.html"
+
 function setup() {
   const sent: Array<[string, unknown]> = []
   const editor = {
-    mainFrame: {},
+    mainFrame: { url: PageUrl },
     isDestroyed: () => false,
     send: (channel: string, value: unknown) => sent.push([channel, value]),
   }
   const client = new FakeClient()
-  const host = new EngineHost(client as unknown as EngineClient, () => editor as unknown as WebContents)
+  const host = new EngineHost(client as unknown as EngineClient, {
+    getEditor: () => editor as unknown as WebContents,
+    url: PageUrl,
+  })
   const ipc = new FakeIpcMain()
   host.register(ipc as unknown as IpcMain)
   return { ipc, client, editor, sent }
@@ -141,7 +146,7 @@ describe("EngineHost (the main process's engine IPC)", () => {
     assert.deepEqual(client.calls[0], ["setEntityTransform", ["id", v, v, v]])
   })
 
-  test("refuses calls from anything but the editor window's main frame", async () => {
+  test("refuses calls from anything but the editor page (its window, main frame and URL)", async () => {
     const { ipc, client, editor } = setup()
     const otherWindow = await ipc.invoke(Channels.engineCall, { mainFrame: {} }, "getCameraPosition", [])
     assert.equal(otherWindow.ok, false)
@@ -151,7 +156,13 @@ describe("EngineHost (the main process's engine IPC)", () => {
       []
     )
     assert.equal(subframe.ok, false)
-    assert.equal(client.calls.length, 0)
+
+    // The editor's main frame showing some other page (it navigated, or was redirected)
+    editor.mainFrame.url = "https://example.com/"
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "getCameraPosition", [])).ok, false)
+    editor.mainFrame.url = PageUrl + "#section"
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "getCameraPosition", [])).ok, true)
+    assert.equal(client.calls.length, 1)
   })
 
   test("connects only to this machine, on a valid port", async () => {

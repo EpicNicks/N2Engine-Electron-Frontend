@@ -1,6 +1,6 @@
-// The open project's files, for the page. Every path the page passes must resolve inside the project root
-// (links included, dangling ones refused), and only the text file types the editor uses can be read, written or deleted. Node only
-// (no Electron), so it is unit tested.
+// The open project's files, for the page. Every path the page passes must resolve inside the project root (links
+// included, dangling ones refused), and only the text file types the editor uses can be read, written or deleted.
+// Node only (no Electron), so it is unit tested.
 
 import * as fs from "fs"
 import * as path from "path"

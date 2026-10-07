@@ -19,6 +19,8 @@ This is not a reflection of the final design so much as a repo of the ongoing te
    npm start
    ```
 
+   `npm run dev` does the same with DevTools open (or set `N2_EDITOR_DEVTOOLS=1`).
+
 3. Open or create a project; the editor connects to `localhost:9999` (or press **Connect**).
 
 The **Engine** panel (bottom right) lists the engine's subsystems from `GetEngineHealth`, e.g. `Audio Running` with `Loopback 48000 Hz, 2 channels, float32 (streamed to the editor client)`. Press **Refresh** to update it.
@@ -45,14 +47,14 @@ The decoding and jitter-buffer logic is in `src/audio-stream.ts` (no DOM or Elec
 | `src/preload/` | Forwards `window.engine` and `window.project` calls over IPC. Bundled, since a sandboxed preload can require only `electron` |
 | `src/renderer/` | The page: the editor UI and the audio player. Bundled by esbuild into `dist/bundle/renderer.js` |
 
-The window runs with `sandbox: true` and `contextIsolation: true`: the page has no Node and no raw file system. It can only call the commands in the allowlist, connect to an editor host on this machine, and read, write or delete `.scene`, `.lua`, `.json` and `.txt` files inside the open project (checked in the main process, links included).
+The window runs with `sandbox: true` and `contextIsolation: true`: the page has no Node and no raw file system. It can only call the commands in the allowlist, with arguments of the declared types (`EngineCommandArgs`), connect to an editor host on this machine, and read, write or delete `.scene`, `.lua`, `.json` and `.txt` files inside the open project. The main process checks all of it: paths must resolve inside the project (links followed, dangling links refused; no `:`, Windows device names or trailing dots and spaces), and reads are capped at 16 MiB. IPC is answered only for the editor's own page in its window's main frame; the window can't navigate, redirect or open windows, and every permission request is denied.
 
 **Framing.** Every message is `[type: uint8][payloadLength: uint32 LE][payload]`. `FrameReader` keeps received chunks in a list and copies only once a whole frame has arrived, so a multi-MB viewport frame costs one copy however many chunks it arrives in (a frame inside one chunk isn't copied at all). Responses are matched to requests in order; type ids `0xC0`-`0xFE` are reserved for server-pushed events and never consume a pending request.
 
 ## Tests and CI
 
 ```
-npm run typecheck   # both tsconfigs: the Node side, and the page without Node's types
+npm run typecheck   # three tsconfigs: the Node side, the preload, and the page (without Node's types)
 npm test            # builds, then runs src/test with node --test
 ```
 

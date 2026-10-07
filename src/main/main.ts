@@ -1,23 +1,36 @@
-import { app, BrowserWindow, screen, ipcMain } from "electron"
+import { app, BrowserWindow, screen, ipcMain, session } from "electron"
 import * as path from "path"
+import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
 import { EngineHost } from "./engine-ipc"
+import { EditorPage } from "./ipc"
 import { registerProjectIpc } from "./project-ipc"
 import { ProjectFiles } from "./project-files"
 import { RecentProjects } from "./recent-projects"
 
 // dist/main/main.js: the repo root is two levels up
 const appRoot = path.join(__dirname, "..", "..")
+const pagePath = path.join(appRoot, "src", "index.html")
+
+// DevTools open with the window only when asked for: npm run dev, or N2_EDITOR_DEVTOOLS=1
+const openDevTools = process.argv.includes("--devtools") || process.env.N2_EDITOR_DEVTOOLS === "1"
 
 let mainWindow: BrowserWindow | null = null
 const getWindow = (): BrowserWindow | null => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
 
-const engine = new EngineHost(new EngineClient(), () => getWindow()?.webContents ?? null)
+// Only the editor's own page, in the main frame of its window, may call the IPC API
+const page: EditorPage = {
+  getEditor: () => getWindow()?.webContents ?? null,
+  url: pathToFileURL(pagePath).href,
+}
+
+const engine = new EngineHost(new EngineClient(), page)
 engine.register(ipcMain)
 
 registerProjectIpc(
   ipcMain,
   getWindow,
+  page,
   new ProjectFiles(),
   new RecentProjects(path.join(app.getPath("userData"), "recent-projects.json"))
 )
@@ -52,8 +65,9 @@ function createWindow(): void {
     backgroundColor: "#1e1e1e",
   })
 
-  // The page never navigates or opens windows
+  // The page never navigates, redirects or opens windows
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault())
+  mainWindow.webContents.on("will-redirect", (event) => event.preventDefault())
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
 
   mainWindow.on("closed", () => {
@@ -61,11 +75,18 @@ function createWindow(): void {
     engine.close()
   })
 
-  mainWindow.loadFile(path.join(appRoot, "src", "index.html"))
-  mainWindow.webContents.openDevTools()
+  mainWindow.loadFile(pagePath)
+  if (openDevTools) {
+    mainWindow.webContents.openDevTools()
+  }
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  // The editor needs no permission (camera, microphone, notifications, ...): refuse every request and check
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
+  createWindow()
+})
 
 app.on("window-all-closed", () => {
   engine.close()
