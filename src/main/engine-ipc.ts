@@ -76,13 +76,22 @@ export function ownedViews<T>(value: T): T {
   return value
 }
 
+export interface EngineHostOptions {
+  /**
+   * The editor host's access token, sent in each connection's Hello; empty or missing for a host without one. It
+   * stays in the main process: the page can't read it, or connect with another.
+   */
+  token?: string
+}
+
 export class EngineHost {
   private epoch = 0
   private readonly commands: EngineCommands
 
   constructor(
     readonly client: EngineClient,
-    private readonly page: EditorPage
+    private readonly page: EditorPage,
+    private readonly options: EngineHostOptions = {}
   ) {
     // EngineClient must implement every forwarded command with the API's signature
     this.commands = client
@@ -90,7 +99,7 @@ export class EngineHost {
   }
 
   get state(): ConnectionState {
-    return { connected: this.client.isConnected, epoch: this.epoch }
+    return { connected: this.client.isConnected, epoch: this.epoch, serverInfo: this.client.serverInfo }
   }
 
   register(ipcMain: IpcMain): void {
@@ -122,7 +131,8 @@ export class EngineHost {
     if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error(`Invalid port ${String(port)}`)
     }
-    await this.client.connect(host, port)
+    // A failed Hello rejects here, with the connection already closed (and the close published)
+    await this.client.connect(host, port, { token: this.options.token })
     return this.bump()
   }
 

@@ -1,8 +1,9 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost, ownedViews } from "../main/engine-ipc"
-import { EngineClient } from "../protocol/engine-client"
+import { EngineHost, EngineHostOptions, ownedViews } from "../main/engine-ipc"
+import { ConnectOptions, EngineClient } from "../protocol/engine-client"
+import type { ServerInfoResponse } from "../protocol/protocol.generated"
 import { Channels, ConnectionState, IpcResult } from "../shared/api"
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
@@ -20,24 +21,45 @@ class FakeIpcMain {
   }
 }
 
+const info: ServerInfoResponse = {
+  protocolVersion: "1.1.0",
+  engineVersion: "0.9.0",
+  capabilities: [],
+  projectLoaded: true,
+}
+
 /** Just the EngineClient surface EngineHost uses */
 class FakeClient {
   connected = false
   calls: Array<[string, unknown[]]> = []
   connectedTo: [string, number] | null = null
+  connectOptions: ConnectOptions | null = null
+  /** Set to make connect's Hello fail with this message */
+  refuseHello: string | null = null
   private closeListeners: Array<() => void> = []
 
   get isConnected(): boolean {
     return this.connected
   }
 
+  get serverInfo(): ServerInfoResponse | null {
+    return this.connected ? info : null
+  }
+
   onClose(listener: () => void): void {
     this.closeListeners.push(listener)
   }
 
-  async connect(host: string, port: number): Promise<void> {
+  async connect(host: string, port: number, options: ConnectOptions): Promise<ServerInfoResponse> {
     this.connectedTo = [host, port]
+    this.connectOptions = options
+    if (this.refuseHello !== null) {
+      // As EngineClient does: the connection is closed (and the close reported) before connect rejects
+      this.closeListeners.forEach((l) => l())
+      throw new Error(this.refuseHello)
+    }
     this.connected = true
+    return info
   }
 
   disconnect(): void {
@@ -83,7 +105,7 @@ class FakeClient {
 
 const PageUrl = "file:///C:/editor/src/index.html"
 
-function setup() {
+function setup(options: EngineHostOptions = {}) {
   const sent: Array<[string, unknown]> = []
   const editor = {
     mainFrame: { url: PageUrl },
@@ -91,10 +113,14 @@ function setup() {
     send: (channel: string, value: unknown) => sent.push([channel, value]),
   }
   const client = new FakeClient()
-  const host = new EngineHost(client as unknown as EngineClient, {
-    getEditor: () => editor as unknown as WebContents,
-    url: PageUrl,
-  })
+  const host = new EngineHost(
+    client as unknown as EngineClient,
+    {
+      getEditor: () => editor as unknown as WebContents,
+      url: PageUrl,
+    },
+    options
+  )
   const ipc = new FakeIpcMain()
   host.register(ipc as unknown as IpcMain)
   return { ipc, client, editor, sent }
@@ -205,6 +231,35 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const result = (await ipc.invoke(Channels.engineAttach, editor)) as { value: ConnectionState }
     assert.equal(result.value.connected, false)
     assert.equal(client.connected, false)
+  })
+})
+
+describe("EngineHost Hello", () => {
+  test("connects with the host's access token, and reports the ServerInfo in the state", async () => {
+    const { ipc, client, editor } = setup({ token: "the-access-token" })
+    const result = (await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)) as { value: ConnectionState }
+    assert.deepEqual(client.connectOptions, { token: "the-access-token" })
+    assert.equal(result.value.connected, true)
+    assert.deepEqual(result.value.serverInfo, info)
+    // The token stays in the main process
+    assert.ok(!JSON.stringify(result).includes("the-access-token"))
+  })
+
+  test("without a token, Hello carries none", async () => {
+    const { ipc, client, editor } = setup()
+    await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.deepEqual(client.connectOptions, { token: undefined })
+  })
+
+  test("a failed Hello is an error result, and leaves the page disconnected", async () => {
+    const { ipc, client, editor, sent } = setup({ token: "wrong" })
+    client.refuseHello = "The editor host refused Hello: Invalid access token"
+    const result = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+    assert.deepEqual(result, { ok: false, error: "The editor host refused Hello: Invalid access token" })
+    const [channel, state] = sent[sent.length - 1] as [string, ConnectionState]
+    assert.equal(channel, Channels.engineState)
+    assert.equal(state.connected, false)
+    assert.equal(state.serverInfo, null)
   })
 })
 

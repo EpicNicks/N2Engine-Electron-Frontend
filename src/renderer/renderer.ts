@@ -85,10 +85,13 @@ const statusEl = document.getElementById("status")!
 
 async function connectToEngine(): Promise<void> {
   try {
-    await window.engine.connect()
+    const info = await window.engine.connect()
     // Before the first RenderFrame (requests are answered in order), so the first frame is already the right size
     syncViewportSize(true)
     statusEl.textContent = "Connected"
+    statusEl.title =
+      `N2Engine ${info.engineVersion}, protocol ${info.protocolVersion}` +
+      (info.projectLoaded ? "" : " (the host has no project loaded)")
     statusEl.classList.add("connected")
     connectBtn.disabled = true
     disconnectBtn.disabled = false
@@ -100,7 +103,9 @@ async function connectToEngine(): Promise<void> {
     await refreshEngineHealth()
   } catch (e) {
     console.error("Failed to connect:", e)
+    // E.g. the host refused Hello: a wrong access token, or an incompatible protocol version
     statusEl.textContent = "Connection failed"
+    statusEl.title = e instanceof Error ? e.message : String(e)
   }
 }
 
@@ -109,6 +114,7 @@ connectBtn.addEventListener("click", connectToEngine)
 function showDisconnected(status: string): void {
   audio.stop()
   statusEl.textContent = status
+  statusEl.title = ""
   statusEl.classList.remove("connected")
   connectBtn.disabled = false
   disconnectBtn.disabled = true

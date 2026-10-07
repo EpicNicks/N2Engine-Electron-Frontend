@@ -24,7 +24,9 @@ const page: EditorPage = {
   url: pathToFileURL(pagePath).href,
 }
 
-const engine = new EngineHost(new EngineClient(), page)
+// A host started with an access token (N2EditorHost --token-env) needs it in Hello. Until the editor launches its
+// own host with a token it generates, one can be given here: N2_EDITOR_TOKEN, the variable the host reads it from.
+const engine = new EngineHost(new EngineClient(), page, { token: process.env.N2_EDITOR_TOKEN })
 engine.register(ipcMain)
 
 registerProjectIpc(

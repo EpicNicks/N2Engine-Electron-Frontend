@@ -20,7 +20,7 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 
 // ==================== Connection state ====================
 
-let connection: ConnectionState = { connected: false, epoch: -1 }
+let connection: ConnectionState = { connected: false, epoch: -1, serverInfo: null }
 const connectionListeners: Array<(connected: boolean) => void> = []
 
 /** Applies a state unless a newer one has already arrived (a reply and an event can cross) */
@@ -58,7 +58,10 @@ const engine: EngineApi = {
 
   async connect(host = "localhost", port = 9999) {
     await attached
-    applyState(await invoke<ConnectionState>(Channels.engineConnect, host, port))
+    const state = await invoke<ConnectionState>(Channels.engineConnect, host, port)
+    applyState(state)
+    if (!state.serverInfo) throw new Error("The connection closed as it opened")
+    return state.serverInfo
   },
 
   async disconnect() {
@@ -66,6 +69,8 @@ const engine: EngineApi = {
   },
 
   isConnected: () => connection.connected,
+
+  serverInfo: () => connection.serverInfo,
 
   onConnectionChange(listener) {
     connectionListeners.push(listener)

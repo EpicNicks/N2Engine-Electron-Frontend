@@ -8,6 +8,7 @@ import type {
   EntityInfo,
   FrameDataResponse,
   SceneDataResponse,
+  ServerInfoResponse,
   Vec3,
 } from "../protocol/protocol.generated"
 import type { AudioSamples } from "../audio-stream"
@@ -95,20 +96,31 @@ export type MismatchedCommandArgs = Exclude<ArgsMatch[EngineCommandName], true>
 export const engineCommandArgsMatchSignatures: [MismatchedCommandArgs] extends [never] ? true : MismatchedCommandArgs =
   true
 
+/** The host's answer to Hello: its protocol and engine versions, capabilities, and whether it has a project */
+export type ServerInfo = ServerInfoResponse
+
 /** The engine connection as the main process last reported it; a higher epoch is newer */
 export interface ConnectionState {
   connected: boolean
   epoch: number
+  /** The connected host's answer to Hello; null when not connected */
+  serverInfo: ServerInfo | null
 }
 
 /** window.engine */
 export interface EngineApi extends EngineCommands {
-  /** Connects to an editor host on this machine (localhost, 127.0.0.1 or ::1) */
-  connect(host?: string, port?: number): Promise<void>
+  /**
+   * Connects to an editor host on this machine (localhost, 127.0.0.1 or ::1) and says Hello, with the access token
+   * the main process was given (the page never sees it). Resolves with the host's ServerInfo; rejects, leaving no
+   * connection, when Hello fails (a wrong token, an incompatible protocol version, no answer).
+   */
+  connect(host?: string, port?: number): Promise<ServerInfo>
   /** Asks the host to shut down and closes the connection */
   disconnect(): Promise<void>
   /** The last known state (kept up to date by the main process, so it's synchronous) */
   isConnected(): boolean
+  /** The connected host's answer to Hello (as last reported, like isConnected); null when not connected */
+  serverInfo(): ServerInfo | null
   /** Called when the connection opens or closes, including when the host drops it */
   onConnectionChange(listener: (connected: boolean) => void): void
 }
