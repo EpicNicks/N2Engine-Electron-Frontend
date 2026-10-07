@@ -10,9 +10,7 @@ import {
   SceneDataResponse,
   ServerInfoResponse,
   Vec3,
-  decodeServerInfoResponse,
   encodeFrame,
-  encodeHelloRequest,
   isProtocolCompatible,
   parseProtocolVersion,
 } from "./protocol.generated"
@@ -378,11 +376,11 @@ export class EngineClient {
 
   /** Says Hello on the socket that just connected, and opens the session when the host accepts it */
   private async hello(socket: net.Socket, options: ConnectOptions): Promise<ServerInfoResponse> {
-    const payload = encodeHelloRequest({
+    const request = {
       clientName: options.clientName ?? DefaultClientName,
       protocolVersion: PROTOCOL_VERSION,
       token: options.token ?? "",
-    })
+    }
 
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
@@ -391,20 +389,16 @@ export class EngineClient {
         HelloTimeoutMilliseconds
       )
     })
-    let frame: Frame
+    let info: ServerInfoResponse
     try {
-      frame = await Promise.race([this.sendRaw(CommandType.Hello, payload), timeout])
+      info = await Promise.race([this.send(Commands.Hello, request), timeout])
+    } catch (e) {
+      if (e instanceof EngineError) throw new HelloError(`The editor host refused Hello: ${e.message}`)
+      throw e
     } finally {
       clearTimeout(timer)
     }
 
-    if (frame.type === ResponseType.Error) {
-      throw new HelloError(`The editor host refused Hello: ${decodeError(frame.payload) || "no reason given"}`)
-    }
-    if (frame.type !== ResponseType.ServerInfo) {
-      throw new HelloError(`Hello: expected response type ${ResponseType.ServerInfo}, got ${frame.type}`)
-    }
-    const info = decodeServerInfoResponse(frame.payload)
     if (!isProtocolCompatible(info.protocolVersion)) {
       throw new HelloError(
         `The editor host speaks protocol ${info.protocolVersion}, this editor ${PROTOCOL_VERSION} ` +
@@ -418,7 +412,7 @@ export class EngineClient {
       )
     }
     // A reconnect or close while waiting rejects the Hello request, but one can come between its answer and here
-    if (this.socket !== socket) throw new Error("Reconnected")
+    if (this.socket !== socket) throw new Error("Connection closed")
     this.session = info
     return info
   }

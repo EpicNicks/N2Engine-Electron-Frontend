@@ -401,7 +401,7 @@ describe("EngineClient Hello", () => {
 
   test("an answer that isn't ServerInfo or Error fails Hello", async () => {
     const { client, sockets } = connectFake(true, () => Buffer.from(encodeFrame(ResponseType.Ok, new Uint8Array(0))))
-    await assert.rejects(client.connect(), HelloError)
+    await assert.rejects(client.connect(), /Hello: expected response type 11, got 0/)
     assert.equal(sockets[0].destroyed, true)
   })
 
