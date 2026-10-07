@@ -7,9 +7,10 @@ import {
   ResponseType,
   SceneDataResponse,
   Vec3,
+  encodeFrame,
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
-import { Frame, FrameReader, encodeFrame } from "./framing"
+import { Frame, FrameReader } from "./framing"
 import { AudioSamples } from "../audio-stream"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */

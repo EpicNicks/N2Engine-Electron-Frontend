@@ -1,8 +1,6 @@
-// Framing for the editor protocol: every message, both ways, is [type: uint8][payloadLength: uint32 LE][payload].
-// No DOM or Electron dependencies, so it is unit tested in Node.
-
-/** Bytes before the payload: the type id and the payload length */
-export const HeaderBytes = 5
+// Reading frames off the socket: every message, both ways, is [type: uint8][payloadLength: uint32 LE][payload].
+// Writing one is the generated encodeFrame. No DOM or Electron dependencies, so it is unit tested in Node.
+import { FRAME_HEADER_BYTES as HeaderBytes } from "./protocol.generated"
 
 /** A complete frame off the wire */
 export interface Frame {
@@ -127,13 +125,4 @@ export class FrameReader {
       }
     }
   }
-}
-
-/** One complete frame: header plus payload */
-export function encodeFrame(type: number, payload: Uint8Array): Buffer {
-  const frame = Buffer.allocUnsafe(HeaderBytes + payload.length)
-  frame.writeUInt8(type, 0)
-  frame.writeUInt32LE(payload.length, 1)
-  frame.set(payload, HeaderBytes)
-  return frame
 }

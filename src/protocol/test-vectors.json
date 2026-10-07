@@ -1,0 +1,262 @@
+{
+  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
+  "protocolVersion": "1.1.0",
+  "requests": [
+    {
+      "command": "SetViewportSize",
+      "id": "0x02",
+      "fields": {
+        "width": -123456,
+        "height": -123457
+      },
+      "payload": "c01dfeffbf1dfeff"
+    },
+    {
+      "command": "Hello",
+      "id": "0x04",
+      "fields": {
+        "clientName": "clientName 0 ✓ é",
+        "protocolVersion": "protocolVersion 1 ✓ é",
+        "token": "token 2 ✓ é"
+      },
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
+    },
+    {
+      "command": "SetCameraPosition",
+      "id": "0x10",
+      "fields": {
+        "x": 1.25,
+        "y": -1.5,
+        "z": 1.75
+      },
+      "payload": "0000a03f0000c0bf0000e03f"
+    },
+    {
+      "command": "CreateScene",
+      "id": "0x20",
+      "fields": {
+        "name": "name 0 ✓ é"
+      },
+      "payload": "0d0000006e616d65203020e29c9320c3a9"
+    },
+    {
+      "command": "LoadScene",
+      "id": "0x21",
+      "fields": {
+        "sceneJson": "sceneJson 0 ✓ é"
+      },
+      "payload": "120000007363656e654a736f6e203020e29c9320c3a9"
+    },
+    {
+      "command": "DeleteScene",
+      "id": "0x23",
+      "fields": {
+        "sceneName": "sceneName 0 ✓ é"
+      },
+      "payload": "120000007363656e654e616d65203020e29c9320c3a9"
+    },
+    {
+      "command": "CreateEntity",
+      "id": "0x30",
+      "fields": {
+        "name": "name 0 ✓ é"
+      },
+      "payload": "0d0000006e616d65203020e29c9320c3a9"
+    },
+    {
+      "command": "DestroyEntity",
+      "id": "0x31",
+      "fields": {
+        "entityId": "entityId 0 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "SetEntityTransform",
+      "id": "0x32",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "position": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0
+        },
+        "rotation": {
+          "x": 1.75,
+          "y": -2.0,
+          "z": 2.25
+        },
+        "scale": {
+          "x": -2.0,
+          "y": 2.25,
+          "z": -2.5
+        }
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f000000c000001040000000c000001040000020c0"
+    },
+    {
+      "command": "GetEntityTransform",
+      "id": "0x33",
+      "fields": {
+        "entityId": "entityId 0 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "CreateScript",
+      "id": "0x40",
+      "fields": {
+        "name": "name 0 ✓ é"
+      },
+      "payload": "0d0000006e616d65203020e29c9320c3a9"
+    }
+  ],
+  "responses": [
+    {
+      "response": "Ok",
+      "id": "0x00",
+      "fields": {},
+      "payload": ""
+    },
+    {
+      "response": "Error",
+      "id": "0x01",
+      "fields": {
+        "message": "Something failed ✓ é"
+      },
+      "payload": "536f6d657468696e67206661696c656420e29c9320c3a9"
+    },
+    {
+      "response": "FrameData",
+      "id": "0x02",
+      "fields": {
+        "width": 305419896,
+        "height": 305419897,
+        "pixels": "02274c7196bbe005"
+      },
+      "payload": "785634127956341202274c7196bbe005"
+    },
+    {
+      "response": "AudioSamples",
+      "id": "0x0A",
+      "fields": {
+        "sampleRate": 305419896,
+        "channels": 305419897,
+        "sampleFormat": "sampleFormat 2 ✓ é",
+        "frameCount": 305419899,
+        "droppedFrames": 305419900,
+        "samples": "052a4f7499bee308"
+      },
+      "payload": "78563412795634121500000073616d706c65466f726d6174203220e29c9320c3a97b5634127c563412052a4f7499bee308"
+    },
+    {
+      "response": "ServerInfo",
+      "id": "0x0B",
+      "fields": {
+        "protocolVersion": "protocolVersion 0 ✓ é",
+        "engineVersion": "engineVersion 1 ✓ é",
+        "capabilities": [
+          "capabilities 2 ✓",
+          "capabilities 3 ✓"
+        ],
+        "projectLoaded": false
+      },
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00"
+    },
+    {
+      "response": "CameraPosition",
+      "id": "0x03",
+      "fields": {
+        "x": 1.25,
+        "y": -1.5,
+        "z": 1.75
+      },
+      "payload": "0000a03f0000c0bf0000e03f"
+    },
+    {
+      "response": "SceneData",
+      "id": "0x07",
+      "fields": {
+        "sceneJson": "sceneJson 0 ✓ é"
+      },
+      "payload": "120000007363656e654a736f6e203020e29c9320c3a9"
+    },
+    {
+      "response": "EntityCreated",
+      "id": "0x06",
+      "fields": {
+        "entityId": "entityId 0 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "response": "EntityTransform",
+      "id": "0x04",
+      "fields": {
+        "position": {
+          "x": 1.25,
+          "y": -1.5,
+          "z": 1.75
+        },
+        "rotation": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0
+        },
+        "scale": {
+          "x": 1.75,
+          "y": -2.0,
+          "z": 2.25
+        }
+      },
+      "payload": "0000a03f0000c0bf0000e03f0000c0bf0000e03f000000c00000e03f000000c000001040"
+    },
+    {
+      "response": "EntityList",
+      "id": "0x05",
+      "fields": {
+        "count": 2,
+        "entities": [
+          {
+            "id": "id 1 ✓ é",
+            "name": "name 2 ✓ é"
+          },
+          {
+            "id": "id 2 ✓ é",
+            "name": "name 3 ✓ é"
+          }
+        ]
+      },
+      "payload": "020000000b0000006964203120e29c9320c3a90d0000006e616d65203220e29c9320c3a90b0000006964203220e29c9320c3a90d0000006e616d65203320e29c9320c3a9"
+    },
+    {
+      "response": "ScriptData",
+      "id": "0x08",
+      "fields": {
+        "scriptTemplate": "scriptTemplate 0 ✓ é"
+      },
+      "payload": "1700000073637269707454656d706c617465203020e29c9320c3a9"
+    },
+    {
+      "response": "EngineHealth",
+      "id": "0x09",
+      "fields": {
+        "healthy": true,
+        "count": 2,
+        "subsystems": [
+          {
+            "name": "name 2 ✓ é",
+            "state": "state 3 ✓ é",
+            "detail": "detail 4 ✓ é"
+          },
+          {
+            "name": "name 3 ✓ é",
+            "state": "state 4 ✓ é",
+            "detail": "detail 5 ✓ é"
+          }
+        ]
+      },
+      "payload": "01020000000d0000006e616d65203220e29c9320c3a90e0000007374617465203320e29c9320c3a90f00000064657461696c203420e29c9320c3a90d0000006e616d65203320e29c9320c3a90e0000007374617465203420e29c9320c3a90f00000064657461696c203520e29c9320c3a9"
+    }
+  ]
+}

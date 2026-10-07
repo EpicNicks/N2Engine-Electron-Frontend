@@ -3,7 +3,7 @@ import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import * as net from "node:net"
 import { EngineClient, EngineError, MaxRequestPayloadBytes, ShutdownGraceMilliseconds } from "../protocol/engine-client"
-import { encodeFrame } from "../protocol/framing"
+import { encodeFrame } from "../protocol/protocol.generated"
 
 // Enough of a net.Socket for EngineClient: data, error and close events, write, end and destroy
 class FakeSocket extends EventEmitter {
@@ -110,7 +110,7 @@ describe("EngineClient reconnects", () => {
 })
 
 function frame(type: number, payload: Buffer = Buffer.alloc(0)): Buffer {
-  return encodeFrame(type, payload)
+  return Buffer.from(encodeFrame(type, payload))
 }
 
 describe("EngineClient requests", () => {
