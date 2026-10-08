@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict"
 import type { AssetDetails, AssetInfo } from "../protocol/protocol.generated"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
 import { AssetsState, isDirty } from "../renderer/assets-state"
+import { MaxTextAssetBytes } from "../renderer/asset-edit"
 import { ConsoleStore, entriesAfter } from "../renderer/console-store"
 import { assetDragData, parseAssetDrag } from "../renderer/drag-types"
 
@@ -545,5 +546,151 @@ describe("asset drags", () => {
     assert.equal(parseAssetDrag("[]"), null)
     assert.equal(parseAssetDrag(JSON.stringify({ uuid: "nope", path: "res://a", type: "Texture" })), null)
     assert.equal(parseAssetDrag(JSON.stringify({ uuid: U1, path: 5, type: "Texture" })), null)
+  })
+})
+
+describe("review fixes", () => {
+  test("a detail read that began before Apply doesn't replace what is being sent", async () => {
+    const { assets, engine, state } = setup()
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    // A read of the detail that is slow, then an Apply while it is on its way
+    const read = engine.getAssetInfo
+    let answerRead!: () => void
+    engine.getAssetInfo = async (...args: Parameters<typeof read>) => {
+      const old = await read(...args)
+      await new Promise<void>((resolve) => (answerRead = resolve))
+      return old
+    }
+    const refreshing = assets.refresh()
+    await tick()
+    await tick()
+    assets.editSettings('{ "mine": 1 }')
+    let finishSet!: () => void
+    engine.setImportSettings = async (_path: string, data: unknown) => {
+      await new Promise<void>((resolve) => (finishSet = resolve))
+      state.settings = data as Record<string, unknown>
+    }
+    engine.getAssetInfo = read
+    const applying = assets.applySettings()
+    await tick()
+    assert.equal(assets.detail.value?.saving, true)
+    answerRead() // the old answer: the host's settings from before
+    await refreshing
+    assert.equal(assets.detail.value?.settings, '{ "mine": 1 }')
+    assert.equal(assets.detail.value?.saving, true)
+    finishSet()
+    assert.equal(await applying, true)
+    assert.equal(assets.detail.value?.saving, false)
+    assert.deepEqual(state.settings, { mine: 1 })
+    assert.equal(assets.detail.value?.baseline, '{\n  "mine": 1\n}')
+  })
+
+  test("a refresh asked for while one is dropped by a reset still reads again for the new connection", async () => {
+    const { assets, engine } = setup()
+    let release!: () => void
+    let reads = 0
+    const list = engine.listAssets
+    engine.listAssets = async (...args: Parameters<typeof list>) => {
+      reads++
+      if (reads === 1) await new Promise<void>((resolve) => (release = resolve))
+      return list(...args)
+    }
+    const first = assets.refresh()
+    await tick()
+    assets.reset()
+    const second = assets.refresh() // shares the running one and asks for another read
+    release()
+    await Promise.all([first, second])
+    assert.equal(reads, 2)
+    assert.equal(assets.listing.value?.assets.length, 2)
+  })
+
+  test("a CRLF file stays CRLF: the editor holds LF, the file gets CRLF back, and the tab is clean until edited", async () => {
+    const { assets, state } = setup()
+    state.files.set("res://c.lua", "a\r\nb\r\n")
+    await assets.openText("res://c.lua")
+    const tab = () => assets.tabs.value[0]
+    assert.equal(tab().text, "a\nb\n")
+    assert.equal(tab().lineEnding, "\r\n")
+    assert.equal(isDirty(tab()), false)
+    assets.editText("res://c.lua", "a\nb\nc\n")
+    await assets.saveText("res://c.lua")
+    assert.equal(state.files.get("res://c.lua"), "a\r\nb\r\nc\r\n")
+    // Undoing the edit is no change
+    assets.editText("res://c.lua", "a\nb\nc\n")
+    assert.equal(isDirty(tab()), false)
+    // The same file read from disk again is the same text, so the event's echo changes nothing
+    await assets.onAssetsChanged(change({ modified: ["res://c.lua"] }))
+    assert.equal(tab().external, null)
+    assert.equal(tab().text, "a\nb\nc\n")
+  })
+
+  test("an LF file stays LF, and a file changed outside to CRLF follows when it has no edits", async () => {
+    const { assets, state } = setup()
+    await assets.openText("res://scripts/a.lua")
+    assert.equal(assets.tabs.value[0].lineEnding, "\n")
+    state.files.set("res://scripts/a.lua", "print(1)\r\n")
+    await assets.onAssetsChanged(change({ modified: ["res://scripts/a.lua"] }))
+    assert.equal(assets.tabs.value[0].lineEnding, "\r\n")
+    assert.equal(assets.tabs.value[0].text, "print(1)\n")
+  })
+
+  test("the size limit is on what is written (CRLF counts)", async () => {
+    const { assets, state, calls } = setup()
+    state.files.set("res://big.lua", "a\r\n")
+    await assets.openText("res://big.lua")
+    // Under the limit with LF line breaks, over it with CRLF
+    assets.editText("res://big.lua", "x\n".repeat(MaxTextAssetBytes / 2 - 100))
+    assert.equal(await assets.saveText("res://big.lua"), false)
+    assert.match(assets.tabs.value[0].error!, /larger than 4 MiB/)
+    assert.equal(calls.some((c) => c.startsWith("writeTextAsset")), false)
+  })
+
+  test("errors the host logged after the save's poll are not blamed on that save", () => {
+    const log = new ConsoleStore(async () => ({ epoch: 1, nextSeq: 2, dropped: 0, events: [] }) as never)
+    const mark = log.lastEntryId
+    log.note("error", "from the reload")
+    const end = log.lastEntryId
+    log.note("error", "something later")
+    assert.deepEqual(
+      entriesAfter(log.entries.value, mark, "error", end).map((e) => e.message),
+      ["from the reload"]
+    )
+  })
+
+  test("while a play session blocks edits nothing is sent, and the text stays", async () => {
+    const { engine, calls } = setup()
+    let blocked: string | null = "the game is playing"
+    const assets = new AssetsState(
+      engine,
+      null,
+      () => {},
+      () => blocked
+    )
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    await assert.rejects(assets.createFolder("res://", "x"), /can't be changed now: the game is playing/)
+    await assert.rejects(assets.createScript("res://", "x"), /can't be changed now/)
+    assets.editSettings('{ "a": 1 }')
+    assert.equal(await assets.applySettings(), false)
+    assert.match(assets.detail.value!.error!, /can't be changed now/)
+    await assets.openText("res://scripts/a.lua")
+    assets.editText("res://scripts/a.lua", "mine")
+    assert.equal(await assets.saveText("res://scripts/a.lua"), false)
+    assert.match(assets.tabs.value[0].error!, /can't be changed now/)
+    assert.equal(assets.tabs.value[0].text, "mine")
+    assert.equal(calls.some((c) => /^(createFolder|createScriptAsset|setImportSettings|writeTextAsset)/.test(c)), false)
+    blocked = null
+    assert.equal(await assets.saveText("res://scripts/a.lua"), true)
+  })
+
+  test("current() shares the read that is on its way and doesn't ask again", async () => {
+    const { assets, calls } = setup()
+    const reading = assets.refresh()
+    const listing = await assets.current()
+    await reading
+    assert.equal(listing.assets.length, 2)
+    assert.equal(calls.filter((c) => c.startsWith("listAssets")).length, 1)
   })
 })

@@ -51,8 +51,9 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
         // The component types and the project's assets don't change while the host runs (the assets on a rescan)
         untracked(() => {
           void inspector.loadTypes()
-          void inspector.loadAssets()
+          // The assets first: the inspector's asset fields use the panel's listing
           assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
+          void inspector.loadAssets()
         })
       }
     }),
@@ -71,14 +72,14 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
       assetsEffectStarted = true
       if (!store.connected.peek()) return
       untracked(() => {
-        void inspector.loadAssets()
-        void inspector.refreshLuaFields()
         // The event itself, when there is a new one; none when the count moved because events were missed
         const event = store.lastAssetsChange.peek()
         const fresh = event !== handledAssetsChange ? event : null
         handledAssetsChange = event
-        if (!started) return
-        assets.onAssetsChanged(fresh).catch((e) => store.reportError("Failed to list the assets", e))
+        // The assets first: the inspector's asset fields use the panel's listing
+        if (started) assets.onAssetsChanged(fresh).catch((e) => store.reportError("Failed to list the assets", e))
+        void inspector.loadAssets()
+        void inspector.refreshLuaFields()
       })
     }),
 

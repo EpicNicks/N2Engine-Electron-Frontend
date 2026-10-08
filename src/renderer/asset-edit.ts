@@ -164,3 +164,22 @@ export function checkTextForWrite(text: string): Checked<string> {
   }
   return ok(text)
 }
+
+// ==================== Line endings ====================
+
+/** A text file's line ending: what a textarea can't keep (it holds every line break as LF) */
+export type LineEnding = "\n" | "\r\n"
+
+/** The text as the editor holds it: every CRLF and lone CR is a LF (as a textarea does) */
+export const normalizeLineEndings = (text: string): string => text.replace(/\r\n?/g, "\n")
+
+/** The style most of the file's line breaks have (LF when there is a tie or none) */
+export function detectLineEnding(text: string): LineEnding {
+  const crlf = (text.match(/\r\n/g) ?? []).length
+  const lf = (text.match(/\n/g) ?? []).length - crlf
+  return crlf > lf ? "\r\n" : "\n"
+}
+
+/** The editor's text as it goes to the file: every line break in the file's style */
+export const withLineEnding = (text: string, ending: LineEnding): string =>
+  ending === "\n" ? text : text.replace(/\n/g, ending)

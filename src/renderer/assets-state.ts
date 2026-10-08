@@ -9,7 +9,18 @@ import { batch, computed, signal } from "@preact/signals-core"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
 import type { AssetDetails } from "../protocol/protocol.generated"
 import type { EngineApi, JsonObject } from "../shared/api"
-import { checkAssetName, checkScriptName, checkTextForWrite, importSettingsText, parseImportSettings, sameImportSettings } from "./asset-edit"
+import {
+  LineEnding,
+  checkAssetName,
+  checkScriptName,
+  checkTextForWrite,
+  detectLineEnding,
+  importSettingsText,
+  normalizeLineEndings,
+  parseImportSettings,
+  sameImportSettings,
+  withLineEnding,
+} from "./asset-edit"
 import {
   AssetFilter,
   AssetListing,
@@ -45,17 +56,21 @@ export interface LogMarks {
 /** A text file open in the editor */
 export interface TextTab {
   path: string
-  /** What the editor holds */
+  /** What the editor holds, with LF line breaks (a textarea can't hold CRLF) */
   text: string
-  /** What the host has: what was read, or last written */
+  /** What the host has: what was read, or last written, with LF line breaks */
   savedText: string
+  /** The file's own line ending, put back on save so a CRLF file stays CRLF */
+  lineEnding: LineEnding
   saving: boolean
   /** Why the last save failed (the host's words); null otherwise. The text is still here. */
   error: string | null
   /** The file was changed, or deleted, on disk while the tab had unsaved edits */
   external: "changed" | "removed" | null
-  /** The newest console entry before the last save: the error entries after it came from that save's reload */
+  /** The console's newest entry before the last save: the error entries after it came from that save's reload */
   saveMark: number | null
+  /** The console's newest entry after the save's log poll: the errors up to it are the save's (later ones aren't) */
+  saveEnd: number | null
 }
 
 export const isDirty = (tab: TextTab): boolean => tab.text !== tab.savedText
@@ -118,8 +133,15 @@ export class AssetsState {
   constructor(
     private readonly engine: Engine,
     private readonly log: LogMarks | null = null,
-    private readonly onError: (what: string, e: unknown) => void = () => {}
+    private readonly onError: (what: string, e: unknown) => void = () => {},
+    /** Why the assets can't be changed now (a play session: the host refuses its writers); null when they can */
+    private readonly editBlocked: () => string | null = () => null
   ) {}
+
+  private blockedReason(): string | null {
+    const reason = this.editBlocked()
+    return reason === null ? null : `The assets can't be changed now: ${reason}`
+  }
 
   /** The connection ended (or another host's began): what the host listed is gone, the open files stay with their text */
   reset(): void {
@@ -157,14 +179,14 @@ export class AssetsState {
         const generation = this.generation
         try {
           const listing = await this.engine.listAssets("", true)
-          if (generation !== this.generation) return
+          if (generation !== this.generation) continue
           batch(() => {
             this.listing.value = listing
             this.listingError.value = null
           })
           await this.reconcileSelection()
         } catch (e) {
-          if (generation !== this.generation) return
+          if (generation !== this.generation) continue
           this.listingError.value = messageOf(e)
           console.error("Failed to list the assets:", e)
         }
@@ -175,6 +197,17 @@ export class AssetsState {
     })
     this.refreshing = running
     return running
+  }
+
+  /**
+   * The listing as it is after the read that is on its way (none: one is started), for panels that need the listing
+   * without asking the host again; throws what went wrong when there is none
+   */
+  async current(): Promise<AssetListing> {
+    await (this.refreshing ?? this.refresh())
+    const listing = this.listing.value
+    if (!listing) throw new Error(this.listingError.value ?? "The assets haven't been listed")
+    return listing
   }
 
   /** The listing changed: the selection goes if its asset is gone, else its detail is read again */
@@ -250,6 +283,8 @@ export class AssetsState {
     } catch (e) {
       if (!current()) return
       const kept = this.detail.value?.path === path ? this.detail.value : null
+      // The settings are on their way: their own read follows
+      if (kept?.saving) return
       this.detail.value = {
         path,
         info: kept?.info ?? null,
@@ -264,7 +299,9 @@ export class AssetsState {
     if (!current()) return
     const baseline = importSettingsText(info.customData)
     const kept = this.detail.value?.path === path ? this.detail.value : null
-    if (kept && kept.settings !== kept.baseline && !kept.saving) {
+    // An answer that began before Apply must not replace what is being sent (applySettings reads again afterwards)
+    if (kept?.saving) return
+    if (kept && kept.settings !== kept.baseline) {
       // Edited: keep the text, say when the host's moved on
       const changed = !sameImportSettings(kept.baseline, baseline)
       this.detail.value = { ...kept, info, baseline, outdated: kept.outdated || changed, error: kept.error }
@@ -289,6 +326,11 @@ export class AssetsState {
   async applySettings(): Promise<boolean> {
     const detail = this.detail.value
     if (!detail || detail.saving) return false
+    const blocked = this.blockedReason()
+    if (blocked) {
+      this.detail.value = { ...detail, error: blocked }
+      return false
+    }
     const checked = parseImportSettings(detail.settings)
     if (!checked.ok) {
       this.detail.value = { ...detail, error: checked.error }
@@ -317,6 +359,8 @@ export class AssetsState {
 
   /** Makes a folder inside a folder (res://...); answers its path. Throws the host's refusal. */
   async createFolder(parent: string, name: string): Promise<string> {
+    const blocked = this.blockedReason()
+    if (blocked) throw new Error(blocked)
     const checked = checkAssetName(name.trim())
     if (!checked.ok) throw new Error(checked.error)
     const path = childPath(parent, checked.value)
@@ -333,6 +377,8 @@ export class AssetsState {
    * as the host spells it. Throws the host's refusal (an existing file at the path, a bad name).
    */
   async createScript(parent: string, name: string): Promise<string> {
+    const blocked = this.blockedReason()
+    if (blocked) throw new Error(blocked)
     const checked = checkScriptName(name)
     if (!checked.ok) throw new Error(checked.error)
     const created = await this.engine.createScriptAsset(childPath(parent, checked.value), "")
@@ -362,13 +408,24 @@ export class AssetsState {
   async openText(path: string): Promise<void> {
     if (!this.tab(path)) {
       const generation = this.generation
-      const text = await this.engine.readTextAsset(path)
+      const disk = await this.engine.readTextAsset(path)
       if (generation !== this.generation) return
+      const text = normalizeLineEndings(disk)
       // Opened twice at once: the first tab stays
       if (!this.tab(path)) {
         this.tabs.value = [
           ...this.tabs.value,
-          { path, text, savedText: text, saving: false, error: null, external: null, saveMark: null },
+          {
+            path,
+            text,
+            savedText: text,
+            lineEnding: detectLineEnding(disk),
+            saving: false,
+            error: null,
+            external: null,
+            saveMark: null,
+            saveEnd: null,
+          },
         ]
       }
     }
@@ -398,31 +455,40 @@ export class AssetsState {
   private async writeTab(path: string): Promise<boolean> {
     const tab = this.tab(path)
     if (!tab) return false
-    const checked = checkTextForWrite(tab.text)
+    const blocked = this.blockedReason()
+    if (blocked) {
+      this.patchTab(path, { error: blocked })
+      return false
+    }
+    const text = tab.text
+    const onDisk = withLineEnding(text, tab.lineEnding)
+    const checked = checkTextForWrite(onDisk)
     if (!checked.ok) {
       this.patchTab(path, { error: checked.error })
       return false
     }
-    const text = tab.text
     const mark = this.log?.mark() ?? null
     this.patchTab(path, { saving: true, error: null })
     try {
-      await this.engine.writeTextAsset(path, text)
+      await this.engine.writeTextAsset(path, onDisk)
     } catch (e) {
       this.patchTab(path, { saving: false, error: messageOf(e) })
       return false
     }
     // Text typed while it was being written stays, dirty
-    this.patchTab(path, { saving: false, savedText: text, error: null, external: null, saveMark: mark })
+    this.patchTab(path, { saving: false, savedText: text, error: null, external: null, saveMark: mark, saveEnd: null })
     // The reload's errors are log events
     await this.log?.poll().catch((e) => console.debug("Polling the log after a save failed:", e))
+    // The errors up to here are this save's; a later one is not blamed on it
+    if (this.log) this.patchTab(path, { saveEnd: this.log.mark() })
     return true
   }
 
   /** Throws away the tab's edits and reads the file again */
   async reloadText(path: string): Promise<void> {
-    const text = await this.engine.readTextAsset(path)
-    this.patchTab(path, { text, savedText: text, error: null, external: null })
+    const disk = await this.engine.readTextAsset(path)
+    const text = normalizeLineEndings(disk)
+    this.patchTab(path, { text, savedText: text, lineEnding: detectLineEnding(disk), error: null, external: null })
   }
 
   closeText(path: string): void {
@@ -449,21 +515,31 @@ export class AssetsState {
   }
 
   private async syncTab(path: string, removed: boolean): Promise<void> {
-    let disk: string
+    let raw: string
     try {
-      disk = await this.engine.readTextAsset(path)
+      raw = await this.engine.readTextAsset(path)
     } catch (e) {
       // Gone (or no longer readable): the text stays, flagged when it isn't what the host had
       if (removed && this.tab(path)) this.patchTab(path, { external: "removed" })
       else console.debug("Reading a changed file failed:", e)
       return
     }
+    const disk = normalizeLineEndings(raw)
     const tab = this.tab(path)
-    if (!tab || tab.saving || disk === tab.savedText) {
-      if (tab && !tab.saving && tab.external !== null) this.patchTab(path, { external: null })
+    if (!tab || tab.saving) return
+    if (disk === tab.savedText) {
+      // Only the line endings may differ (the file was converted outside): a file with no edits follows it
+      const ending = detectLineEnding(raw)
+      const clean = tab.text === tab.savedText
+      if (tab.external !== null || (clean && ending !== tab.lineEnding)) {
+        this.patchTab(path, { external: null, ...(clean ? { lineEnding: ending } : {}) })
+      }
       return
     }
-    if (tab.text === tab.savedText) this.patchTab(path, { text: disk, savedText: disk, error: null, external: null })
-    else this.patchTab(path, { external: "changed" })
+    if (tab.text === tab.savedText) {
+      this.patchTab(path, { text: disk, savedText: disk, lineEnding: detectLineEnding(raw), error: null, external: null })
+    } else {
+      this.patchTab(path, { external: "changed" })
+    }
   }
 }

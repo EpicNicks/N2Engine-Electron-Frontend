@@ -6,6 +6,9 @@ import {
   checkAssetName,
   checkScriptName,
   checkTextForWrite,
+  detectLineEnding,
+  normalizeLineEndings,
+  withLineEnding,
   importSettingsText,
   isTextAssetPath,
   parseImportSettings,
@@ -109,5 +112,24 @@ describe("text files", () => {
     assert.match(errorOf(checkTextForWrite("x".repeat(MaxTextAssetBytes + 1)))!, /larger than 4 MiB/)
     // 3-byte characters: under the limit in characters, over it in bytes
     assert.match(errorOf(checkTextForWrite("€".repeat(MaxTextAssetBytes / 3 + 1)))!, /larger than 4 MiB/)
+  })
+})
+
+describe("line endings", () => {
+  test("a style is detected by what most breaks are, LF for none or a tie", () => {
+    assert.equal(detectLineEnding("a\r\nb\r\n"), "\r\n")
+    assert.equal(detectLineEnding("a\nb\n"), "\n")
+    assert.equal(detectLineEnding("a\r\nb\nc\n"), "\n")
+    assert.equal(detectLineEnding("a\r\nb\nc\r\n"), "\r\n")
+    assert.equal(detectLineEnding("a\r\nb\n"), "\n")
+    assert.equal(detectLineEnding("no breaks"), "\n")
+  })
+
+  test("the editor's text has LF only, and the file's style goes back on", () => {
+    assert.equal(normalizeLineEndings("a\r\nb\rc\nd"), "a\nb\nc\nd")
+    assert.equal(withLineEnding("a\nb\n", "\r\n"), "a\r\nb\r\n")
+    assert.equal(withLineEnding("a\nb\n", "\n"), "a\nb\n")
+    const original = "x\r\ny\r\n"
+    assert.equal(withLineEnding(normalizeLineEndings(original), detectLineEnding(original)), original)
   })
 })

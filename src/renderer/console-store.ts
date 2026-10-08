@@ -26,9 +26,14 @@ export const DefaultMaxEntries = 5000
 
 const Levels: readonly LogLevel[] = ["info", "warn", "error"]
 
-/** The entries after the one with id afterId (see ConsoleStore.lastEntryId) that are at a level */
-export function entriesAfter(entries: readonly ConsoleEntry[], afterId: number, level: LogLevel): ConsoleEntry[] {
-  return entries.filter((entry) => entry.id > afterId && entry.level === level)
+/** The entries after the one with id afterId, up to the one with id upToId when given (see ConsoleStore.lastEntryId), at a level */
+export function entriesAfter(
+  entries: readonly ConsoleEntry[],
+  afterId: number,
+  level: LogLevel,
+  upToId = Infinity
+): ConsoleEntry[] {
+  return entries.filter((entry) => entry.id > afterId && entry.id <= upToId && entry.level === level)
 }
 
 /** An event as a console entry: log events only (other kinds are for other panels), any unknown field defaulted */

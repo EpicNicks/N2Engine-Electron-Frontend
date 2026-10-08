@@ -4,8 +4,8 @@
 import { render } from "preact"
 import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
-import { AssetsState } from "./assets-state"
-import { assetEntriesOf } from "./asset-tree"
+import { AssetsState, isDirty } from "./assets-state"
+import { assetEntriesOf, nameOf } from "./asset-tree"
 import { EditController } from "./edit-controller"
 import { editActions } from "./edit-actions"
 import { EditGroups } from "./edit-groups"
@@ -88,7 +88,9 @@ const scene = new SceneState(window.engine)
 const assets = new AssetsState(
   window.engine,
   { mark: () => store.console.lastEntryId, poll: () => store.console.pollNow() },
-  (what, e) => store.reportError(what, e)
+  (what, e) => store.reportError(what, e),
+  // The host refuses the asset writers during a play session
+  () => store.playMode.peek()
 )
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
@@ -114,16 +116,17 @@ const viewport = new ViewportController({
   // A click in the viewport selects like a click on the hierarchy's row (Ctrl toggles, Shift extends)
   select: (id, modifiers) => hierarchy.pick(id, modifiers),
 })
+store.unsavedFiles = () => assets.tabs.value.filter(isDirty).map((tab) => nameOf(tab.path))
 const app: AppState = {
   store,
   scene,
   assets,
   hierarchy,
   viewport,
-  // The asset fields choose from the host's listing, parts of models included
+  // The asset fields choose from the assets panel's listing (the host's ListAssets), parts of models included
   inspector: new InspectorState(
     window.engine,
-    { listAssets: async () => assetEntriesOf(await window.engine.listAssets("", true)) },
+    { listAssets: async () => assetEntriesOf(await assets.current()) },
     {
       confirm: confirmDialog,
       // The file systems of Windows and macOS don't tell res:// paths apart by case
@@ -165,7 +168,7 @@ effect(() => {
 
 // Closing or reloading the window with unsaved scene changes asks first (the main process shows the question)
 window.addEventListener("beforeunload", (e) => {
-  if (store.view.value === "editor" && store.sceneDirty.value) {
+  if (store.view.value === "editor" && (store.sceneDirty.value || store.unsavedFiles().length > 0)) {
     e.preventDefault()
     e.returnValue = ""
   }

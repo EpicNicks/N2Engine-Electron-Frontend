@@ -37,6 +37,7 @@ function typeIcon(type: string, name: string): string {
 async function newFolder(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New folder", "Not connected to the editor host")
+  if (store.playMode.value !== null) return store.reportError("New folder", "Not while the game is playing")
   const name = await prompt("New folder", "NewFolder")
   if (name) assets.createFolder(parent, name).catch((e) => store.reportError("Failed to create the folder", e))
 }
@@ -44,6 +45,7 @@ async function newFolder(app: AppState, parent: string): Promise<void> {
 async function newScript(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New script", "Not connected to the editor host")
+  if (store.playMode.value !== null) return store.reportError("New script", "Not while the game is playing")
   const name = await prompt("New script", "NewScript")
   if (name) assets.createScript(parent, name).catch((e) => store.reportError("Failed to create the script", e))
 }
@@ -51,6 +53,7 @@ async function newScript(app: AppState, parent: string): Promise<void> {
 async function newScene(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New scene", "Not connected to the editor host")
+  if (store.playMode.value !== null) return store.reportError("New scene", "Not while the game is playing")
   const made = await store.newScene(`${parent === RootFolder ? RootFolder : `${parent}/`}Untitled.scene`)
   if (made) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
 }
@@ -60,10 +63,11 @@ function copyText(app: AppState, text: string): void {
 }
 
 function folderMenu(app: AppState, folder: string): MenuItem[] {
+  const playing = app.store.playMode.peek() !== null
   return [
-    { label: "New Folder...", action: () => void newFolder(app, folder) },
-    { label: "New Script...", action: () => void newScript(app, folder) },
-    { label: "New Scene...", action: () => void newScene(app, folder) },
+    { label: "New Folder...", action: () => void newFolder(app, folder), disabled: playing },
+    { label: "New Script...", action: () => void newScript(app, folder), disabled: playing },
+    { label: "New Scene...", action: () => void newScene(app, folder), disabled: playing },
   ]
 }
 
@@ -246,6 +250,7 @@ function ImportSettingsEditor() {
         spellcheck={false}
         value={detail.settings}
         disabled={detail.info === null}
+        readOnly={store.playMode.value !== null}
         aria-label="Import settings"
         onInput={(e) => assets.editSettings((e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
@@ -261,7 +266,7 @@ function ImportSettingsEditor() {
       {detail.error && <div class="asset-error">{detail.error}</div>}
       <div class="import-settings-buttons">
         <button
-          disabled={!edited || detail.saving || !store.connected.value}
+          disabled={!edited || detail.saving || !store.connected.value || store.playMode.value !== null}
           onClick={() =>
             assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
           }
@@ -280,6 +285,8 @@ export function AssetsPanel() {
   const app = useApp()
   const { store, assets } = app
   const connected = store.connected.value
+  // Nothing is changed while a play session runs (the host refuses it)
+  const editable = connected && store.playMode.value === null
   const rows = assets.rows.value
   const filter = assets.filter.value
   const listing = assets.listing.value
@@ -302,14 +309,14 @@ export function AssetsPanel() {
       actions={
         <>
           <button
-            disabled={!connected}
+            disabled={!editable}
             title="Make a folder (in the selected folder)"
             onClick={() => void newFolder(app, target())}
           >
             + Folder
           </button>
           <button
-            disabled={!connected}
+            disabled={!editable}
             title="Make a script from the engine's template (in the selected folder)"
             onClick={() => void newScript(app, target())}
           >
@@ -360,7 +367,7 @@ export function TextEditor({ path }: { path: string }) {
   if (!tab) return null
 
   const dirty = isDirty(tab)
-  const logged = tab.saveMark === null ? [] : entriesAfter(entries, tab.saveMark, "error")
+  const logged = tab.saveMark === null ? [] : entriesAfter(entries, tab.saveMark, "error", tab.saveEnd ?? undefined)
   const save = () => void assets.saveText(path)
   let status = "Saved"
   if (tab.saving) status = "Saving..."
@@ -404,6 +411,7 @@ export function TextEditor({ path }: { path: string }) {
         class="script-editor"
         spellcheck={false}
         value={tab.text}
+        readOnly={store.playMode.value !== null}
         aria-label={nameOf(path)}
         onInput={(e) => assets.editText(path, (e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
@@ -416,7 +424,7 @@ export function TextEditor({ path }: { path: string }) {
       <div class="text-status">
         <span>{path}</span>
         <span class={dirty ? "dirty" : ""}>{status}</span>
-        <button disabled={!dirty || tab.saving || !store.connected.value} onClick={save} title="Save (Ctrl+S)">
+        <button disabled={!dirty || tab.saving || !store.connected.value || store.playMode.value !== null} onClick={save} title="Save (Ctrl+S)">
           Save
         </button>
       </div>
