@@ -14,8 +14,11 @@ import type { EditGroups } from "./edit-groups"
 import { Bounds, EditorCameraController } from "./viewport-camera"
 import { LatestWinsSender } from "./viewport-frames"
 import {
-  Axis,
   AxisDrag,
+  DragSource,
+  HandleId,
+  PlaneDrag,
+  isPlane,
   GizmoDrag,
   GizmoLayout,
   GizmoTarget,
@@ -53,6 +56,13 @@ export interface ViewportDeps {
   canEdit(): boolean
   /** The primary selection, or what a click selected */
   selected(): string | null
+  /**
+   * The selected objects the gizmo moves: the topmost of the selection, so an object under another selected one is not
+   * moved twice (it moves with its ancestor). Default: just the primary selection.
+   */
+  moveIds?(): readonly string[]
+  /** Every selected object (a change to any of them reloads the gizmo's targets). Default: just the primary selection. */
+  selectionIds?(): readonly string[]
   /** A click picked this object (null: empty space) */
   select(entityId: string | null): void
 }
@@ -80,10 +90,13 @@ export const MaxStepHandleLengths = 50
 
 export class ViewportController {
   readonly camera = new EditorCameraController()
-  /** The selected object as the gizmo needs it; null with none, or one that has no transform */
+  /**
+   * Where the gizmo is: the primary selection as the gizmo needs it (or, when the primary has no transform, the first
+   * object that moves); null with no selection
+   */
   readonly target = signal<GizmoTarget | null>(null)
-  /** The handle under the pointer, or the one being dragged */
-  readonly hoverAxis = signal<Axis | null>(null)
+  /** The handle (an axis or a plane) under the pointer, or the one being dragged */
+  readonly hoverHandle = signal<HandleId | null>(null)
   readonly dragging = signal(false)
   /** The selection's world bounds, when the host can say (the seam); drawn as a box */
   readonly selectionBounds = signal<Bounds | null>(null)
@@ -93,6 +106,8 @@ export class ViewportController {
   private size: PixelSize | null = null
   private readonly cameraSender: LatestWinsSender<ReturnType<EditorCameraController["toRequest"]>>
   private drag: GizmoDrag | null = null
+  /** The objects a drag of the gizmo moves, as the host last said (the topmost of the selection that have a transform) */
+  private movers: GizmoTarget[] = []
   private ended: Promise<void> = Promise.resolve()
   private pressed: { pixel: Pixel; onGizmo: boolean } | null = null
   /** Counts target loads, so a slow answer can't replace a newer one */
@@ -174,9 +189,10 @@ export class ViewportController {
     if (this.drag) void this.finishDrag("abandon", false)
     this.pressed = null
     this.target.value = null
+    this.movers = []
     this.selectionBounds.value = null
     this.dragging.value = false
-    this.hoverAxis.value = null
+    this.hoverHandle.value = null
     this.redraw()
   }
 
@@ -300,20 +316,16 @@ export class ViewportController {
 
   // ==================== The selected object ====================
 
-  /** The selection's primary object changed, or the objects changed in the scene: read it for the gizmo */
-  async loadTarget(id: string | null): Promise<void> {
-    const load = ++this.loads
-    if (id === null || !this.deps.engine.isConnected()) {
-      this.target.value = null
-      this.selectionBounds.value = null
-      this.redraw()
-      return
-    }
+  private moveIds(id: string): readonly string[] {
+    return this.deps.moveIds?.() ?? [id]
+  }
+
+  /** One object as the gizmo needs it; null for one that is gone, can't be read or has no transform */
+  private async readTarget(id: string): Promise<GizmoTarget | null> {
     try {
       const { entity, worldMatrix } = await this.deps.engine.getEntity(id)
-      if (load !== this.loads || this.drag) return
       const t = entity.transform
-      this.target.value = t
+      return t
         ? {
             id,
             name: entity.header.name,
@@ -324,26 +336,47 @@ export class ViewportController {
           }
         : null
     } catch (e) {
-      // An object that is gone, or one the host can't read: no gizmo
+      // An object that is gone, or one the host can't read: no gizmo for it
       console.debug("GetEntity failed:", e)
-      if (load === this.loads) this.target.value = null
+      return null
     }
-    if (load === this.loads) {
-      await this.loadBounds(id)
+  }
+
+  /**
+   * The selection's primary object changed, or the objects changed in the scene: read the primary and the objects a
+   * drag moves (the topmost of the selection) for the gizmo
+   */
+  async loadTarget(id: string | null): Promise<void> {
+    const load = ++this.loads
+    if (id === null || !this.deps.engine.isConnected()) {
+      this.target.value = null
+      this.movers = []
+      this.selectionBounds.value = null
       this.redraw()
+      return
     }
+    const moveIds = this.moveIds(id)
+    const ids = [...new Set([id, ...moveIds])]
+    const read = await Promise.all(ids.map((i) => this.readTarget(i)))
+    if (load !== this.loads || this.drag) return
+    const byId = new Map(ids.map((i, k) => [i, read[k]] as const))
+    this.movers = moveIds.map((i) => byId.get(i) ?? null).filter((t): t is GizmoTarget => t !== null)
+    this.target.value = byId.get(id) ?? this.movers[0] ?? null
+    await this.loadBounds(id)
+    if (load === this.loads) this.redraw()
   }
 
   /** Scene objects changed: the selected one is read again, unless this client is moving it (the drag knows) */
   objectsChanged(entityIds: readonly string[], full: boolean): void {
     const id = this.deps.selected()
+    const selected = id === null ? [] : (this.deps.selectionIds?.() ?? [id])
     if (this.drag) {
       // The scene was replaced under the drag: its object is gone. Anything else is the echo of the drag's own edits.
       if (full) void this.finishDrag("abandon", true)
       return
     }
     if (id === null) return
-    if (full || entityIds.includes(id)) void this.loadTarget(id)
+    if (full || selected.some((s) => entityIds.includes(s))) void this.loadTarget(id)
   }
 
   private async loadBounds(id: string): Promise<void> {
@@ -384,9 +417,9 @@ export class ViewportController {
   hover(pixel: Pixel | null): void {
     if (this.drag) return
     const layout = pixel ? this.layout() : null
-    const axis = layout && pixel ? hitTestGizmo(layout, pixel, this.ratio) : null
-    if (axis !== this.hoverAxis.value) {
-      this.hoverAxis.value = axis
+    const handle = layout && pixel ? hitTestGizmo(layout, pixel, this.ratio) : null
+    if (handle !== this.hoverHandle.value) {
+      this.hoverHandle.value = handle
       this.redraw()
     }
   }
@@ -399,21 +432,17 @@ export class ViewportController {
     const target = this.target.value
     const layout = this.layout()
     const m = this.matrices()
-    const axis = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
+    const handle = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
     this.pressed = { pixel, onGizmo: false }
-    if (!target || !layout || !m || !this.size || !axis) return false
+    if (!target || !layout || !m || !this.size || !handle || this.movers.length === 0) return false
     const origin = mat4Translation(target.worldMatrix)
-    const axisDrag = AxisDrag.begin(
-      axis,
-      origin,
-      m.viewProjection,
-      pixel,
-      this.size.width,
-      this.size.height,
-      this.camera.farPlane,
-      layout.worldLength * MaxStepHandleLengths
-    )
-    if (!axisDrag) return false
+    const farPlane = this.camera.farPlane
+    const maxStep = layout.worldLength * MaxStepHandleLengths
+    const { width, height } = this.size
+    const source: DragSource | null = isPlane(handle)
+      ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
+      : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
+    if (!source) return false
     this.pressed.onGizmo = true
     this.drag = new GizmoDrag(
       {
@@ -422,13 +451,13 @@ export class ViewportController {
         onError: (what, e) => this.deps.onError(what, e),
         onMoved: () => this.frameNeeded(),
       },
-      target,
-      axisDrag,
+      this.movers,
+      source,
       snap
     )
     this.dragOrigin = origin
     this.dragging.value = true
-    this.hoverAxis.value = axis
+    this.hoverHandle.value = handle
     this.redraw()
     return true
   }

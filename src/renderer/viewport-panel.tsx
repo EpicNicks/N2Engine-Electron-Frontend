@@ -5,12 +5,13 @@ import { useEffect, useRef } from "preact/hooks"
 import { effect, untracked } from "@preact/signals-core"
 import { isTextEntry } from "./edit-actions"
 import { useApp } from "./ui"
-import { Axis, GizmoLayout } from "./viewport-gizmo"
+import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
+import { topLevel } from "./hierarchy-tree"
 import { FlyKeys, pointerActionFor, shortcutFor, wheelPixels, PointerAction } from "./viewport-input"
 import { ViewportRenderer } from "./viewport-renderer"
 
-const AxisColors: Readonly<Record<Axis, string>> = { x: "#e5484d", y: "#46a758", z: "#3e63dd" }
-const AxisHighlight: Readonly<Record<Axis, string>> = { x: "#ff9592", y: "#8eda9a", z: "#8da4ef" }
+const AxisColors: Readonly<Record<'x' | 'y' | 'z', string>> = { x: "#e5484d", y: "#46a758", z: "#3e63dd" }
+const AxisHighlight: Readonly<Record<'x' | 'y' | 'z', string>> = { x: "#ff9592", y: "#8eda9a", z: "#8da4ef" }
 
 /** One mouse gesture in progress */
 interface Gesture {
@@ -20,8 +21,25 @@ interface Gesture {
   lastY: number
 }
 
-function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: Axis | null, ratio: number): void {
+function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: HandleId | null, ratio: number): void {
   ctx.lineCap = "round"
+  // The plane squares first (the axes are drawn over them), each in the colour of the axis it is perpendicular to; they
+  // fade as the plane turns edge-on, and the one under the pointer is brighter
+  for (const handle of layout.planes) {
+    const normal = PlaneAxes[handle.plane].normal
+    const lit = handle.plane === active
+    ctx.globalAlpha = handle.alpha * (lit ? 0.85 : 0.4)
+    ctx.fillStyle = lit ? AxisHighlight[normal] : AxisColors[normal]
+    ctx.beginPath()
+    handle.corners.forEach((c, i) => (i === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)))
+    ctx.closePath()
+    ctx.fill()
+    ctx.globalAlpha = handle.alpha
+    ctx.strokeStyle = lit ? AxisHighlight[normal] : AxisColors[normal]
+    ctx.lineWidth = ratio
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
   for (const handle of layout.handles) {
     const lit = handle.axis === active
     const color = lit ? AxisHighlight[handle.axis] : AxisColors[handle.axis]
@@ -63,6 +81,7 @@ export function Viewport() {
     let boost = false
     let flyFrame: number | null = null
     let flyTime = 0
+    let loadedSelection = ""
 
     const renderer = new ViewportRenderer(
       frame,
@@ -109,7 +128,7 @@ export function Viewport() {
           ctx.stroke()
         }
         const layout = viewport.layout()
-        if (layout) drawGizmo(ctx, layout, viewport.hoverAxis.peek(), ratio)
+        if (layout) drawGizmo(ctx, layout, viewport.hoverHandle.peek(), ratio)
       })
     }
 
@@ -262,6 +281,7 @@ export function Viewport() {
       effect(() => {
         if (store.connected.value) {
           untracked(() => {
+            loadedSelection = ""
             renderer.start()
             void viewport.connected()
           })
@@ -272,10 +292,16 @@ export function Viewport() {
           })
         }
       }),
-      // The selected object is the gizmo's
+      // The selection is the gizmo's: its primary object places it, and the topmost selected objects move with it
       effect(() => {
-        const id = scene.selectedId.value
-        untracked(() => void viewport.loadTarget(store.connected.peek() ? id : null))
+        const selection = hierarchy.selection.value
+        hierarchy.tree.value // an object reparented under a selected one stops moving by itself
+        untracked(() => {
+          const key = `${selection.primary}|${topLevel(hierarchy.tree.peek(), selection.ids).join(",")}`
+          if (key === loadedSelection) return
+          loadedSelection = key
+          void viewport.loadTarget(store.connected.peek() ? selection.primary : null)
+        })
       }),
       // The scene changed (an inspector edit, an undo, a rename): the selected object is read again
       effect(() => {
@@ -347,7 +373,7 @@ export function Viewport() {
             class="viewport-help"
             title={
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
-              "(Shift: faster). F: frame the selection. Drag a gizmo handle to move the selected object (Ctrl: snap, " +
+              "(Shift: faster). F: frame the selection. Drag a gizmo arrow or square to move the selected objects (Ctrl: snap, " +
               "Esc: cancel)."
             }
           >

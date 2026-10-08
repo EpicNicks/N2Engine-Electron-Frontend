@@ -3,6 +3,12 @@ import * as assert from "node:assert/strict"
 import type { Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
 import {
   AxisDrag,
+  GizmoLayout,
+  PlaneDrag,
+  PlaneMinFacing,
+  hitTestGizmo as hitTest,
+  pointInQuad,
+  rayPlane,
   GizmoDrag,
   GizmoSizePixels,
   GizmoTarget,
@@ -67,10 +73,16 @@ function combine(parent: Trs, child: Trs): Trs {
 const rootTrs: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(1, 1, 1) }
 
 /** An object under the given parent: its world matrix is what the engine builds (T * R * S of the combined transform) */
-function targetUnder(parent: Trs, localPosition: Vec3, localRotation: Quat = IdentityQuat, localScale = vec3(1, 1, 1)): GizmoTarget {
+function targetUnder(
+  parent: Trs,
+  localPosition: Vec3,
+  localRotation: Quat = IdentityQuat,
+  localScale = vec3(1, 1, 1),
+  id = "obj"
+): GizmoTarget {
   const world = combine(parent, { position: localPosition, rotation: localRotation, scale: localScale })
   return {
-    id: "obj",
+    id,
     name: "Cube",
     localPosition,
     localRotation,
@@ -438,5 +450,310 @@ describe("the gizmo at other pixel ratios", () => {
     const pixel = { x: (x.from.x + x.to.x) / 2, y: x.from.y + 14 }
     assert.equal(hitTestGizmo(two, pixel, 1), null) // 14 frame pixels is out of reach at ratio 1
     assert.equal(hitTestGizmo(two, pixel, 2), "x") // and within 16 at ratio 2
+  })
+})
+
+/** A camera orbiting the origin: yaw and pitch in radians, at a distance */
+function orbitCamera(yaw: number, pitch: number, distance = 10, target = vec3(0, 0, 0)) {
+  const q = quatMultiply(quatFromAxisAngle(vec3(0, 1, 0), yaw), quatFromAxisAngle(vec3(1, 0, 0), pitch))
+  const forward = quatRotate(q, vec3(0, 0, -1))
+  const position = vec3(target.x - forward.x * distance, target.y - forward.y * distance, target.z - forward.z * distance)
+  const view = viewMatrix(position, q)
+  const projection = projectionMatrix(settings, W / H)
+  return { view, viewProjection: mat4Multiply(projection, view), position }
+}
+
+describe("plane handles", () => {
+  const origin = vec3(0, 0, 0)
+
+  test("from an oblique camera all three squares are there, and each lies on the side that faces the camera", () => {
+    for (const [yaw, pitch] of [
+      [0.6, -0.5],
+      [-0.6, -0.5],
+      [2.5, -0.5],
+      [0.6, 0.5],
+    ]) {
+      const c = orbitCamera(yaw, pitch)
+      const layout = gizmoLayout(c.view, c.viewProjection, origin, W, H)!
+      assert.equal(layout.planes.length, 3, `${yaw}, ${pitch}`)
+      const L = layout.worldLength
+      for (const handle of layout.planes) {
+        const axes = { xy: ["x", "y"], xz: ["x", "z"], yz: ["y", "z"] }[handle.plane]
+        const toCamera = vec3(c.position.x, c.position.y, c.position.z)
+        const dir = (a: string) => (a === "x" ? vec3(1, 0, 0) : a === "y" ? vec3(0, 1, 0) : vec3(0, 0, 1))
+        const side = (a: string) => (dir(a).x * toCamera.x + dir(a).y * toCamera.y + dir(a).z * toCamera.z >= 0 ? 1 : -1)
+        const mid = (a: string, b: string) =>
+          worldToScreen(
+            c.viewProjection,
+            vec3(
+              (dir(a).x * side(a) + dir(b).x * side(b)) * 0.475 * L,
+              (dir(a).y * side(a) + dir(b).y * side(b)) * 0.475 * L,
+              (dir(a).z * side(a) + dir(b).z * side(b)) * 0.475 * L
+            ),
+            W,
+            H
+          )!
+        assert.ok(pointInQuad(mid(axes[0], axes[1]), handle.corners), `${handle.plane} at ${yaw}, ${pitch}`)
+        // The square on the far side of the axes is not where it was drawn
+        const wrong = worldToScreen(
+          c.viewProjection,
+          vec3(
+            (-dir(axes[0]).x * side(axes[0]) - dir(axes[1]).x * side(axes[1])) * 0.475 * L,
+            (-dir(axes[0]).y * side(axes[0]) - dir(axes[1]).y * side(axes[1])) * 0.475 * L,
+            (-dir(axes[0]).z * side(axes[0]) - dir(axes[1]).z * side(axes[1])) * 0.475 * L
+          ),
+          W,
+          H
+        )!
+        assert.ok(!pointInQuad(wrong, handle.corners), `${handle.plane} is not on the far side`)
+      }
+    }
+  })
+
+  test("a plane seen edge-on is hidden, and fades in as it turns toward the camera", () => {
+    const edgeOn = orbitCamera(0, 0) // looking along -Z at the origin: the XZ and YZ planes are edge-on
+    const layout = gizmoLayout(edgeOn.view, edgeOn.viewProjection, origin, W, H)!
+    assert.deepEqual(layout.planes.map((p) => p.plane), ["xy"])
+    assert.equal(layout.planes[0].alpha, 1)
+
+    // The XZ plane's facing is sin(pitch): just under the limit it is hidden, just over it is faint, well over it is solid
+    const pitchFor = (facing: number) => -Math.asin(facing)
+    const hidden = orbitCamera(0, pitchFor(PlaneMinFacing * 0.9))
+    assert.equal(gizmoLayout(hidden.view, hidden.viewProjection, origin, W, H)!.planes.find((p) => p.plane === "xz"), undefined)
+    const f = orbitCamera(0, pitchFor(0.2))
+    const faint = gizmoLayout(f.view, f.viewProjection, origin, W, H)!
+    const xz = faint.planes.find((p) => p.plane === "xz")!
+    assert.ok(xz.alpha > 0 && xz.alpha < 1, `alpha ${xz.alpha}`)
+    const solid = orbitCamera(0, pitchFor(0.6))
+    assert.equal(gizmoLayout(solid.view, solid.viewProjection, origin, W, H)!.planes.find((p) => p.plane === "xz")!.alpha, 1)
+  })
+
+  test("an edge-on plane can't be grabbed: a pixel where its square would be hits nothing", () => {
+    const c = orbitCamera(0, 0)
+    const layout = gizmoLayout(c.view, c.viewProjection, origin, W, H)!
+    // Where the XZ square would be if it were drawn (below the origin, toward the camera's side)
+    const where = worldToScreen(c.viewProjection, vec3(0.5 * layout.worldLength, 0, 0.5 * layout.worldLength), W, H)!
+    const hit = hitTest(layout, where)
+    assert.ok(hit === null || hit === "x" || hit === "xy")
+    assert.notEqual(hit, "xz")
+  })
+})
+
+describe("hit priority between axes and planes", () => {
+  const quad = (x0: number, y0: number, x1: number, y1: number): GizmoLayout["planes"][number]["corners"] => [
+    { x: x0, y: y0 },
+    { x: x1, y: y0 },
+    { x: x1, y: y1 },
+    { x: x0, y: y1 },
+  ]
+  const layout: GizmoLayout = {
+    origin: { x: 0, y: 0 },
+    worldLength: 1,
+    handles: [{ axis: "x", from: { x: 0, y: 0 }, to: { x: 100, y: 0 } }],
+    planes: [
+      { plane: "xy", corners: quad(20, -30, 60, 30), alpha: 0.5 },
+      { plane: "xz", corners: quad(40, -10, 80, 50), alpha: 1 },
+    ],
+  }
+
+  test("an axis within reach beats a square under the pointer", () => {
+    assert.equal(hitTest(layout, { x: 30, y: 2 }), "x") // inside the xy square, and on the axis
+    assert.equal(hitTest(layout, { x: 30, y: 7 }), "x") // within the 8 pixels
+  })
+
+  test("outside the axis's reach the square that holds the pixel is taken", () => {
+    assert.equal(hitTest(layout, { x: 30, y: 20 }), "xy")
+    assert.equal(hitTest(layout, { x: 30, y: 9 }), "xy") // 9 pixels: just out of reach
+    assert.equal(hitTest(layout, { x: 70, y: 40 }), "xz")
+  })
+
+  test("where two squares overlap the one facing the camera more wins; elsewhere nothing", () => {
+    assert.equal(hitTest(layout, { x: 50, y: 20 }), "xz")
+    assert.equal(hitTest(layout, { x: 200, y: 200 }), null)
+  })
+
+  test("the pick distance scales with the pixel ratio", () => {
+    assert.equal(hitTest(layout, { x: 30, y: 9 }, 2), "x")
+  })
+
+  test("pointInQuad: inside, on the edge, outside, either winding", () => {
+    const q = quad(0, 0, 10, 10)
+    assert.equal(pointInQuad({ x: 5, y: 5 }, q), true)
+    assert.equal(pointInQuad({ x: 10, y: 5 }, q), true)
+    assert.equal(pointInQuad({ x: 11, y: 5 }, q), false)
+    assert.equal(pointInQuad({ x: 5, y: 5 }, [...q].reverse()), true)
+  })
+})
+
+describe("PlaneDrag", () => {
+  const c = orbitCamera(0.7, -0.6, 12)
+  const origin = vec3(1, 2, 3)
+  const pixelOf = (p: Vec3) => worldToScreen(c.viewProjection, p, W, H)!
+
+  test("the object follows the pointer in the plane: the world move is the pointer's, and has nothing out of the plane", () => {
+    for (const [plane, a, b] of [
+      ["xz", vec3(1, 0, 0), vec3(0, 0, 1)],
+      ["xy", vec3(1, 0, 0), vec3(0, 1, 0)],
+      ["yz", vec3(0, 1, 0), vec3(0, 0, 1)],
+    ] as const) {
+      const at = (u: number, v: number) =>
+        vec3(origin.x + a.x * u + b.x * v, origin.y + a.y * u + b.y * v, origin.z + a.z * u + b.z * v)
+      const drag = PlaneDrag.begin(plane, origin, c.viewProjection, pixelOf(at(0.5, 0.5)), W, H)!
+      const delta = drag.deltaAt(pixelOf(at(2.5, -1.5)))!
+      nearVec(delta, vec3(a.x * 2 + b.x * -2, a.y * 2 + b.y * -2, a.z * 2 + b.z * -2), 1e-4)
+      nearVec(drag.deltaAt(pixelOf(at(0.5, 0.5)))!, vec3(0, 0, 0), 1e-9)
+    }
+  })
+
+  test("the handle's name is the plane", () => {
+    assert.equal(PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(origin), W, H)!.handle, "xz")
+  })
+
+  test("a ray nearly parallel to the plane is rejected: at the start, and later in the drag", () => {
+    // From just above the XZ plane looking along -Z: the plane is edge-on for every ray
+    const low = orbitCamera(0, -0.01, 12, origin)
+    const start = worldToScreen(low.viewProjection, origin, W, H)!
+    assert.equal(PlaneDrag.begin("xz", origin, low.viewProjection, start, W, H), null)
+    // Begun from a good view, a later pixel whose ray runs along the plane is no answer
+    const drag = PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(origin), W, H)!
+    assert.equal(rayPlane({ origin: vec3(0, 5, 0), direction: vec3(1, 0.001, 0) }, origin, vec3(0, 1, 0)), null)
+    assert.ok(drag.deltaAt(pixelOf(vec3(2, 2, 4))))
+  })
+
+  test("a ray that meets the plane behind the camera, or beyond the far plane, is not followed", () => {
+    // The plane through the origin seen from above: pixels above the horizon of a tilted-up camera meet it behind
+    const up = orbitCamera(0, 0.5, 12)
+    assert.equal(rayPlane({ origin: up.position, direction: vec3(0, -1, 0) }, origin, vec3(0, 1, 0)), null)
+    const near = PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(origin), W, H, 5)
+    assert.equal(near, null) // the plane's point is about 12 away
+    const drag = PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(origin), W, H, 100)!
+    assert.equal(drag.deltaAt(pixelOf(vec3(-1000, 2, -1000))), null) // meets it too far out
+  })
+
+  test("one update moves the object by at most maxStep", () => {
+    const drag = PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(origin), W, H, Infinity, 2)!
+    const first = drag.deltaAt(pixelOf(vec3(-10, 2, -10)))!
+    near(Math.hypot(first.x, first.y, first.z), 2, 1e-9)
+    const second = drag.deltaAt(pixelOf(vec3(-10, 2, -10)))!
+    near(Math.hypot(second.x, second.y, second.z), 4, 1e-9)
+    // And it can come back
+    const back = drag.deltaAt(pixelOf(origin))!
+    near(Math.hypot(back.x, back.y, back.z), 2, 1e-9)
+  })
+
+  test("the vanishing line of the plane: pixels near the horizon give finite answers or none, never huge ones", () => {
+    const low = orbitCamera(0, -0.2, 12, origin)
+    const start = worldToScreen(low.viewProjection, vec3(1.5, 2, 4), W, H)!
+    const drag = PlaneDrag.begin("xz", origin, low.viewProjection, start, W, H, 1000, 50)
+    assert.ok(drag)
+    for (let y = 0; y < H; y += 10) {
+      const d = drag!.deltaAt({ x: W / 2, y })
+      assert.ok(d === null || Math.hypot(d.x, d.y, d.z) <= 50 * 61, `${y}`)
+    }
+  })
+})
+
+describe("GizmoDrag with a plane, and with several objects", () => {
+  function rig() {
+    const log: string[] = []
+    const calls: Array<{ id: string; position: Vec3 }> = []
+    const errors: string[] = []
+    const refuse = new Set<string>()
+    const deps = {
+      engine: {
+        setLocalTransform: async (id: string, position: Vec3) => {
+          if (refuse.has(id)) throw new Error("No such object")
+          log.push(`set ${id}`)
+          calls.push({ id, position })
+        },
+      },
+      groups: {
+        begin: async (label: string) => (log.push(`begin ${label}`), 1),
+        end: async () => void log.push("end"),
+      },
+      onError: (what: string) => errors.push(what),
+    }
+    return { deps, log, calls, errors, refuse }
+  }
+
+  const c = orbitCamera(0.7, -0.6, 12)
+  const pixelOf = (p: Vec3) => worldToScreen(c.viewProjection, p, W, H)!
+
+  test("a plane drag moves along both of its axes, and ctrl snaps those two (not the third)", async () => {
+    const { deps, calls } = rig()
+    const target = targetUnder(rootTrs, vec3(1, 2, 3))
+    const origin = mat4Translation(target.worldMatrix)
+    const drag = new GizmoDrag(deps, target, PlaneDrag.begin("xy", origin, c.viewProjection, pixelOf(vec3(1.3, 2.3, 3)), W, H)!)
+    drag.update(pixelOf(vec3(1.3 + 0.8, 2.3 + 0.3, 3)), true) // a move of (0.8, 0.3): snapped to (1, 0.5)
+    await drag.end()
+    const last = calls[calls.length - 1].position
+    nearVec(last, vec3(2, 2.5, 3), 1e-3)
+    nearVec(drag.worldDelta, vec3(1, 0.5, 0), 1e-3)
+  })
+
+  test("several objects: each goes by the same world delta through its own parents (rotated, scaled, nested)", async () => {
+    const { deps, log, calls } = rig()
+    const quarterZ = quatFromAxisAngle(vec3(0, 0, 1), Math.PI / 2)
+    const parentA: Trs = { position: vec3(1, 2, 3), rotation: IdentityQuat, scale: vec3(2, 1, 1) }
+    const parentB: Trs = { position: vec3(-4, 5, 6), rotation: quatFromAxisAngle(vec3(1, 2, 3), 0.8), scale: vec3(2, 0.5, 3) }
+    const a = targetUnder(parentA, vec3(1, 1, 0), quarterZ, vec3(1, 1, 1), "a")
+    const b = targetUnder(parentB, vec3(3, -2, 1), quatFromAxisAngle(vec3(0, 1, 1), 1.3), vec3(1.5, 2, 0.25), "b")
+    const root = targetUnder(rootTrs, vec3(7, 7, 7), IdentityQuat, vec3(1, 1, 1), "c")
+    const targets = [a, b, root]
+    const origin = mat4Translation(a.worldMatrix)
+    const drag = new GizmoDrag(deps, targets, PlaneDrag.begin("xz", origin, c.viewProjection, pixelOf(vec3(origin.x + 0.4, origin.y, origin.z + 0.4)), W, H)!)
+    drag.update(pixelOf(vec3(origin.x + 2.4, origin.y, origin.z - 0.6)))
+    await drag.end()
+    assert.equal(log.filter((l) => l.startsWith("begin")).length, 1)
+    assert.equal(log[0], "begin Move 3 objects")
+    assert.equal(log[log.length - 1], "end")
+    const delta = drag.worldDelta
+    for (const [t, parent] of [
+      [a, parentA],
+      [b, parentB],
+      [root, rootTrs],
+    ] as const) {
+      const call = calls.filter((x) => x.id === t.id).pop()!
+      const before = mat4Translation(t.worldMatrix)
+      nearVec(worldPositionWith(parent, t, call.position), vec3(before.x + delta.x, before.y + delta.y, before.z + delta.z), 1e-6)
+    }
+  })
+
+  test("an object the host refuses is reported once and left out; the others go on, and the group ends", async () => {
+    const { deps, calls, errors, refuse, log } = rig()
+    const a = targetUnder(rootTrs, vec3(0, 0, 0), IdentityQuat, vec3(1, 1, 1), "a")
+    const b = targetUnder(rootTrs, vec3(5, 0, 0), IdentityQuat, vec3(1, 1, 1), "b")
+    refuse.add("b")
+    const drag = new GizmoDrag(deps, [a, b], AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelOf(vec3(0.5, 0, 0)), W, H)!)
+    for (const x of [1.5, 2.5, 3.5]) {
+      drag.update(pixelOf(vec3(x, 0, 0)))
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+    await drag.end()
+    assert.deepEqual(errors, ["Failed to move the object"])
+    assert.ok(calls.filter((x) => x.id === "a").length >= 1)
+    nearVec(calls.filter((x) => x.id === "a").pop()!.position, vec3(3, 0, 0), 1e-3)
+    assert.equal(log[log.length - 1], "end")
+  })
+
+  test("an object with no usable parent chain (zero scale) is skipped while the others move", async () => {
+    const { deps, calls } = rig()
+    const flat = targetUnder(rootTrs, vec3(0, 0, 0), IdentityQuat, vec3(1, 0, 1), "flat")
+    const fine = targetUnder(rootTrs, vec3(0, 0, 0), IdentityQuat, vec3(1, 1, 1), "fine")
+    const drag = new GizmoDrag(deps, [flat, fine], AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelOf(vec3(0.5, 0, 0)), W, H)!)
+    drag.update(pixelOf(vec3(1.5, 0, 0)))
+    await drag.end()
+    assert.deepEqual([...new Set(calls.map((x) => x.id))], ["fine"])
+  })
+
+  test("cancel puts every object back, and abandon drops what is waiting", async () => {
+    const { deps, calls } = rig()
+    const a = targetUnder(rootTrs, vec3(1, 0, 0), IdentityQuat, vec3(1, 1, 1), "a")
+    const b = targetUnder(rootTrs, vec3(5, 0, 0), IdentityQuat, vec3(1, 1, 1), "b")
+    const drag = new GizmoDrag(deps, [a, b], AxisDrag.begin("x", vec3(1, 0, 0), c.viewProjection, pixelOf(vec3(1.5, 0, 0)), W, H)!)
+    drag.update(pixelOf(vec3(4.5, 0, 0)))
+    await drag.cancel()
+    nearVec(calls.filter((x) => x.id === "a").pop()!.position, vec3(1, 0, 0))
+    nearVec(calls.filter((x) => x.id === "b").pop()!.position, vec3(5, 0, 0))
   })
 })

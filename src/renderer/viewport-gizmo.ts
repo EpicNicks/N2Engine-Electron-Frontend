@@ -1,12 +1,14 @@
 // The translate gizmo (engine #6 decision: gizmos are drawn and hit-tested on the client, from the camera's matrices
-// and the selected object's world matrix, and a drag sends SetLocalTransform inside an edit group). Three axis
-// handles, in world axes, at a constant size on screen. The geometry, the hit test and the drag's maths are pure
-// functions; GizmoDrag runs one drag against the engine and the edit groups (fakes in tests, so it is unit tested).
+// and the selected objects' world matrices, and a drag sends SetLocalTransform inside an edit group). Three axis
+// handles and three plane handles (small squares between the axes, on the side facing the camera), in world axes, at a
+// constant size on screen. The geometry, the hit test and the drag's maths are pure functions; GizmoDrag runs one drag
+// of one or several objects against the engine and the edit groups (fakes in tests, so it is unit tested).
 //
-// The drag moves the object along one world axis: the pointer's ray is intersected (nearest point) with the axis line
-// through the object as it was when the drag began, and the object follows the change of that point along the line, so
-// it stays under the cursor. The world move is turned into a LOCAL position change through the parent's world matrix
-// (the object's world matrix and local transform give the parent's), so a rotated or scaled parent is right.
+// An axis drag moves along one world axis: the pointer's ray is intersected (nearest point) with the axis line through
+// the gizmo as it was when the drag began, and the objects follow the change of that point along the line. A plane drag
+// intersects the ray with the plane through the gizmo and follows the change of the hit point in the plane. Either way
+// the pointer stays on the handle. Every selected object moves by the same WORLD delta, each turned into a LOCAL
+// position change through its own parent chain the way the engine composes transforms (localPositionAfterMove).
 import type { Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
 import type { EditGroups, GroupHandle } from "./edit-groups"
 import { LatestWinsSender } from "./viewport-frames"
@@ -16,6 +18,8 @@ import {
   distanceToSegment,
   closestOnLine,
   dot,
+  normalize,
+  sub,
   isFiniteVec3,
   length,
   mat4Translation,
@@ -34,12 +38,36 @@ export const AxisDirections: Readonly<Record<Axis, Vec3>> = {
   z: vec3(0, 0, 1),
 }
 
+export type Plane = "xy" | "xz" | "yz"
+export const Planes: readonly Plane[] = ["xy", "xz", "yz"]
+/** A handle of the gizmo: an axis, or a plane (named by the two axes it moves along) */
+export type HandleId = Axis | Plane
+export const isPlane = (handle: HandleId): handle is Plane => handle.length === 2
+/** The two axes a plane moves along, and the axis it is perpendicular to */
+export const PlaneAxes: Readonly<Record<Plane, { a: Axis; b: Axis; normal: Axis }>> = {
+  xy: { a: "x", b: "y", normal: "z" },
+  xz: { a: "x", b: "z", normal: "y" },
+  yz: { a: "y", b: "z", normal: "x" },
+}
+
 /** How long the handles are on screen, in CSS pixels (times devicePixelRatio in frame pixels) */
 export const GizmoSizePixels = 96
 /** How close (pixels) the pointer has to be to a handle to take it */
 export const GizmoPickPixels = 8
 /** A handle that points at the camera, shorter than this on screen, can't be grabbed or drawn */
 export const MinHandlePixels = 12
+/** A plane handle is a square from PlaneNear to PlaneFar handle lengths along both of its axes */
+export const PlaneNear = 0.3
+export const PlaneFar = 0.65
+/**
+ * How much a plane faces the camera: |cos| of the angle between its normal and the direction to the camera. Below
+ * PlaneMinFacing the plane is nearly edge-on and its handle is hidden (and can't be grabbed); it fades in up to
+ * PlaneFullFacing.
+ */
+export const PlaneMinFacing = 0.12
+export const PlaneFullFacing = 0.3
+/** A pointer ray more edge-on to the plane than this (|cos| to its normal) meets it too far away to follow */
+export const PlaneMinRayFacing = 0.05
 
 export interface GizmoHandle {
   axis: Axis
@@ -47,16 +75,35 @@ export interface GizmoHandle {
   to: Pixel
 }
 
+export interface PlaneHandle {
+  plane: Plane
+  /** The square's corners on screen, in order around it */
+  corners: [Pixel, Pixel, Pixel, Pixel]
+  /** 0 to 1: how far the plane faces the camera (the handle fades as it turns edge-on) */
+  alpha: number
+}
+
 export interface GizmoLayout {
   origin: Pixel
   /** The world length of a handle: the gizmo's size in pixels, whatever the distance */
   worldLength: number
   handles: GizmoHandle[]
+  planes: PlaneHandle[]
+}
+
+/** The camera's world position, from its view matrix (the inverse of a rigid transform) */
+export function cameraPositionOf(view: Mat4): Vec3 {
+  return vec3(
+    -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
+    -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
+    -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])
+  )
 }
 
 /**
- * Where the gizmo is on a width x height viewport, for an object at origin: its handles' ends, sized to GizmoSizePixels
- * on screen. Null when the object is behind the camera. The camera's right (for the world size of a pixel) is read
+ * Where the gizmo is on a width x height viewport, for a gizmo at origin: its handles' ends, sized to GizmoSizePixels
+ * on screen, and its plane squares, on the side of each axis that faces the camera and left out when the plane is
+ * nearly edge-on. Null when the origin is behind the camera. The camera's right (for the world size of a pixel) is read
  * from the view matrix's first row.
  */
 export function gizmoLayout(
@@ -82,22 +129,69 @@ export function gizmoLayout(
     if (!end || Math.hypot(end.x - center.x, end.y - center.y) < MinHandlePixels * pixelRatio) continue
     handles.push({ axis, from: { x: center.x, y: center.y }, to: { x: end.x, y: end.y } })
   }
-  return { origin: { x: center.x, y: center.y }, worldLength, handles }
+
+  const toCamera = normalize(sub(cameraPositionOf(view), origin))
+  const planes: PlaneHandle[] = []
+  for (const plane of Planes) {
+    const { a, b, normal } = PlaneAxes[plane]
+    const facing = Math.abs(dot(toCamera, AxisDirections[normal]))
+    if (!(facing >= PlaneMinFacing)) continue
+    // The square lies on the camera's side of both axes, so it is in front of the handles and never behind the gizmo
+    const sa = dot(toCamera, AxisDirections[a]) >= 0 ? 1 : -1
+    const sb = dot(toCamera, AxisDirections[b]) >= 0 ? 1 : -1
+    const corner = (u: number, v: number): Pixel | null => {
+      const world = add(
+        origin,
+        add(scale(AxisDirections[a], sa * u * worldLength), scale(AxisDirections[b], sb * v * worldLength))
+      )
+      const screen = worldToScreen(viewProjection, world, width, height)
+      return screen ? { x: screen.x, y: screen.y } : null
+    }
+    const corners = [corner(PlaneNear, PlaneNear), corner(PlaneFar, PlaneNear), corner(PlaneFar, PlaneFar), corner(PlaneNear, PlaneFar)]
+    if (corners.some((c) => c === null)) continue
+    const alpha = Math.max(0, Math.min(1, (facing - PlaneMinFacing) / (PlaneFullFacing - PlaneMinFacing)))
+    planes.push({ plane, corners: corners as PlaneHandle["corners"], alpha })
+  }
+  return { origin: { x: center.x, y: center.y }, worldLength, handles, planes }
 }
 
-/** The handle under the pixel, the nearest within tolerance; null for none */
+/** Whether a pixel is inside a convex quad (on its edge counts) */
+export function pointInQuad(p: Pixel, quad: readonly Pixel[]): boolean {
+  let side = 0
+  for (let i = 0; i < quad.length; i++) {
+    const a = quad[i]
+    const b = quad[(i + 1) % quad.length]
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+    if (cross === 0) continue
+    const sign = Math.sign(cross)
+    if (side === 0) side = sign
+    else if (sign !== side) return false
+  }
+  return true
+}
+
+/**
+ * The handle under the pixel. An axis handle within tolerance of the pixel wins (the nearest, if several), because the
+ * axes are thin and sit over the squares when the view is oblique; otherwise the plane square that holds the pixel
+ * (the one facing the camera most, if squares overlap on screen); null for none.
+ */
 export function hitTestGizmo(
   layout: GizmoLayout,
   pixel: Pixel,
   pixelRatio: number = 1,
   tolerance: number = GizmoPickPixels * pixelRatio
-): Axis | null {
+): HandleId | null {
   let best: { axis: Axis; distance: number } | null = null
   for (const handle of layout.handles) {
     const d = distanceToSegment(pixel, handle.from, handle.to)
     if (d <= tolerance && (best === null || d < best.distance)) best = { axis: handle.axis, distance: d }
   }
-  return best?.axis ?? null
+  if (best) return best.axis
+  let plane: PlaneHandle | null = null
+  for (const candidate of layout.planes) {
+    if (pointInQuad(pixel, candidate.corners) && (plane === null || candidate.alpha > plane.alpha)) plane = candidate
+  }
+  return plane?.plane ?? null
 }
 
 /** The selected object as the gizmo needs it: GetEntity's local transform and world matrix */
@@ -146,6 +240,13 @@ export function snapTo(value: number, step: number): number {
 
 export const SnapStep = 0.5
 
+/** What a drag of a handle gives: its handle, and the world move for the pointer now */
+export interface DragSource {
+  readonly handle: HandleId
+  /** The move in the world since the drag began; null (keep the last one) when the pointer's ray can't be followed */
+  deltaAt(pixel: Pixel): Vec3 | null
+}
+
 /**
  * The move along an axis a drag has made so far: the world distance between where the pointer's ray met the axis line
  * when the drag began and where it meets it now. Null while the ray runs along the axis (the answer would explode).
@@ -188,6 +289,15 @@ export class AxisDrag {
     return hit === null ? null : new AxisDrag(axis, origin, viewProjection, width, height, hit.t, farPlane, maxStep)
   }
 
+  get handle(): Axis {
+    return this.axis
+  }
+
+  deltaAt(pixel: Pixel): Vec3 | null {
+    const along = this.moveAt(pixel)
+    return along === null ? null : scale(AxisDirections[this.axis], along)
+  }
+
   /**
    * The world move for the pointer now. Null (keep the last one) while the ray runs along the axis, or meets it behind
    * the camera or beyond the far plane; otherwise cut to maxStep from the last move.
@@ -203,67 +313,163 @@ export class AxisDrag {
   }
 }
 
+/** The pointer's ray against a plane: where it meets it, and how far along the ray; null when it can't (too edge-on, or behind) */
+export function rayPlane(
+  ray: { origin: Vec3; direction: Vec3 },
+  point: Vec3,
+  normal: Vec3,
+  minFacing: number = PlaneMinRayFacing
+): { point: Vec3; s: number } | null {
+  const denominator = dot(ray.direction, normal)
+  if (!(Math.abs(denominator) >= minFacing)) return null
+  const s = dot(sub(point, ray.origin), normal) / denominator
+  if (!(s > 0) || !Number.isFinite(s)) return null
+  return { point: add(ray.origin, scale(ray.direction, s)), s }
+}
+
+/**
+ * The move in a plane a drag has made so far: the pointer's ray is intersected with the plane through the gizmo, and the
+ * move is the change of the hit point, so the gizmo stays under the cursor. Like the axis drag it follows no ray that
+ * meets the plane behind the camera or beyond the far plane (a nearly edge-on plane sends the hit to infinity), and cuts
+ * one update's jump to maxStep.
+ */
+export class PlaneDrag implements DragSource {
+  private last: Vec3 = vec3(0, 0, 0)
+
+  private constructor(
+    readonly handle: Plane,
+    private readonly origin: Vec3,
+    private readonly viewProjection: Mat4,
+    private readonly width: number,
+    private readonly height: number,
+    private readonly start: Vec3,
+    private readonly farPlane: number,
+    private readonly maxStep: number
+  ) {}
+
+  /** Null when the drag can't start: the pointer's ray can't be made, or meets the plane edge-on, behind or too far */
+  static begin(
+    plane: Plane,
+    origin: Vec3,
+    viewProjection: Mat4,
+    pixel: Pixel,
+    width: number,
+    height: number,
+    farPlane: number = Infinity,
+    maxStep: number = Infinity
+  ): PlaneDrag | null {
+    const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
+    const hit = ray ? rayPlane(ray, origin, AxisDirections[PlaneAxes[plane].normal]) : null
+    if (!hit || hit.s > farPlane) return null
+    return new PlaneDrag(plane, origin, viewProjection, width, height, hit.point, farPlane, maxStep)
+  }
+
+  deltaAt(pixel: Pixel): Vec3 | null {
+    const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
+    const hit = ray ? rayPlane(ray, this.origin, AxisDirections[PlaneAxes[this.handle].normal]) : null
+    if (!hit || hit.s > this.farPlane) return null
+    const raw = sub(hit.point, this.start)
+    if (!isFiniteVec3(raw)) return null
+    const step = sub(raw, this.last)
+    const l = length(step)
+    this.last = l > this.maxStep ? add(this.last, scale(step, this.maxStep / l)) : raw
+    return this.last
+  }
+}
+
 /** What GizmoDrag needs of the engine and of the edit groups */
 export interface GizmoDragDeps {
   engine: { setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void> }
   groups: Pick<EditGroups, "begin" | "end">
-  /** A refused or failed move, once it has been reported the drag goes on */
+  /** A refused or failed move (an object that is gone, say): reported, and the drag goes on with the others */
   onError(what: string, error: unknown): void
-  /** The object's position changed on the host's side (after each move is sent): the frame is asked for again */
+  /** The objects' positions changed on the host's side (after each move is sent): the frame is asked for again */
   onMoved?(): void
 }
 
+interface Move {
+  index: number
+  position: Vec3
+}
+
 /**
- * One translate drag, from the press on a handle to the release: BeginEditGroup first, then at most one
- * SetLocalTransform in flight (the latest position wins), then EndEditGroup, so the drag is one undo step however
- * many moves it sent; releasing without having moved changes nothing (the host records no step for an empty group).
+ * One translate drag of one or several objects, from the press on a handle to the release: BeginEditGroup first, then
+ * at most one batch of SetLocalTransform calls in flight (the latest positions win), then EndEditGroup, so the drag is
+ * one undo step however many moves it sent and however many objects it moved. Releasing without having moved changes
+ * nothing. An object the host refuses (it is gone) is reported once and left out of the rest of the drag; the others
+ * go on. The targets must be the topmost of the selection: an object under another that moves would be moved twice.
  */
 export class GizmoDrag {
-  /** Where the object is now (local), as the drag has set it */
+  /** Where the first object is now (local), as the drag has set it */
   position: Vec3
-  private readonly sender: LatestWinsSender<Vec3>
+  private readonly sender: LatestWinsSender<Move[]>
   private readonly began: Promise<GroupHandle | null>
   private finished: Promise<void> | null = null
+  private readonly dead = new Set<number>()
+  private readonly targets: readonly GizmoTarget[]
   /** Whether a position was ever pushed */
   moved = false
-  /** The move in the world the drag has made (the snapped distance along its axis) */
+  /** The move in the world the drag has made (the snapped delta); every object moved by it */
   worldDelta: Vec3 = vec3(0, 0, 0)
 
   constructor(
     private readonly deps: GizmoDragDeps,
-    private readonly target: GizmoTarget,
-    private readonly drag: AxisDrag,
+    target: GizmoTarget | readonly GizmoTarget[],
+    private readonly drag: DragSource,
     private readonly snap: boolean = false
   ) {
-    this.position = target.localPosition
-    this.began = deps.groups.begin(`Move ${target.name}`)
-    this.sender = new LatestWinsSender<Vec3>(
-      async (position) => {
-        // The group is open before the first edit goes
-        await this.began
-        await deps.engine.setLocalTransform(target.id, position, target.localRotation, target.localScale)
-        deps.onMoved?.()
-      },
-      (e) => deps.onError("Failed to move the object", e)
+    this.targets = Array.isArray(target) ? target : [target as GizmoTarget]
+    this.position = this.targets[0].localPosition
+    this.began = deps.groups.begin(
+      this.targets.length === 1 ? `Move ${this.targets[0].name}` : `Move ${this.targets.length} objects`
     )
+    this.sender = new LatestWinsSender<Move[]>(async (moves) => {
+      // The group is open before the first edit goes
+      await this.began
+      for (const move of moves) {
+        if (this.dead.has(move.index)) continue
+        const t = this.targets[move.index]
+        try {
+          await deps.engine.setLocalTransform(t.id, move.position, t.localRotation, t.localScale)
+        } catch (e) {
+          this.dead.add(move.index)
+          deps.onError("Failed to move the object", e)
+        }
+      }
+      deps.onMoved?.()
+    })
   }
 
-  /** The pointer moved: the object goes where the handle's axis says (null from the maths keeps the last position) */
+  /**
+   * The pointer moved: the objects go where the handle says (null when the maths keeps the last positions). Snapping
+   * rounds the delta along each axis the handle moves along.
+   */
   update(pixel: Pixel, snap: boolean = this.snap): Vec3 | null {
     if (this.finished) return null
-    let along = this.drag.moveAt(pixel)
-    if (along === null || !Number.isFinite(along)) return null
-    if (snap) along = snapTo(along, SnapStep)
-    const local = localPositionAfterMove(this.target, scale(AxisDirections[this.drag.axis], along))
-    if (!local) return null
-    this.position = local
-    this.worldDelta = scale(AxisDirections[this.drag.axis], along)
+    let delta = this.drag.deltaAt(pixel)
+    if (delta === null || !isFiniteVec3(delta)) return null
+    if (snap) {
+      const axes = this.drag.handle
+      delta = vec3(
+        axes.includes("x") ? snapTo(delta.x, SnapStep) : delta.x,
+        axes.includes("y") ? snapTo(delta.y, SnapStep) : delta.y,
+        axes.includes("z") ? snapTo(delta.z, SnapStep) : delta.z
+      )
+    }
+    const moves: Move[] = []
+    this.targets.forEach((t, index) => {
+      const position = localPositionAfterMove(t, delta!)
+      if (position) moves.push({ index, position })
+    })
+    if (moves.length === 0) return null
+    this.position = moves[0].index === 0 ? moves[0].position : this.position
+    this.worldDelta = delta
     this.moved = true
-    this.sender.push(local)
-    return local
+    this.sender.push(moves)
+    return this.position
   }
 
-  /** The pointer was released: the last position is sent, and the group ends */
+  /** The pointer was released: the last positions are sent, and the group ends */
   end(): Promise<void> {
     this.finished ??= this.finish()
     return this.finished
@@ -282,16 +488,16 @@ export class GizmoDrag {
   }
 
   /**
-   * Escape: the object goes back to where it was, and the group ends. The group still holds the move and the move
+   * Escape: the objects go back to where they were, and the group ends. The group still holds the move and the move
    * back, so the host records a "Move" step that changes nothing (its FinishGroup skips only a group with no
    * edits): it marks the scene as changed and clears redo. Escape is kept as it is until the host skips such groups.
    */
   cancel(): Promise<void> {
     if (!this.finished) {
       if (this.moved) {
-        this.position = this.target.localPosition
+        this.position = this.targets[0].localPosition
         this.worldDelta = vec3(0, 0, 0)
-        this.sender.push(this.target.localPosition)
+        this.sender.push(this.targets.map((t, index) => ({ index, position: t.localPosition })))
       }
       this.finished = this.finish()
     }

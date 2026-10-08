@@ -23,7 +23,14 @@ function entityAt(position: Vec3, name = "Cube"): EntityDataResponse {
   }
 }
 
-function rig(options: { picking?: PickBackend | null; hostCamera?: Partial<EditorCameraResponse> } = {}) {
+function rig(
+  options: {
+    picking?: PickBackend | null
+    hostCamera?: Partial<EditorCameraResponse>
+    /** The selection beyond the primary: every selected id, and the topmost of them (what a drag moves) */
+    selection?: { all: string[]; top: string[] }
+  } = {}
+) {
   const log: string[] = []
   const cameras: Array<{ position: Vec3; rotation: Quat; fovY: number }> = []
   const errors: string[] = []
@@ -33,6 +40,9 @@ function rig(options: { picking?: PickBackend | null; hostCamera?: Partial<Edito
   let current: string | null = "a"
   let connected = true
   let entity = entityAt(vec3(1, 2, 3))
+  const others = new Map<string, EntityDataResponse>()
+  /** Objects whose SetLocalTransform the host refuses (they are gone) */
+  const gone = new Set<string>()
   let entityReads = 0
   // The matrices the host reports: filled by the test from the controller's own, unless it wants them wrong
   const host: { view?: Mat4; projection?: Mat4 } = {}
@@ -60,12 +70,13 @@ function rig(options: { picking?: PickBackend | null; hostCamera?: Partial<Edito
           ...options.hostCamera,
         }
       },
-      getEntity: async () => {
+      getEntity: async (id) => {
         entityReads++
-        return entity
+        return others.get(id) ?? entity
       },
-      setLocalTransform: async (_id, position) => {
-        log.push(`setLocalTransform ${position.x.toFixed(2)}`)
+      setLocalTransform: async (id, position) => {
+        if (gone.has(id)) throw new Error(`No such object ${id}`)
+        log.push(`setLocalTransform ${id} ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`)
       },
     },
     groups: {
@@ -82,6 +93,8 @@ function rig(options: { picking?: PickBackend | null; hostCamera?: Partial<Edito
     onNote: (message) => notes.push(message),
     canEdit: () => true,
     selected: () => current,
+    moveIds: () => options.selection?.top ?? (current === null ? [] : [current]),
+    selectionIds: () => options.selection?.all ?? (current === null ? [] : [current]),
     select: (id) => selected.push(id),
   }
   const controller = new ViewportController(deps)
@@ -100,6 +113,8 @@ function rig(options: { picking?: PickBackend | null; hostCamera?: Partial<Edito
     entityReads: () => entityReads,
     setSelected: (id: string | null) => (current = id),
     setEntity: (e: EntityDataResponse) => (entity = e),
+    setOther: (id: string, e: EntityDataResponse) => others.set(id, e),
+    gone,
     disconnect: () => (connected = false),
   }
 }
@@ -318,7 +333,7 @@ describe("the gizmo drag", () => {
     assert.equal(r.log[r.log.length - 1], "end")
     const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
     assert.ok(sets.length >= 1)
-    assert.equal(sets[sets.length - 1], "setLocalTransform 3.00") // 1 + 2
+    assert.equal(sets[sets.length - 1], "setLocalTransform a 3.00 2.00 3.00") // 1 + 2
     assert.ok(r.frames() >= 1, "a frame was asked for after the move")
   })
 
@@ -343,7 +358,7 @@ describe("the gizmo drag", () => {
     assert.equal(r.controller.dragging.value, false)
     assert.equal(r.log[r.log.length - 1], "end")
     const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
-    assert.equal(sets[sets.length - 1], "setLocalTransform 1.00")
+    assert.equal(sets[sets.length - 1], "setLocalTransform a 1.00 2.00 3.00")
   })
 
   test("gestureEnded resolves when the group has ended (what an undo waits for)", async () => {
@@ -359,10 +374,10 @@ describe("the gizmo drag", () => {
     const { r, onHandle } = await withGizmo()
     const before = r.controller.overlayVersion.value
     r.controller.hover(onHandle)
-    assert.equal(r.controller.hoverAxis.value, "x")
+    assert.equal(r.controller.hoverHandle.value, "x")
     assert.ok(r.controller.overlayVersion.value > before)
     r.controller.hover({ x: 5, y: 5 })
-    assert.equal(r.controller.hoverAxis.value, null)
+    assert.equal(r.controller.hoverHandle.value, null)
   })
 })
 
@@ -542,5 +557,138 @@ describe("the pixel ratio and the frame's size", () => {
     r.host.projection = mine.projection
     await r.controller.connected()
     assert.equal(r.notes.length, 1)
+  })
+})
+
+describe("plane handles through the controller", () => {
+  test("a press on a plane square takes the drag and moves the object in that plane only, in one group", async () => {
+    const r = rig()
+    await r.controller.loadTarget("a")
+    const layout = r.controller.layout()!
+    const xy = layout.planes.find((p) => p.plane === "xy")!
+    const centre = {
+      x: xy.corners.reduce((sum, c) => sum + c.x, 0) / 4,
+      y: xy.corners.reduce((sum, c) => sum + c.y, 0) / 4,
+    }
+    r.controller.hover(centre)
+    assert.equal(r.controller.hoverHandle.value, "xy")
+    assert.equal(r.controller.pointerDown(centre, false), true)
+    r.controller.pointerMove({ x: centre.x + 40, y: centre.y - 20 }, false)
+    await r.controller.pointerUp({ x: centre.x + 40, y: centre.y - 20 })
+    assert.equal(r.log[0], "begin Move Cube")
+    assert.equal(r.log[r.log.length - 1], "end")
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
+    const last = sets[sets.length - 1].split(" ")
+    assert.notEqual(last[2], "1.00", "x moved")
+    assert.notEqual(last[3], "2.00", "y moved")
+    assert.equal(last[4], "3.00", "z stays: the plane is XY")
+  })
+
+  test("the squares are hidden and can't be taken while the plane is edge-on", async () => {
+    const r = rig()
+    await r.controller.loadTarget("a")
+    // Look from the object's own height straight along its XZ plane: that plane is edge-on
+    r.controller.camera.adopt({ position: vec3(1, 2, 13), rotation: IdentityQuat, fovY: 60, nearPlane: 0.1, farPlane: 1000 }, 10)
+    const layout = r.controller.layout()!
+    assert.equal(layout.planes.find((p) => p.plane === "xz"), undefined)
+    assert.ok(layout.planes.find((p) => p.plane === "xy"))
+  })
+})
+
+describe("moving the whole selection", () => {
+  const second = () => entityAt(vec3(10, 0, 0), "Sphere")
+
+  /** Two selected objects, "a" and "b", both topmost; the gizmo on "a" */
+  async function two(options: { top?: string[] } = {}) {
+    const r = rig({ selection: { all: ["a", "b"], top: options.top ?? ["a", "b"] } })
+    r.setOther("b", second())
+    await r.controller.loadTarget("a")
+    const m = r.controller.matrices()!
+    const onHandle = worldToScreen(m.viewProjection, vec3(1.6, 2, 3), 800, 600)!
+    return { r, m, onHandle }
+  }
+
+  test("every selected object moves by the same world delta, in one group", async () => {
+    const { r, m, onHandle } = await two()
+    r.controller.pointerDown(onHandle, false)
+    const to = worldToScreen(m.viewProjection, vec3(3.6, 2, 3), 800, 600)!
+    r.controller.pointerMove(to, false)
+    await r.controller.pointerUp(to)
+    assert.equal(r.log.filter((l) => l.startsWith("begin")).length, 1)
+    assert.equal(r.log[0], "begin Move 2 objects")
+    assert.equal(r.log.filter((l) => l === "end").length, 1)
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
+    assert.ok(sets.includes("setLocalTransform a 3.00 2.00 3.00"))
+    assert.ok(sets.includes("setLocalTransform b 12.00 0.00 0.00"))
+    // The group ended after the last move of either
+    assert.ok(r.log.lastIndexOf("end") > r.log.map((l) => l.startsWith("setLocalTransform")).lastIndexOf(true))
+  })
+
+  test("an object under a selected one is not moved by itself: only the topmost the selection names", async () => {
+    const { r, m, onHandle } = await two({ top: ["a"] })
+    r.controller.pointerDown(onHandle, false)
+    const to = worldToScreen(m.viewProjection, vec3(3.6, 2, 3), 800, 600)!
+    r.controller.pointerMove(to, false)
+    await r.controller.pointerUp(to)
+    assert.equal(r.log[0], "begin Move Cube")
+    assert.deepEqual(
+      r.log.filter((l) => l.startsWith("setLocalTransform b")),
+      []
+    )
+  })
+
+  test("an object that vanishes mid-drag is reported once and the others go on", async () => {
+    const { r, m, onHandle } = await two()
+    r.controller.pointerDown(onHandle, false)
+    r.gone.add("b")
+    for (const x of [2.6, 3.6, 4.6]) r.controller.pointerMove(worldToScreen(m.viewProjection, vec3(x, 2, 3), 800, 600)!, false)
+    await r.controller.pointerUp(worldToScreen(m.viewProjection, vec3(4.6, 2, 3), 800, 600)!)
+    assert.deepEqual(r.errors, ["Failed to move the object"])
+    const a = r.log.filter((l) => l.startsWith("setLocalTransform a"))
+    assert.equal(a[a.length - 1], "setLocalTransform a 4.00 2.00 3.00")
+    assert.equal(r.log[r.log.length - 1], "end")
+  })
+
+  test("cancel puts every object back", async () => {
+    const { r, m, onHandle } = await two()
+    r.controller.pointerDown(onHandle, false)
+    r.controller.pointerMove(worldToScreen(m.viewProjection, vec3(4.6, 2, 3), 800, 600)!, false)
+    await r.controller.cancel()
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
+    assert.ok(sets.includes("setLocalTransform a 1.00 2.00 3.00"))
+    assert.ok(sets.includes("setLocalTransform b 10.00 0.00 0.00"))
+    assert.equal(r.log[r.log.length - 1], "end")
+  })
+
+  test("undo during a drag finishes it for every object first", async () => {
+    const { r, m, onHandle } = await two()
+    r.controller.pointerDown(onHandle, false)
+    r.controller.pointerMove(worldToScreen(m.viewProjection, vec3(3.6, 2, 3), 800, 600)!, false)
+    await r.controller.endActiveDrag()
+    assert.equal(r.controller.dragging.value, false)
+    assert.equal(r.log.filter((l) => l === "end").length, 1)
+    assert.equal(r.log.filter((l) => l.startsWith("setLocalTransform")).length, 2)
+  })
+
+  test("a change to any selected object reloads the targets; one to another does not", async () => {
+    const { r } = await two()
+    const reads = r.entityReads()
+    r.controller.objectsChanged(["zzz"], false)
+    await settle()
+    assert.equal(r.entityReads(), reads)
+    r.controller.objectsChanged(["b"], false)
+    await settle()
+    assert.ok(r.entityReads() > reads)
+  })
+
+  test("the gizmo sits on the primary selection, and without a drag the primary needs no transform of its own", async () => {
+    const { r } = await two()
+    assert.equal(r.controller.target.value?.id, "a")
+    const noTransform = rig({ selection: { all: ["a", "b"], top: ["b"] } })
+    const e = entityAt(vec3(0, 0, 0))
+    noTransform.setEntity({ ...e, entity: { ...e.entity, transform: undefined } })
+    noTransform.setOther("b", second())
+    await noTransform.controller.loadTarget("a")
+    assert.equal(noTransform.controller.target.value?.id, "b")
   })
 })
