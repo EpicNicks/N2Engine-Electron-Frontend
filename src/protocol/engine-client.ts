@@ -4,6 +4,7 @@ import {
   CommandType,
   EngineHealthResponse,
   EntityInfo,
+  EventsResponse,
   FrameDataResponse,
   PROTOCOL_VERSION,
   ResponseType,
@@ -363,6 +364,16 @@ export class EngineClient {
 
   rescanAssets(): Promise<void> {
     return this.send(Commands.RescanAssets, {})
+  }
+
+  // ==================== Events ====================
+
+  /**
+   * The host's events (its log lines, for now) after afterSeq in epoch: see EventPump for the epoch rule. Pass 0, 0
+   * for everything the host still keeps; maxEvents 0 skips to the newest seq.
+   */
+  pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse> {
+    return this.send(Commands.PollEvents, { epoch, afterSeq, maxEvents })
   }
 
   // ==================== Engine Health ====================

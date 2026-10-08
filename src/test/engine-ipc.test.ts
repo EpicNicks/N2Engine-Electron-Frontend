@@ -100,6 +100,11 @@ class FakeClient {
   /** What renderFrame resolves with: by default a frame whose pixels are a view into a larger (socket) buffer */
   frame: unknown = null
 
+  async pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<unknown> {
+    this.calls.push(["pollEvents", [epoch, afterSeq, maxEvents]])
+    return { epoch: 7, nextSeq: 1, dropped: 0, events: [{ seq: 1, kind: "log", level: "info", message: "hi", time: 0 }] }
+  }
+
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
     return this.frame
@@ -181,6 +186,29 @@ describe("EngineHost (the main process's engine IPC)", () => {
     ])
     assert.equal(ok.ok, true)
     assert.deepEqual(client.calls[0], ["setEntityTransform", ["id", v, v, v]])
+  })
+
+  test("pollEvents takes three unsigned 32-bit integers", async () => {
+    const { ipc, client, editor } = setup()
+    const bad: unknown[][] = [
+      [-1, 0, 256],
+      [0, 2 ** 32, 256],
+      [0, 0, 1.5],
+      [0, 0, "256"],
+      [0, 0, NaN],
+      [0, 0],
+      [0, 0, 256, 1],
+    ]
+    for (const args of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, "pollEvents", args)
+      assert.equal(result.ok, false, `pollEvents(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+
+    const result = await ipc.invoke(Channels.engineCall, editor, "pollEvents", [0xffffffff, 0, 256])
+    assert.equal(result.ok, true)
+    assert.deepEqual(client.calls, [["pollEvents", [0xffffffff, 0, 256]]])
+    assert.equal((result as { value: { events: unknown[] } }).value.events.length, 1)
   })
 
   test("refuses calls from anything but the editor page (its window, main frame and URL)", async () => {

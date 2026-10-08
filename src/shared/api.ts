@@ -6,6 +6,7 @@ import type {
   CameraPositionResponse,
   EngineHealthResponse,
   EntityInfo,
+  EventsResponse,
   FrameDataResponse,
   SceneDataResponse,
   ServerInfoResponse,
@@ -37,6 +38,12 @@ export interface EngineCommands {
 
   getEngineHealth(): Promise<EngineHealthResponse>
 
+  /**
+   * PollEvents: the host's events after afterSeq in epoch (0, 0 for everything it still keeps), at most maxEvents
+   * (the host caps a response at 1024). Poll again with the response's epoch and nextSeq (see EventPump).
+   */
+  pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse>
+
   createEntity(name: string): Promise<string>
   destroyEntity(entityId: string): Promise<void>
   getAllEntities(): Promise<EntityInfo[]>
@@ -50,7 +57,7 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "string" | "number" | "int32" | "vec3"
+export type ArgKind = "string" | "number" | "int32" | "uint32" | "vec3"
 
 /** Every forwarded command and its arguments; the main process refuses any other name */
 export const EngineCommandArgs = {
@@ -67,6 +74,7 @@ export const EngineCommandArgs = {
   createScript: ["string"],
   rescanAssets: [],
   getEngineHealth: [],
+  pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],
   destroyEntity: ["string"],
   getAllEntities: [],
@@ -81,6 +89,7 @@ interface ArgKindTypes {
   string: string
   number: number
   int32: number
+  uint32: number
   vec3: Vec3
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }

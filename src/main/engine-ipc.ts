@@ -19,6 +19,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   string: "a string",
   number: "a finite number",
   int32: "a 32-bit integer",
+  uint32: "an unsigned 32-bit integer",
   vec3: "an {x, y, z} of finite numbers",
 }
 
@@ -38,6 +39,9 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       break
     case "int32":
       if (Number.isInteger(value) && (value as number) >= -0x80000000 && (value as number) <= 0x7fffffff) return value
+      break
+    case "uint32":
+      if (Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 0xffffffff) return value
       break
     case "vec3":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
