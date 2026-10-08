@@ -119,19 +119,57 @@ export interface ConnectionState {
 /** window.engine */
 export interface EngineApi extends EngineCommands {
   /**
-   * Connects to an editor host on this machine (localhost, 127.0.0.1 or ::1) and says Hello, with the access token
-   * the main process was given (the page never sees it). Resolves with the host's ServerInfo; rejects, leaving no
-   * connection, when Hello fails (a wrong token, an incompatible protocol version, no answer).
+   * Whether the editor is connected to the project's host (the last known state, kept up to date by the main
+   * process, so it's synchronous). The main process connects once it has launched the host (window.host); the page
+   * never picks a host, a port or a token.
    */
-  connect(host?: string, port?: number): Promise<ServerInfo>
-  /** Asks the host to shut down and closes the connection */
-  disconnect(): Promise<void>
-  /** The last known state (kept up to date by the main process, so it's synchronous) */
   isConnected(): boolean
   /** The connected host's answer to Hello (as last reported, like isConnected); null when not connected */
   serverInfo(): ServerInfo | null
   /** Called when the connection opens or closes, including when the host drops it */
   onConnectionChange(listener: (connected: boolean) => void): void
+}
+
+/** Where N2EditorHost is (HostSettings): from N2_EDITOR_HOST, the saved setting, or not set */
+export interface HostLocation {
+  path: string | null
+  source: "env" | "setting" | null
+  /** Why the path can't be used (missing, not a file); null when it can, or when there is no path */
+  problem: string | null
+}
+
+/**
+ * The project's editor host process, which the main process launches for the open project:
+ * - stopped: none (no project, or it was stopped);
+ * - starting: launched, waiting for its ready line and the connection;
+ * - running: connected;
+ * - exited: it ended on its own (crashed, or its session ended), see message;
+ * - failed: it couldn't be launched or connected to, see message.
+ */
+export type HostStatus = "stopped" | "starting" | "running" | "exited" | "failed"
+
+export interface HostState {
+  status: HostStatus
+  /** Counts launches: a higher one is a newer host process (the console starts a new log for it) */
+  launch: number
+  /** The project the host is (or was) for */
+  projectPath: string | null
+  /** Why it failed or exited, with its last output lines; null otherwise */
+  message: string | null
+}
+
+/** window.host: the project's editor host process */
+export interface HostApi {
+  /** The last known state (pushed by the main process, so it's synchronous) */
+  state(): HostState
+  onStateChange(listener: (state: HostState) => void): void
+  /** Stops the open project's host, if any, and launches a new one */
+  restart(): Promise<void>
+  /** Shuts the host down (the project stays open; restart() starts it again) */
+  stop(): Promise<void>
+  location(): Promise<HostLocation>
+  /** Picks the N2EditorHost executable with a file dialog and saves it; null when cancelled */
+  locate(): Promise<HostLocation | null>
 }
 
 /** An entry of the open project's file tree */
@@ -148,13 +186,23 @@ export interface FileInfo {
  * the open project; files are limited to the text types the editor uses (ProjectTextExtensions).
  */
 export interface ProjectApi {
-  /** Picks a folder and opens it; null when cancelled */
+  /**
+   * Picks a folder and opens it: launches its editor host and connects to it. Resolves with the project's path
+   * once connected, null when cancelled; rejects when the host can't be launched (window.host says why too).
+   */
   openDialog(): Promise<string | null>
-  /** Picks a location, creates a project there and opens it; null when cancelled */
+  /**
+   * Picks a new folder, creates a project there with N2EditorHost --create (needs engine #75) and opens it; null
+   * when cancelled
+   */
   createDialog(): Promise<string | null>
   /** Reopens one of getRecent's projects */
   openRecent(projectPath: string): Promise<string>
+  /** Recently opened projects' folders, newest first */
   getRecent(): Promise<string[]>
+  removeRecent(projectPath: string): Promise<void>
+  /** Closes the open project and stops its host */
+  close(): Promise<void>
 
   /** The open project's tree (hidden entries skipped, 3 levels deep) */
   listFiles(): Promise<FileInfo[]>
@@ -174,19 +222,29 @@ export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string }
 export const Channels = {
   /** (name: EngineCommandName, args: unknown[]) → IpcResult */
   engineCall: "engine:call",
-  /** (host, port) → IpcResult<ConnectionState> */
-  engineConnect: "engine:connect",
-  /** () → IpcResult<ConnectionState> */
-  engineDisconnect: "engine:disconnect",
-  /** () → IpcResult<ConnectionState>: a newly loaded page starts without a connection (closes any open one) */
+  /**
+   * () → IpcResult<ConnectionState>: a newly loaded page starts with no project, host or connection (closes any a
+   * previous page left open)
+   */
   engineAttach: "engine:attach",
   /** main → page: ConnectionState */
   engineState: "engine:state",
+
+  /** () → IpcResult<HostState> */
+  hostGetState: "host:getState",
+  /** main → page: HostState */
+  hostState: "host:state",
+  hostRestart: "host:restart",
+  hostStop: "host:stop",
+  hostLocation: "host:location",
+  hostLocate: "host:locate",
 
   projectOpenDialog: "project:openDialog",
   projectCreateDialog: "project:createDialog",
   projectOpenRecent: "project:openRecent",
   projectGetRecent: "project:getRecent",
+  projectRemoveRecent: "project:removeRecent",
+  projectClose: "project:close",
   projectListFiles: "project:listFiles",
   projectReadTextFile: "project:readTextFile",
   projectWriteTextFile: "project:writeTextFile",

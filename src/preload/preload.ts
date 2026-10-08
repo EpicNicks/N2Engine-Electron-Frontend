@@ -1,5 +1,5 @@
 // Exposes the typed editor API (shared/api.ts) to the page. Each call is forwarded to the main process over IPC;
-// the preload holds no state but the last connection state. It runs sandboxed, so it is bundled
+// the preload holds no state but the last connection and host states. It runs sandboxed, so it is bundled
 // (scripts/bundle.js) and can require only "electron".
 import { contextBridge, ipcRenderer } from "electron"
 import {
@@ -8,6 +8,8 @@ import {
   EngineApi,
   EngineCommandNames,
   EngineCommands,
+  HostApi,
+  HostState,
   IpcResult,
   ProjectApi,
 } from "../shared/api"
@@ -16,6 +18,17 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const result = (await ipcRenderer.invoke(channel, ...args)) as IpcResult<T>
   if (!result.ok) throw new Error(result.error)
   return result.value
+}
+
+/** Calls each listener, so one that throws doesn't stop the others */
+function notify<T>(listeners: Array<(value: T) => void>, value: T, what: string): void {
+  listeners.forEach((listener) => {
+    try {
+      listener(value)
+    } catch (e) {
+      console.error(`${what} listener failed:`, e)
+    }
+  })
 }
 
 // ==================== Connection state ====================
@@ -28,23 +41,38 @@ function applyState(state: ConnectionState): void {
   if (state.epoch < connection.epoch) return
   const changed = state.connected !== connection.connected
   connection = state
-  if (changed) {
-    connectionListeners.forEach((listener) => {
-      try {
-        listener(state.connected)
-      } catch (e) {
-        console.error("Connection listener failed:", e)
-      }
-    })
-  }
+  if (changed) notify(connectionListeners, state.connected, "Connection")
 }
 
 ipcRenderer.on(Channels.engineState, (_event, state: ConnectionState) => applyState(state))
 
-// This page starts without a connection: drop one a previous page (before a reload) left open
-const attached = invoke<ConnectionState>(Channels.engineAttach).then(applyState, (e) => {
+// This page starts without a project, host or connection: drop any a previous page (before a reload) left open
+invoke<ConnectionState>(Channels.engineAttach).then(applyState, (e) => {
   console.error("Failed to attach to the engine connection:", e)
 })
+
+// ==================== Host state ====================
+
+let host: HostState = { status: "stopped", launch: 0, projectPath: null, message: null }
+let hostPushed = false
+const hostListeners: Array<(state: HostState) => void> = []
+
+function applyHostState(state: HostState): void {
+  host = state
+  notify(hostListeners, state, "Host state")
+}
+
+// Pushes arrive in order; the first fetch only counts if none has arrived yet
+ipcRenderer.on(Channels.hostState, (_event, state: HostState) => {
+  hostPushed = true
+  applyHostState(state)
+})
+invoke<HostState>(Channels.hostGetState).then(
+  (state) => {
+    if (!hostPushed) applyHostState(state)
+  },
+  (e) => console.error("Failed to get the host's state:", e),
+)
 
 // ==================== window.engine ====================
 
@@ -56,18 +84,6 @@ for (const name of EngineCommandNames) {
 const engine: EngineApi = {
   ...(commands as unknown as EngineCommands),
 
-  async connect(host = "localhost", port = 9999) {
-    await attached
-    const state = await invoke<ConnectionState>(Channels.engineConnect, host, port)
-    applyState(state)
-    if (!state.serverInfo) throw new Error("The connection closed as it opened")
-    return state.serverInfo
-  },
-
-  async disconnect() {
-    applyState(await invoke<ConnectionState>(Channels.engineDisconnect))
-  },
-
   isConnected: () => connection.connected,
 
   serverInfo: () => connection.serverInfo,
@@ -77,6 +93,19 @@ const engine: EngineApi = {
   },
 }
 
+// ==================== window.host ====================
+
+const hostApi: HostApi = {
+  state: () => host,
+  onStateChange(listener) {
+    hostListeners.push(listener)
+  },
+  restart: () => invoke(Channels.hostRestart),
+  stop: () => invoke(Channels.hostStop),
+  location: () => invoke(Channels.hostLocation),
+  locate: () => invoke(Channels.hostLocate),
+}
+
 // ==================== window.project ====================
 
 const project: ProjectApi = {
@@ -84,6 +113,8 @@ const project: ProjectApi = {
   createDialog: () => invoke(Channels.projectCreateDialog),
   openRecent: (projectPath) => invoke(Channels.projectOpenRecent, projectPath),
   getRecent: () => invoke(Channels.projectGetRecent),
+  removeRecent: (projectPath) => invoke(Channels.projectRemoveRecent, projectPath),
+  close: () => invoke(Channels.projectClose),
   listFiles: () => invoke(Channels.projectListFiles),
   readTextFile: (filePath) => invoke(Channels.projectReadTextFile, filePath),
   writeTextFile: (filePath, text) => invoke(Channels.projectWriteTextFile, filePath, text),
@@ -92,4 +123,5 @@ const project: ProjectApi = {
 }
 
 contextBridge.exposeInMainWorld("engine", engine)
+contextBridge.exposeInMainWorld("host", hostApi)
 contextBridge.exposeInMainWorld("project", project)

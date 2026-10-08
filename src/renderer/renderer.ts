@@ -50,17 +50,24 @@ async function loadRecentProjects(): Promise<void> {
   })
 }
 
+// Opening a project launches its editor host and connects to it (in the main process); the page only shows it
 openProjectBtn.addEventListener("click", async () => {
-  const projectPath = await window.project.openDialog()
-  if (projectPath) {
-    await openProject(projectPath)
+  try {
+    const projectPath = await window.project.openDialog()
+    if (projectPath) await openProject(projectPath)
+  } catch (e) {
+    console.error("Failed to open project:", e)
+    alert("Failed to open project: " + e)
   }
 })
 
 createProjectBtn.addEventListener("click", async () => {
-  const projectPath = await window.project.createDialog()
-  if (projectPath) {
-    await openProject(projectPath)
+  try {
+    const projectPath = await window.project.createDialog()
+    if (projectPath) await openProject(projectPath)
+  } catch (e) {
+    console.error("Failed to create project:", e)
+    alert("Failed to create project: " + e)
   }
 })
 
@@ -73,7 +80,7 @@ async function openProject(projectPath: string): Promise<void> {
   projectNameEl.textContent = basename(projectPath)
 
   await refreshFileTree()
-  await connectToEngine()
+  if (window.engine.isConnected()) await onConnected()
 }
 
 loadRecentProjects()
@@ -83,9 +90,10 @@ const connectBtn = document.getElementById("connectBtn") as HTMLButtonElement
 const disconnectBtn = document.getElementById("disconnectBtn") as HTMLButtonElement
 const statusEl = document.getElementById("status")!
 
-async function connectToEngine(): Promise<void> {
+async function onConnected(): Promise<void> {
   try {
-    const info = await window.engine.connect()
+    const info = window.engine.serverInfo()
+    if (!info) return
     // Before the first RenderFrame (requests are answered in order), so the first frame is already the right size
     syncViewportSize(true)
     statusEl.textContent = "Connected"
@@ -109,7 +117,14 @@ async function connectToEngine(): Promise<void> {
   }
 }
 
-connectBtn.addEventListener("click", connectToEngine)
+// The host exits when its session ends (--exit-on-disconnect), so connecting again means launching a new one
+connectBtn.addEventListener("click", () => {
+  window.host.restart().catch((e) => {
+    console.error("Failed to restart the editor host:", e)
+    statusEl.textContent = "Connection failed"
+    statusEl.title = e instanceof Error ? e.message : String(e)
+  })
+})
 
 function showDisconnected(status: string): void {
   audio.stop()
@@ -125,7 +140,7 @@ function showDisconnected(status: string): void {
 
 disconnectBtn.addEventListener("click", async () => {
   try {
-    await window.engine.disconnect()
+    await window.host.stop()
   } catch (e) {
     console.error("Failed to disconnect:", e)
   }
@@ -134,7 +149,9 @@ disconnectBtn.addEventListener("click", async () => {
 
 // The host can drop the connection (it exited or crashed)
 window.engine.onConnectionChange((connected) => {
-  if (!connected && !disconnectBtn.disabled) {
+  if (connected) {
+    if (currentProjectPath) onConnected()
+  } else if (!disconnectBtn.disabled) {
     showDisconnected("Connection lost")
   }
 })
