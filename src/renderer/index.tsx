@@ -6,6 +6,7 @@ import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
+import { InspectorState } from "./inspector-state"
 import { SceneState } from "./scene-state"
 import { EditorStore } from "./store"
 import {
@@ -75,6 +76,13 @@ const app: AppState = {
   hierarchy: new HierarchyState(window.engine, {
     confirm: confirmDialog,
     onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
+  }),
+  inspector: new InspectorState(window.engine, window.project, {
+    confirm: confirmDialog,
+    // The file systems of Windows and macOS don't tell res:// paths apart by case
+    caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
+    // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
+    onError: (what, e) => store.reportError(what, e),
   }),
   audio: new AudioController(window.engine),
 }

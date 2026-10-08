@@ -136,6 +136,12 @@ class FakeClient {
   duplicateEntity = (...args: unknown[]) => this.record("duplicateEntity", args)
   getEntity = (...args: unknown[]) => this.record("getEntity", args)
   setLocalTransform = (...args: unknown[]) => this.record("setLocalTransform", args)
+  getComponentTypes = (...args: unknown[]) => this.record("getComponentTypes", args)
+  addComponent = (...args: unknown[]) => this.record("addComponent", args)
+  removeComponent = (...args: unknown[]) => this.record("removeComponent", args)
+  setComponentFields = (...args: unknown[]) => this.record("setComponentFields", args)
+  getComponent = (...args: unknown[]) => this.record("getComponent", args)
+  getLuaFields = (...args: unknown[]) => this.record("getLuaFields", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -350,6 +356,48 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const ok = await ipc.invoke(Channels.engineCall, editor, "setLocalTransform", ["id", v, { ...q, extra: 1 }, v])
     assert.equal(ok.ok, true)
     assert.deepEqual(client.calls[0], ["setLocalTransform", ["id", v, q, v]])
+  })
+
+  test("the component commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const values = { isActive: false, intensity: 2, color: { x: 1, y: 0.5, z: 0 }, scriptData: { target: { $ref: null } } }
+    const calls: Array<[string, unknown[]]> = [
+      ["getComponentTypes", []],
+      ["addComponent", ["entity", "Light"]],
+      ["removeComponent", ["entity", "component"]],
+      ["setComponentFields", ["entity", "component", values]],
+      ["setComponentFields", ["entity", "component", {}]],
+      ["getComponent", ["entity", "component"]],
+      ["getLuaFields", ["entity", "component"]],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["getComponentTypes", ["x"]],
+      ["addComponent", ["entity"]],
+      ["addComponent", ["entity", 5]],
+      ["removeComponent", [1, "component"]],
+      ["setComponentFields", ["entity", "component"]],
+      ["setComponentFields", ["entity", "component", null]],
+      ["setComponentFields", ["entity", "component", [1]]],
+      ["setComponentFields", ["entity", "component", "{}"]],
+      ["setComponentFields", ["entity", "component", { intensity: NaN }]],
+      ["setComponentFields", ["entity", "component", { intensity: Infinity }]],
+      ["setComponentFields", ["entity", "component", { a: undefined }]],
+      ["setComponentFields", ["entity", "component", { a: new Map() }]],
+      ["getComponent", ["entity", {}]],
+      ["getLuaFields", ["entity"]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
   })
 
   test("entity properties are a fresh plain copy, and a patch of shared references is refused quickly", async () => {

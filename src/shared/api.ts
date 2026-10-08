@@ -4,6 +4,7 @@
 
 import type {
   CameraPositionResponse,
+  ComponentSchema,
   EngineHealthResponse,
   EntityDataResponse,
   EventsResponse,
@@ -88,6 +89,28 @@ export interface EngineCommands {
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
   setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void>
+
+  /**
+   * Every component type the host can create (protocol 1.5), sorted by name, each with its fields, whether an object
+   * can have only one (singleton) and its defaults. Needs no scene; the types don't change while the host runs.
+   */
+  getComponentTypes(): Promise<ComponentSchema[]>
+  /**
+   * Adds a component of a listed type, with its default values, to an object. Answers its UUID and its values (what
+   * getComponent gives). Error for an unknown type, or a singleton the object already has.
+   */
+  addComponent(entityId: string, typeName: string): Promise<{ componentId: string; values: unknown }>
+  removeComponent(entityId: string, componentId: string): Promise<void>
+  /**
+   * Sets fields of one component from a partial of what getComponent returns, all or nothing (an Error names the
+   * field that was refused). Answers the component's values as stored (a clamped number, an enum in its canonical
+   * spelling). A request that changes scriptUUID mustn't also send scriptData.
+   */
+  setComponentFields(entityId: string, componentId: string, values: JsonObject): Promise<unknown>
+  /** A component's saved values, the JSON getEntity lists under components */
+  getComponent(entityId: string, componentId: string): Promise<unknown>
+  /** A LuaComponent's fields as its script declares them (each with container "scriptData"); ask again after the script changes */
+  getLuaFields(entityId: string, componentId: string): Promise<ComponentSchema>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -132,6 +155,12 @@ export const EngineCommandArgs = {
   duplicateEntity: ["string"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
+  getComponentTypes: [],
+  addComponent: ["string", "string"],
+  removeComponent: ["string", "string"],
+  setComponentFields: ["string", "string", "jsonObject"],
+  getComponent: ["string", "string"],
+  getLuaFields: ["string", "string"],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]
@@ -288,6 +317,11 @@ export interface ProjectApi {
 
   /** The open project's tree (hidden entries skipped, 3 levels deep) */
   listFiles(): Promise<FileInfo[]>
+  /**
+   * The assets the host has indexed (what its .import/*.meta files say), with their UUIDs, for the inspector's asset
+   * fields. A file added since the host's last scan isn't there until RescanAssets (an assetsChanged event follows).
+   */
+  listAssets(): Promise<AssetEntry[]>
   readTextFile(filePath: string): Promise<string>
   writeTextFile(filePath: string, text: string): Promise<void>
   /** Creates the directory and any missing parents */
@@ -295,6 +329,22 @@ export interface ProjectApi {
   /** Deletes a file (never a directory); a file that doesn't exist is not an error */
   deleteFile(filePath: string): Promise<void>
 }
+
+/** An asset the host indexed (a .meta under the project's .import folder), or a sub-asset of a model */
+export interface AssetEntry {
+  /** Lower-case UUID: what an asset field holds */
+  uuid: string
+  /** res://scenes/Main.scene; a sub-asset's is its model's path, #, and its key: res://models/robot.glb#mesh/Body */
+  path: string
+  /** The resource type the host gave it: Texture, Font, Mesh, Material, Model, AudioClip, LuaScript, Scene, ... ("Unknown") */
+  resourceType: string
+}
+
+/** How deeply nested a JSON argument of an engine command may be: the main process refuses more (the host's own limit is 64) */
+export const MaxJsonDepth = 32
+
+/** How many values (every scalar, array and object counts) a JSON argument may hold (the host's own limit is 200000) */
+export const MaxJsonNodes = 100_000
 
 export const ProjectTextExtensions: readonly string[] = [".scene", ".lua", ".json", ".txt"]
 
@@ -330,6 +380,7 @@ export const Channels = {
   projectRemoveRecent: "project:removeRecent",
   projectClose: "project:close",
   projectListFiles: "project:listFiles",
+  projectListAssets: "project:listAssets",
   projectReadTextFile: "project:readTextFile",
   projectWriteTextFile: "project:writeTextFile",
   projectCreateDirectory: "project:createDirectory",

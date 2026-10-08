@@ -108,6 +108,7 @@ export function registerProjectIpc(ipcMain: IpcMain, deps: ProjectIpcDeps): void
   handle(Channels.projectClose, () => session.closeProject())
 
   handle(Channels.projectListFiles, () => files.listFiles())
+  handle(Channels.projectListAssets, () => files.listAssets())
   handle(Channels.projectReadTextFile, (filePath) => files.readTextFile(filePath as string))
   handle(Channels.projectWriteTextFile, (filePath, text) => files.writeTextFile(filePath as string, text as string))
   handle(Channels.projectCreateDirectory, (dirPath) => files.createDirectory(dirPath as string))

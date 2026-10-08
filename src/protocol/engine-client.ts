@@ -1,6 +1,7 @@
 import * as net from "net"
 import {
   CameraPositionResponse,
+  ComponentSchema,
   CommandType,
   EngineHealthResponse,
   EntityDataResponse,
@@ -23,6 +24,7 @@ import {
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { checkEntityProperties } from "./entity-args"
+import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
 import { AudioSamples } from "../audio-stream"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */
@@ -438,6 +440,51 @@ export class EngineClient {
 
   setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void> {
     return this.send(Commands.SetLocalTransform, { entityId, position, rotation, scale })
+  }
+
+  // ==================== Components and the inspector (protocol 1.5) ====================
+
+  /** Every component type the host can create, sorted by name; the answer is validated (parseComponentTypes) */
+  async getComponentTypes(): Promise<ComponentSchema[]> {
+    return parseComponentTypes((await this.send(Commands.GetComponentTypes, {})).types)
+  }
+
+  /** Adds a component of a listed type with its default values; answers its UUID and its values as GetComponent gives them */
+  async addComponent(entityId: string, typeName: string): Promise<{ componentId: string; values: unknown }> {
+    checkId(entityId, "entityId")
+    checkId(typeName, "typeName")
+    const added = await this.send(Commands.AddComponent, { entityId, typeName })
+    if (typeof added.componentId !== "string" || added.componentId === "") {
+      throw new Error("AddComponent: the host answered without the new component's UUID")
+    }
+    return added
+  }
+
+  async removeComponent(entityId: string, componentId: string): Promise<void> {
+    checkId(entityId, "entityId")
+    checkId(componentId, "componentId")
+    return this.send(Commands.RemoveComponent, { entityId, componentId })
+  }
+
+  /** The values are checked to be a plain object first; the engine checks each against its field, all or nothing */
+  async setComponentFields(entityId: string, componentId: string, values: unknown): Promise<unknown> {
+    checkId(entityId, "entityId")
+    checkId(componentId, "componentId")
+    checkComponentValues(values)
+    return (await this.send(Commands.SetComponentFields, { entityId, componentId, values })).values
+  }
+
+  async getComponent(entityId: string, componentId: string): Promise<unknown> {
+    checkId(entityId, "entityId")
+    checkId(componentId, "componentId")
+    return (await this.send(Commands.GetComponent, { entityId, componentId })).values
+  }
+
+  /** A LuaComponent's fields as its script declares them; the answer is validated (parseComponentSchema) */
+  async getLuaFields(entityId: string, componentId: string): Promise<ComponentSchema> {
+    checkId(entityId, "entityId")
+    checkId(componentId, "componentId")
+    return parseComponentSchema((await this.send(Commands.GetLuaFields, { entityId, componentId })).schema, "Lua fields")
   }
 
   // ==================== Assets ====================

@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.4.0",
+  "protocolVersion": "1.5.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -225,6 +225,62 @@
         "name": "name 0 ✓ é"
       },
       "payload": "0d0000006e616d65203020e29c9320c3a9"
+    },
+    {
+      "command": "AddComponent",
+      "id": "0x61",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "typeName": "typeName 1 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a911000000747970654e616d65203120e29c9320c3a9"
+    },
+    {
+      "command": "RemoveComponent",
+      "id": "0x62",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "componentId": "componentId 1 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a914000000636f6d706f6e656e744964203120e29c9320c3a9"
+    },
+    {
+      "command": "SetComponentFields",
+      "id": "0x63",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "componentId": "componentId 1 ✓ é",
+        "values": {
+          "list": [
+            2,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a914000000636f6d706f6e656e744964203120e29c9320c3a9370000007b226c697374223a5b322c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "command": "GetComponent",
+      "id": "0x64",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "componentId": "componentId 1 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a914000000636f6d706f6e656e744964203120e29c9320c3a9"
+    },
+    {
+      "command": "GetLuaFields",
+      "id": "0x65",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "componentId": "componentId 1 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a914000000636f6d706f6e656e744964203120e29c9320c3a9"
     },
     {
       "command": "SetProjectSettings",
@@ -602,6 +658,212 @@
         ]
       },
       "payload": "01020000000d0000006e616d65203220e29c9320c3a90e0000007374617465203320e29c9320c3a90f00000064657461696c203420e29c9320c3a90d0000006e616d65203320e29c9320c3a90e0000007374617465203420e29c9320c3a90f00000064657461696c203520e29c9320c3a9"
+    },
+    {
+      "response": "ComponentTypes",
+      "id": "0x11",
+      "fields": {
+        "types": [
+          {
+            "defaults": {
+              "list": [
+                3,
+                "two ✓",
+                true,
+                null
+              ],
+              "nested": {
+                "value": 1.5
+              }
+            },
+            "fields": [
+              {
+                "assetType": "assetType 9 ✓",
+                "container": "container 13 ✓",
+                "displayName": "displayName 3 ✓",
+                "enumOptions": [
+                  "enumOptions 8 ✓",
+                  "enumOptions 9 ✓"
+                ],
+                "hidden": true,
+                "kind": "kind 4 ✓",
+                "max": 13.5,
+                "min": 12.5,
+                "name": "name 2 ✓",
+                "readOnly": false,
+                "tooltip": "tooltip 12 ✓",
+                "typeName": "typeName 5 ✓"
+              },
+              {
+                "assetType": "assetType 10 ✓",
+                "container": "container 14 ✓",
+                "displayName": "displayName 4 ✓",
+                "enumOptions": [
+                  "enumOptions 9 ✓",
+                  "enumOptions 10 ✓"
+                ],
+                "hidden": false,
+                "kind": "kind 5 ✓",
+                "max": 14.5,
+                "min": 13.5,
+                "name": "name 3 ✓",
+                "readOnly": true,
+                "tooltip": "tooltip 13 ✓",
+                "typeName": "typeName 6 ✓"
+              }
+            ],
+            "singleton": false,
+            "typeName": "typeName 0 ✓"
+          },
+          {
+            "defaults": {
+              "list": [
+                4,
+                "two ✓",
+                true,
+                null
+              ],
+              "nested": {
+                "value": 1.5
+              }
+            },
+            "fields": [
+              {
+                "assetType": "assetType 10 ✓",
+                "container": "container 14 ✓",
+                "displayName": "displayName 4 ✓",
+                "enumOptions": [
+                  "enumOptions 9 ✓",
+                  "enumOptions 10 ✓"
+                ],
+                "hidden": false,
+                "kind": "kind 5 ✓",
+                "max": 14.5,
+                "min": 13.5,
+                "name": "name 3 ✓",
+                "readOnly": true,
+                "tooltip": "tooltip 13 ✓",
+                "typeName": "typeName 6 ✓"
+              },
+              {
+                "assetType": "assetType 11 ✓",
+                "container": "container 15 ✓",
+                "displayName": "displayName 5 ✓",
+                "enumOptions": [
+                  "enumOptions 10 ✓",
+                  "enumOptions 11 ✓"
+                ],
+                "hidden": true,
+                "kind": "kind 6 ✓",
+                "max": 15.5,
+                "min": 14.5,
+                "name": "name 4 ✓",
+                "readOnly": false,
+                "tooltip": "tooltip 14 ✓",
+                "typeName": "typeName 7 ✓"
+              }
+            ],
+            "singleton": true,
+            "typeName": "typeName 1 ✓"
+          }
+        ]
+      },
+      "payload": "b70500005b7b2264656661756c7473223a7b226c697374223a5b332c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226669656c6473223a5b7b22617373657454797065223a22617373657454797065203920e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313320e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203320e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e73203820e29c93222c22656e756d4f7074696f6e73203920e29c93225d2c2268696464656e223a747275652c226b696e64223a226b696e64203420e29c93222c226d6178223a31332e352c226d696e223a31322e352c226e616d65223a226e616d65203220e29c93222c22726561644f6e6c79223a66616c73652c22746f6f6c746970223a22746f6f6c74697020313220e29c93222c22747970654e616d65223a22747970654e616d65203520e29c93227d2c7b22617373657454797065223a2261737365745479706520313020e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313420e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203420e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e73203920e29c93222c22656e756d4f7074696f6e7320313020e29c93225d2c2268696464656e223a66616c73652c226b696e64223a226b696e64203520e29c93222c226d6178223a31342e352c226d696e223a31332e352c226e616d65223a226e616d65203320e29c93222c22726561644f6e6c79223a747275652c22746f6f6c746970223a22746f6f6c74697020313320e29c93222c22747970654e616d65223a22747970654e616d65203620e29c93227d5d2c2273696e676c65746f6e223a66616c73652c22747970654e616d65223a22747970654e616d65203020e29c93227d2c7b2264656661756c7473223a7b226c697374223a5b342c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226669656c6473223a5b7b22617373657454797065223a2261737365745479706520313020e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313420e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203420e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e73203920e29c93222c22656e756d4f7074696f6e7320313020e29c93225d2c2268696464656e223a66616c73652c226b696e64223a226b696e64203520e29c93222c226d6178223a31342e352c226d696e223a31332e352c226e616d65223a226e616d65203320e29c93222c22726561644f6e6c79223a747275652c22746f6f6c746970223a22746f6f6c74697020313320e29c93222c22747970654e616d65223a22747970654e616d65203620e29c93227d2c7b22617373657454797065223a2261737365745479706520313120e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313520e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203520e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e7320313020e29c93222c22656e756d4f7074696f6e7320313120e29c93225d2c2268696464656e223a747275652c226b696e64223a226b696e64203620e29c93222c226d6178223a31352e352c226d696e223a31342e352c226e616d65223a226e616d65203420e29c93222c22726561644f6e6c79223a66616c73652c22746f6f6c746970223a22746f6f6c74697020313420e29c93222c22747970654e616d65223a22747970654e616d65203720e29c93227d5d2c2273696e676c65746f6e223a747275652c22747970654e616d65223a22747970654e616d65203120e29c93227d5d"
+    },
+    {
+      "response": "ComponentAdded",
+      "id": "0x12",
+      "fields": {
+        "componentId": "componentId 0 ✓ é",
+        "values": {
+          "list": [
+            1,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "14000000636f6d706f6e656e744964203020e29c9320c3a9370000007b226c697374223a5b312c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "response": "ComponentData",
+      "id": "0x13",
+      "fields": {
+        "values": {
+          "list": [
+            0,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "370000007b226c697374223a5b302c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "response": "LuaFields",
+      "id": "0x14",
+      "fields": {
+        "schema": {
+          "defaults": {
+            "list": [
+              3,
+              "two ✓",
+              true,
+              null
+            ],
+            "nested": {
+              "value": 1.5
+            }
+          },
+          "fields": [
+            {
+              "assetType": "assetType 9 ✓",
+              "container": "container 13 ✓",
+              "displayName": "displayName 3 ✓",
+              "enumOptions": [
+                "enumOptions 8 ✓",
+                "enumOptions 9 ✓"
+              ],
+              "hidden": true,
+              "kind": "kind 4 ✓",
+              "max": 13.5,
+              "min": 12.5,
+              "name": "name 2 ✓",
+              "readOnly": false,
+              "tooltip": "tooltip 12 ✓",
+              "typeName": "typeName 5 ✓"
+            },
+            {
+              "assetType": "assetType 10 ✓",
+              "container": "container 14 ✓",
+              "displayName": "displayName 4 ✓",
+              "enumOptions": [
+                "enumOptions 9 ✓",
+                "enumOptions 10 ✓"
+              ],
+              "hidden": false,
+              "kind": "kind 5 ✓",
+              "max": 14.5,
+              "min": 13.5,
+              "name": "name 3 ✓",
+              "readOnly": true,
+              "tooltip": "tooltip 13 ✓",
+              "typeName": "typeName 6 ✓"
+            }
+          ],
+          "singleton": false,
+          "typeName": "typeName 0 ✓"
+        }
+      },
+      "payload": "d90200007b2264656661756c7473223a7b226c697374223a5b332c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226669656c6473223a5b7b22617373657454797065223a22617373657454797065203920e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313320e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203320e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e73203820e29c93222c22656e756d4f7074696f6e73203920e29c93225d2c2268696464656e223a747275652c226b696e64223a226b696e64203420e29c93222c226d6178223a31332e352c226d696e223a31322e352c226e616d65223a226e616d65203220e29c93222c22726561644f6e6c79223a66616c73652c22746f6f6c746970223a22746f6f6c74697020313220e29c93222c22747970654e616d65223a22747970654e616d65203520e29c93227d2c7b22617373657454797065223a2261737365745479706520313020e29c93222c22636f6e7461696e6572223a22636f6e7461696e657220313420e29c93222c22646973706c61794e616d65223a22646973706c61794e616d65203420e29c93222c22656e756d4f7074696f6e73223a5b22656e756d4f7074696f6e73203920e29c93222c22656e756d4f7074696f6e7320313020e29c93225d2c2268696464656e223a66616c73652c226b696e64223a226b696e64203520e29c93222c226d6178223a31342e352c226d696e223a31332e352c226e616d65223a226e616d65203320e29c93222c22726561644f6e6c79223a747275652c22746f6f6c746970223a22746f6f6c74697020313320e29c93222c22747970654e616d65223a22747970654e616d65203620e29c93227d5d2c2273696e676c65746f6e223a66616c73652c22747970654e616d65223a22747970654e616d65203020e29c93227d"
     },
     {
       "response": "ProjectInfo",

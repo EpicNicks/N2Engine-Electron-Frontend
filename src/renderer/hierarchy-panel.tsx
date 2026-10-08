@@ -3,6 +3,7 @@
 // logic is in hierarchy-state.ts and hierarchy-tree.ts (tested in Node); this is the DOM around it.
 import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
+import { EntityDragEffect, EntityDragType } from "./drag-types"
 import { CreatePresets } from "./hierarchy-state"
 import { DropPosition, DropTarget, RootId, canDrop, resolveDrop } from "./hierarchy-tree"
 import { Empty, MenuItem, Panel, showContextMenu, useApp } from "./ui"
@@ -182,8 +183,10 @@ export function HierarchyPanel() {
             if (!selection.ids.has(row.id)) hierarchy.click(row.id)
             dragging.value = hierarchy.dragIds(row.id)
             if (e.dataTransfer) {
-              e.dataTransfer.effectAllowed = "move"
+              e.dataTransfer.effectAllowed = EntityDragEffect
               e.dataTransfer.setData("text/plain", node.name)
+              // An object field of the inspector takes it
+              e.dataTransfer.setData(EntityDragType, row.id)
             }
           }}
           onDragEnd={clearDrag}
