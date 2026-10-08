@@ -1,6 +1,8 @@
 import * as net from "net"
 import {
+  AutosaveInfo,
   CameraPositionResponse,
+  EditResultResponse,
   ComponentSchema,
   CommandType,
   EngineHealthResponse,
@@ -9,6 +11,7 @@ import {
   EventsResponse,
   FrameDataResponse,
   HierarchyResponse,
+  HistoryResponse,
   PROTOCOL_VERSION,
   ProjectInfoResponse,
   ResponseType,
@@ -24,6 +27,7 @@ import {
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { checkEntityProperties } from "./entity-args"
+import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
 import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
 import { AudioSamples } from "../audio-stream"
 
@@ -485,6 +489,53 @@ export class EngineClient {
     checkId(entityId, "entityId")
     checkId(componentId, "componentId")
     return parseComponentSchema((await this.send(Commands.GetLuaFields, { entityId, componentId })).schema, "Lua fields")
+  }
+
+  // ==================== Undo, redo and autosave (protocol 1.6) ====================
+
+  /** Undoes the latest step that is done; the answer is validated (parseEditResult) */
+  async undo(): Promise<EditResultResponse> {
+    return parseEditResult(await this.send(Commands.Undo, {}))
+  }
+
+  /** Redoes the step undone last */
+  async redo(): Promise<EditResultResponse> {
+    return parseEditResult(await this.send(Commands.Redo, {}))
+  }
+
+  /** Starts an edit group: every edit until the matching endEditGroup is one undo step named label */
+  beginEditGroup(label: string): Promise<void> {
+    try {
+      checkEditGroupLabel(label)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+    return this.send(Commands.BeginEditGroup, { label })
+  }
+
+  /** Ends the innermost edit group (an Error when none is open) */
+  endEditGroup(): Promise<void> {
+    return this.send(Commands.EndEditGroup, {})
+  }
+
+  /** Every step of the history, oldest first, and the cursor; the answer is validated (parseHistory) */
+  async getHistory(): Promise<HistoryResponse> {
+    return parseHistory(await this.send(Commands.GetHistory, {}))
+  }
+
+  /** Whether the open scene has an autosave, and its file's path, size and time; validated (parseAutosaveInfo) */
+  async getAutosave(): Promise<AutosaveInfo> {
+    return parseAutosaveInfo((await this.send(Commands.GetAutosave, {})).info)
+  }
+
+  /** Replaces the open scene's content with its autosave, as one undoable step */
+  restoreAutosave(): Promise<SceneInfoResponse> {
+    return this.send(Commands.RestoreAutosave, {})
+  }
+
+  /** Deletes the open scene's autosave (not an error when there is none) */
+  discardAutosave(): Promise<void> {
+    return this.send(Commands.DiscardAutosave, {})
   }
 
   // ==================== Assets ====================

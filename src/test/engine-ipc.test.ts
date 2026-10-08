@@ -142,6 +142,14 @@ class FakeClient {
   setComponentFields = (...args: unknown[]) => this.record("setComponentFields", args)
   getComponent = (...args: unknown[]) => this.record("getComponent", args)
   getLuaFields = (...args: unknown[]) => this.record("getLuaFields", args)
+  undo = (...args: unknown[]) => this.record("undo", args)
+  redo = (...args: unknown[]) => this.record("redo", args)
+  beginEditGroup = (...args: unknown[]) => this.record("beginEditGroup", args)
+  endEditGroup = (...args: unknown[]) => this.record("endEditGroup", args)
+  getHistory = (...args: unknown[]) => this.record("getHistory", args)
+  getAutosave = (...args: unknown[]) => this.record("getAutosave", args)
+  restoreAutosave = (...args: unknown[]) => this.record("restoreAutosave", args)
+  discardAutosave = (...args: unknown[]) => this.record("discardAutosave", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -391,6 +399,46 @@ describe("EngineHost (the main process's engine IPC)", () => {
       ["setComponentFields", ["entity", "component", { a: new Map() }]],
       ["getComponent", ["entity", {}]],
       ["getLuaFields", ["entity"]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+  })
+
+  test("the undo, group and autosave commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const calls: Array<[string, unknown[]]> = [
+      ["undo", []],
+      ["redo", []],
+      ["beginEditGroup", ["Move 3 objects"]],
+      ["endEditGroup", []],
+      ["getHistory", []],
+      ["getAutosave", []],
+      ["restoreAutosave", []],
+      ["discardAutosave", []],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["undo", ["x"]],
+      ["redo", [1]],
+      ["beginEditGroup", []],
+      ["beginEditGroup", [5]],
+      ["beginEditGroup", [["a"]]],
+      ["beginEditGroup", [{ length: 1e9 }]],
+      ["beginEditGroup", ["a", "b"]],
+      ["endEditGroup", ["x"]],
+      ["getHistory", [1]],
+      ["getAutosave", [1]],
+      ["restoreAutosave", ["x"]],
+      ["discardAutosave", [null]],
     ]
     client.calls.length = 0
     for (const [name, args] of bad) {

@@ -6,6 +6,7 @@ import { batch, computed, signal } from "@preact/signals-core"
 import type { EngineApi } from "../shared/api"
 import type { HierarchyResponse } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
+import type { EditGroups } from "./edit-groups"
 import {
   DropTarget,
   RootId,
@@ -43,6 +44,11 @@ export interface HierarchyOptions {
   confirm(message: string, okLabel: string): Promise<boolean>
   /** The selection's primary object changed (the inspector shows it); null: none */
   onPrimaryChange?(id: string | null): void
+  /**
+   * Edit groups (protocol 1.6): an action that changes several objects is one undo step. Without it, each object's
+   * change is a step of its own.
+   */
+  groups?: Pick<EditGroups, "within">
 }
 
 /** The objects the Create menu makes: a label and CreateEntityEx's preset */
@@ -74,6 +80,8 @@ export class HierarchyState {
   /** An action that changes objects is running: another one (a key held down, a double click) waits its turn */
   private acting = false
   private renameDone: Promise<void> = Promise.resolve()
+  /** The action that is running (a multi-delete, a move), settled whether it succeeds or fails */
+  private actionDone: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly engine: Engine,
@@ -274,17 +282,33 @@ export class HierarchyState {
     return done
   }
 
+  /** Resolves when the action that is running (several objects deleted, duplicated or moved) is done: Undo waits for it */
+  get actionSettled(): Promise<void> {
+    return this.actionDone
+  }
+
   /** Resolves when the last rename has been sent and read back (Ctrl+S waits for it) */
   get renameSettled(): Promise<void> {
     return this.renameDone
+  }
+
+  /** Runs the work as one undo step when it changes more than one object (one change is a step already) */
+  private grouped<T>(label: string, objects: number, work: () => Promise<T>): Promise<T> {
+    const groups = this.options.groups
+    return groups && objects > 1 ? groups.within(`${label} ${objects} objects`, work) : work()
   }
 
   /** Runs an action unless another one is running (resolves with `otherwise` then) */
   private async exclusive<T>(otherwise: T, action: () => Promise<T>): Promise<T> {
     if (this.acting) return otherwise
     this.acting = true
+    const run = action()
+    this.actionDone = run.then(
+      () => undefined,
+      () => undefined
+    )
     try {
-      return await action()
+      return await run
     } finally {
       this.acting = false
     }
@@ -301,7 +325,9 @@ export class HierarchyState {
       if (ids.length === 0) return
       const copies: string[] = []
       try {
-        for (const id of ids) copies.push(await this.engine.duplicateEntity(id))
+        await this.grouped("Duplicate", ids.length, async () => {
+          for (const id of ids) copies.push(await this.engine.duplicateEntity(id))
+        })
       } finally {
         await this.refresh()
         const tree = this.tree.value
@@ -317,8 +343,8 @@ export class HierarchyState {
   }
 
   /**
-   * Destroys the selected objects with what is under them. Asks first when that is more than one object (there is no
-   * undo yet); resolves false when the user said no.
+   * Destroys the selected objects with what is under them, as one undo step. Asks first when that is more than one
+   * object; resolves false when the user said no.
    */
   deleteSelected(): Promise<boolean> {
     return this.exclusive(false, async () => {
@@ -334,7 +360,9 @@ export class HierarchyState {
         if (!(await this.options.confirm(`Delete ${what} (${count} objects)?`, "Delete"))) return false
       }
       try {
-        for (const id of ids) await this.engine.destroyEntity(id)
+        await this.grouped("Delete", ids.length, async () => {
+          for (const id of ids) await this.engine.destroyEntity(id)
+        })
       } finally {
         await this.refresh()
       }
@@ -351,9 +379,11 @@ export class HierarchyState {
       const moves = planMoves(this.tree.value, draggedIds, target)
       if (moves === null || moves.length === 0) return false
       try {
-        for (const move of moves) {
-          await this.engine.setEntityParent(move.entityId, move.parentId, move.siblingIndex, true)
-        }
+        await this.grouped("Move", moves.length, async () => {
+          for (const move of moves) {
+            await this.engine.setEntityParent(move.entityId, move.parentId, move.siblingIndex, true)
+          }
+        })
       } finally {
         await this.refresh()
       }

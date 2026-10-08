@@ -13,6 +13,7 @@ import type { ComponentSchema, EntityHeader } from "../protocol/protocol.generat
 import type { SceneChange } from "../protocol/editor-events"
 import type { EngineApi, JsonObject, ProjectApi } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
+import type { EditGroups, GroupHandle } from "./edit-groups"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
 
 type Engine = Pick<
@@ -56,6 +57,11 @@ export interface InspectorOptions {
   /** A failure nobody is looking at (an edit's answer after the selection moved on) */
   onError?(what: string, error: unknown): void
   debounceMs?: number
+  /**
+   * Edit groups (protocol 1.6), for the drags that are one undo step (beginGesture, endGesture). Without it a drag is
+   * as many steps as the host cuts it into (it merges edits of the same field made within 500 ms).
+   */
+  groups?: Pick<EditGroups, "begin" | "end">
   /** Whether res:// paths compare without regard to case (Windows and macOS file systems), for a dropped file */
   caseInsensitivePaths?: boolean
   /** Timers, replaceable in tests */
@@ -106,6 +112,10 @@ export class InspectorState {
   private readonly sending = new Map<string, Promise<void>>()
   /** Counts the object's own property edits, so a read that began before one doesn't undo it */
   private headerEdits = 0
+  /** A drag in progress that is one undo step: the answer to opening its group (its handle, null if refused); null when none */
+  private gesture: Promise<GroupHandle | null> | null = null
+  /** The end of a drag that is being ended (what is pending is sent, then the group ends); null when none */
+  private ending: Promise<void> | null = null
   private typesRead: Promise<void> | null = null
   /** Counts connections that ended, so a read of the types for an earlier one is dropped */
   private typesEpoch = 0
@@ -167,6 +177,7 @@ export class InspectorState {
   /** Lets go of everything held: the connection changed (another host), or none */
   reset(): void {
     this.cancelTimers()
+    this.gesture = null // its group ended with the connection
     batch(() => {
       this.fetches++
       this.typesRead = null
@@ -259,6 +270,12 @@ export class InspectorState {
 
   /** The scene changed: reads the object again when the change touched it */
   async applyChange(change: SceneChange): Promise<void> {
+    // Every object was rebuilt (an undo of a delete, a restored autosave, another scene): what was learned about the
+    // other objects' components is for objects that may not be there
+    if (change.full) {
+      this.known.value = new Map()
+      this.scanned.clear()
+    }
     const id = this.entityId.value
     if (id === null) return
     if (change.full || change.entityIds.includes(id)) await this.refresh()
@@ -385,6 +402,51 @@ export class InspectorState {
 
   // ==================== Editing a component ====================
 
+  /**
+   * A drag of a slider starts: every edit until endGesture is one undo step named label. The edits wait for the group
+   * to be open (the host numbers them after it). A second begin while one is in progress does nothing. Resolves
+   * whether a gesture started, so the caller listens for its end only then.
+   */
+  beginGesture(label: string): boolean {
+    if (!this.options.groups || this.gesture) return false
+    this.gesture = this.options.groups.begin(label)
+    return true
+  }
+
+  /** Resolves when a drag that is being ended has sent what it held and ended its group (Undo waits for it) */
+  get gestureEnded(): Promise<void> {
+    return this.ending ?? Promise.resolve()
+  }
+
+  /**
+   * The drag ended (pointer up, cancelled, or the window lost the focus): sends what is pending, so the last value is
+   * in the step, and ends the group. Does nothing when no gesture is in progress, so it can be called for every
+   * way a drag can end.
+   */
+  endGesture(): Promise<void> {
+    const gesture = this.gesture
+    if (!gesture) return this.gestureEnded
+    const ending = (async () => {
+      try {
+        await this.flush()
+      } finally {
+        if (this.gesture === gesture) this.gesture = null
+        // By handle: a group that Undo closed meanwhile (a drag still in progress) is not ended twice
+        await this.options.groups?.end(await gesture)
+      }
+    })()
+    this.ending = ending
+    void ending.then(
+      () => this.clearEnding(ending),
+      () => this.clearEnding(ending)
+    )
+    return ending
+  }
+
+  private clearEnding(ending: Promise<void>): void {
+    if (this.ending === ending) this.ending = null
+  }
+
   private requireEditable(): void {
     const reason = this.readOnlyReason.value
     if (reason !== null) throw new Error(`The inspector is read-only: ${reason}`)
@@ -461,6 +523,8 @@ export class InspectorState {
   }
 
   private async drain(componentId: string): Promise<void> {
+    // A drag's group is opened before its first edit is sent
+    if (this.gesture) await this.gesture
     for (;;) {
       const entityId = this.entityId.value
       const overlay = this.overlays.value.get(componentId)
@@ -544,8 +608,8 @@ export class InspectorState {
   }
 
   /**
-   * Removes a component after asking (there is no undo yet); resolves false when the user said no. The host clears
-   * every reference to it in the scene.
+   * Removes a component after asking; resolves false when the user said no. The host clears every reference to it in
+   * the scene (and Undo puts them back).
    */
   async removeComponent(componentId: string): Promise<boolean> {
     this.requireEditable()

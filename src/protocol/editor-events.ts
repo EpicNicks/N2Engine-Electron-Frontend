@@ -36,7 +36,22 @@ export interface ProjectChangedEvent {
   kind: "projectChanged"
 }
 
-export type StateEvent = SceneChangedEvent | AssetsChangedEvent | ProjectChangedEvent
+/**
+ * The undo history changed (since 1.6.0): a step was recorded, undone or redone, the history was cleared, or an edit
+ * group opened or closed. label is the step Undo would undo and redoLabel the one Redo would redo ("" for none); the
+ * counts are the steps done and undone. canUndo and canRedo are false while an edit group is open.
+ */
+export interface HistoryChangedEvent {
+  kind: "historyChanged"
+  canUndo: boolean
+  canRedo: boolean
+  label: string
+  redoLabel: string
+  undoCount: number
+  redoCount: number
+}
+
+export type StateEvent = SceneChangedEvent | AssetsChangedEvent | ProjectChangedEvent | HistoryChangedEvent
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0
@@ -96,6 +111,16 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
       }
     case "projectChanged":
       return { kind: "projectChanged" }
+    case "historyChanged":
+      return {
+        kind: "historyChanged",
+        canUndo: event.canUndo === true,
+        canRedo: event.canRedo === true,
+        label: typeof event.label === "string" ? event.label : "",
+        redoLabel: typeof event.redoLabel === "string" ? event.redoLabel : "",
+        undoCount: count(event.undoCount),
+        redoCount: count(event.redoCount),
+      }
     default:
       return null
   }

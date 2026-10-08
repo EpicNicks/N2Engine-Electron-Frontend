@@ -5,6 +5,8 @@ import { contextBridge, ipcRenderer } from "electron"
 import {
   Channels,
   ConnectionState,
+  EditCommand,
+  EditMenuApi,
   EngineApi,
   EngineCommandNames,
   EngineCommands,
@@ -125,6 +127,19 @@ const project: ProjectApi = {
   deleteFile: (filePath) => invoke(Channels.projectDeleteFile, filePath),
 }
 
+// ==================== window.editMenu ====================
+
+const editListeners: Array<(command: EditCommand) => void> = []
+ipcRenderer.on(Channels.editCommand, (_event, command: EditCommand) => {
+  if (command === "undo" || command === "redo") notify(editListeners, command, "Edit menu")
+})
+const editMenu: EditMenuApi = {
+  onCommand: (listener) => {
+    editListeners.push(listener)
+  },
+}
+
 contextBridge.exposeInMainWorld("engine", engine)
+contextBridge.exposeInMainWorld("editMenu", editMenu)
 contextBridge.exposeInMainWorld("host", hostApi)
 contextBridge.exposeInMainWorld("project", project)

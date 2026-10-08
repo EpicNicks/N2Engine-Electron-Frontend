@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.5.0";
+export const PROTOCOL_VERSION = "1.6.0";
 
 // ==================== Types ====================
 
@@ -48,6 +48,24 @@ export interface EditorEvent {
   added?: string[];
   removed?: string[];
   modified?: string[];
+  canUndo?: boolean;
+  canRedo?: boolean;
+  label?: string;
+  redoLabel?: string;
+  undoCount?: number;
+  redoCount?: number;
+}
+
+export interface HistoryEntry {
+  label: string;
+  bytes: number;
+}
+
+export interface AutosaveInfo {
+  exists: boolean;
+  path?: string;
+  size?: number;
+  modified?: number;
 }
 
 export interface ProjectFile {
@@ -179,6 +197,14 @@ export const CommandType = {
   GetProjectInfo: 0x70,
   SetProjectSettings: 0x71,
   SetStartupScene: 0x72,
+  Undo: 0x90,
+  Redo: 0x91,
+  BeginEditGroup: 0x92,
+  EndEditGroup: 0x93,
+  GetHistory: 0x94,
+  GetAutosave: 0x95,
+  RestoreAutosave: 0x96,
+  DiscardAutosave: 0x97,
   Shutdown: 0xFF,
 } as const;
 
@@ -206,6 +232,9 @@ export const ResponseType = {
   ComponentAdded: 0x12,
   ComponentData: 0x13,
   LuaFields: 0x14,
+  EditResult: 0x15,
+  History: 0x16,
+  Autosave: 0x17,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -252,6 +281,14 @@ export const CommandResponse = {
   GetProjectInfo: "ProjectInfo",
   SetProjectSettings: "ProjectInfo",
   SetStartupScene: "ProjectInfo",
+  Undo: "EditResult",
+  Redo: "EditResult",
+  BeginEditGroup: "Ok",
+  EndEditGroup: "Ok",
+  GetHistory: "History",
+  GetAutosave: "Autosave",
+  RestoreAutosave: "SceneInfo",
+  DiscardAutosave: "Ok",
   Shutdown: "Ok",
 } as const;
 
@@ -396,6 +433,10 @@ export interface SetStartupSceneRequest {
   path: string;
 }
 
+export interface BeginEditGroupRequest {
+  label: string;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -507,6 +548,23 @@ export interface ProjectInfoResponse {
   rootPath: string;
   userDataPath: string;
   project: ProjectFile;
+}
+
+export interface EditResultResponse {
+  label: string;
+  revision: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  savedRevision: number;
+}
+
+export interface HistoryResponse {
+  cursor: number;
+  entries: HistoryEntry[];
+}
+
+export interface AutosaveResponse {
+  info: AutosaveInfo;
 }
 
 // ==================== Codec runtime ====================
@@ -1240,6 +1298,20 @@ export function decodeSetStartupSceneRequest(payload: Uint8Array): SetStartupSce
   return { path };
 }
 
+/** BeginEditGroup's request payload (without the frame header) */
+export function encodeBeginEditGroupRequest(value: BeginEditGroupRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.label);
+  return writer.finish();
+}
+
+/** Reads BeginEditGroup's request payload; bytes after the last field are ignored */
+export function decodeBeginEditGroupRequest(payload: Uint8Array): BeginEditGroupRequest {
+  const reader = new ProtocolReader(payload);
+  const label = reader.string();
+  return { label };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1585,6 +1657,58 @@ export function decodeProjectInfoResponse(payload: Uint8Array): ProjectInfoRespo
   return { rootPath, userDataPath, project };
 }
 
+/** EditResult's payload (without the frame header) */
+export function encodeEditResultResponse(value: EditResultResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.label);
+  writer.u32(value.revision);
+  writer.bool(value.canUndo);
+  writer.bool(value.canRedo);
+  writer.u32(value.savedRevision);
+  return writer.finish();
+}
+
+/** Reads EditResult's payload; bytes after the last field are ignored */
+export function decodeEditResultResponse(payload: Uint8Array): EditResultResponse {
+  const reader = new ProtocolReader(payload);
+  const label = reader.string();
+  const revision = reader.u32();
+  const canUndo = reader.bool();
+  const canRedo = reader.bool();
+  const savedRevision = reader.u32();
+  return { label, revision, canUndo, canRedo, savedRevision };
+}
+
+/** History's payload (without the frame header) */
+export function encodeHistoryResponse(value: HistoryResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.cursor);
+  writer.json(value.entries);
+  return writer.finish();
+}
+
+/** Reads History's payload; bytes after the last field are ignored */
+export function decodeHistoryResponse(payload: Uint8Array): HistoryResponse {
+  const reader = new ProtocolReader(payload);
+  const cursor = reader.u32();
+  const entries = reader.json() as HistoryEntry[];
+  return { cursor, entries };
+}
+
+/** Autosave's payload (without the frame header) */
+export function encodeAutosaveResponse(value: AutosaveResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads Autosave's payload; bytes after the last field are ignored */
+export function decodeAutosaveResponse(payload: Uint8Array): AutosaveResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as AutosaveInfo;
+  return { info };
+}
+
 /** Each command's request codecs, for commands with request fields */
 export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
@@ -1615,6 +1739,7 @@ export const RequestCodecs = {
   GetLuaFields: { encode: encodeGetLuaFieldsRequest, decode: decodeGetLuaFieldsRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
+  BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },
 } as const;
 
 /** Each response's codecs */
@@ -1640,4 +1765,7 @@ export const ResponseCodecs = {
   ComponentData: { encode: encodeComponentDataResponse, decode: decodeComponentDataResponse },
   LuaFields: { encode: encodeLuaFieldsResponse, decode: decodeLuaFieldsResponse },
   ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },
+  EditResult: { encode: encodeEditResultResponse, decode: decodeEditResultResponse },
+  History: { encode: encodeHistoryResponse, decode: decodeHistoryResponse },
+  Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },
 } as const;
