@@ -2,7 +2,7 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import { signal } from "@preact/signals-core"
 import type { HierarchyResponse } from "../protocol/protocol.generated"
-import type { SceneChange } from "../protocol/editor-events"
+import type { AssetsChangedEvent, SceneChange } from "../protocol/editor-events"
 import { HierarchyState } from "../renderer/hierarchy-state"
 import { FollowDeps, followScene } from "../renderer/scene-follow"
 import { AssetDragEffect, EntityDragEffect, FieldDropEffect, effectAllows } from "../renderer/drag-types"
@@ -36,6 +36,8 @@ describe("followScene", () => {
     const sceneChangeCount = signal(1)
     const lastSceneChange = signal<SceneChange | null>({ full: true, entityIds: [] })
     const assetsChangeCount = signal(0)
+    const lastAssetsChange = signal<AssetsChangedEvent | null>(null)
+    const assetsLog: Array<AssetsChangedEvent | null | "reset" | "refresh"> = []
     const selectedId = signal<string | null>(null)
     const log: string[] = []
     const errors: unknown[] = []
@@ -45,6 +47,7 @@ describe("followScene", () => {
         sceneChangeCount,
         lastSceneChange,
         assetsChangeCount,
+        lastAssetsChange,
         newestSceneRevision: null,
         reportError: (_what, e) => void errors.push(e),
       },
@@ -54,6 +57,11 @@ describe("followScene", () => {
         refreshTransform: async () => void log.push("refreshTransform"),
       },
       hierarchy,
+      assets: {
+        reset: () => void assetsLog.push("reset"),
+        refresh: async () => void assetsLog.push("refresh"),
+        onAssetsChanged: async (event) => void assetsLog.push(event),
+      },
       inspector: {
         reset: () => void log.push("inspector.reset"),
         loadTypes: async () => void log.push("loadTypes"),
@@ -63,7 +71,19 @@ describe("followScene", () => {
         refreshLuaFields: async () => void log.push("refreshLua"),
       },
     }
-    return { deps, reads, log, errors, connected, sceneChangeCount, lastSceneChange, assetsChangeCount, selectedId }
+    return {
+      deps,
+      reads,
+      log,
+      errors,
+      connected,
+      sceneChangeCount,
+      lastSceneChange,
+      assetsChangeCount,
+      lastAssetsChange,
+      assetsLog,
+      selectedId,
+    }
   }
 
   test("a change is read once: the hierarchy's own answer doesn't start another read (it once did, for ever)", async () => {
@@ -105,6 +125,32 @@ describe("followScene", () => {
     connected.value = false
     await tick()
     assert.deepEqual(log, ["scene.reset", "inspector.reset"])
+    stop()
+  })
+
+  test("the assets panel lists on connecting, follows each event, and is told when events were missed", async () => {
+    const { deps, assetsLog, connected, assetsChangeCount, lastAssetsChange } = setup()
+    const stop = followScene(deps)
+    await tick()
+    assert.deepEqual(assetsLog, ["refresh"])
+    assetsLog.length = 0
+
+    const event: AssetsChangedEvent = { kind: "assetsChanged", added: [], removed: [], modified: ["res://a.lua"] }
+    lastAssetsChange.value = event
+    assetsChangeCount.value++
+    await tick()
+    assert.deepEqual(assetsLog, [event])
+    assetsLog.length = 0
+
+    // The count moved with no new event: events were missed, so the panel is told to look at everything
+    assetsChangeCount.value++
+    await tick()
+    assert.deepEqual(assetsLog, [null])
+    assetsLog.length = 0
+
+    connected.value = false
+    await tick()
+    assert.deepEqual(assetsLog, ["reset"])
     stop()
   })
 })

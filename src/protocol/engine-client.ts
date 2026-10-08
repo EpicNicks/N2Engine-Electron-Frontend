@@ -1,5 +1,7 @@
 import * as net from "net"
 import {
+  AssetDetails,
+  AssetListResponse,
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
@@ -30,6 +32,7 @@ import {
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
+import { parseAssetDetails, parseAssetList } from "./asset-parse"
 import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
 import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
@@ -588,6 +591,50 @@ export class EngineClient {
 
   rescanAssets(): Promise<void> {
     return this.send(Commands.RescanAssets, {})
+  }
+
+  /**
+   * The assets of a folder (protocol 1.9.0; res://..., empty for the whole assets folder) and its subfolders, or with
+   * recursive everything below; sorted by path, not paged. The answer is validated (parseAssetList).
+   */
+  async listAssets(folder: string, recursive: boolean): Promise<AssetListResponse> {
+    return parseAssetList(await this.send(Commands.ListAssets, { folder, recursive }))
+  }
+
+  /** One asset by res:// path or UUID, with its import settings and whether the engine holds it; validated */
+  async getAssetInfo(uuidOrPath: string): Promise<AssetDetails> {
+    return parseAssetDetails((await this.send(Commands.GetAssetInfo, { uuidOrPath })).info)
+  }
+
+  /** Replaces an asset's import settings (a JSON object of at most 64 KiB; the host checks) and saves its .meta */
+  setImportSettings(path: string, customData: unknown): Promise<void> {
+    return this.send(Commands.SetImportSettings, { path, customData })
+  }
+
+  /** A text file of the project (a script, a scene, JSON, ...; at most 4 MiB of UTF-8), exactly as it is on disk */
+  async readTextAsset(path: string): Promise<string> {
+    const text = (await this.send(Commands.ReadTextAsset, { path })).text
+    if (typeof text !== "string") throw new Error("The text asset's text must be a string")
+    return text
+  }
+
+  /** Writes a text file (made when it doesn't exist, in a folder that does); a loaded script is reloaded */
+  writeTextAsset(path: string, text: string): Promise<void> {
+    return this.send(Commands.WriteTextAsset, { path, text })
+  }
+
+  /** Makes a .lua file from the behaviour-script template (and the folders above it); answers its path and UUID */
+  async createScriptAsset(path: string, className: string): Promise<{ path: string; uuid: string }> {
+    const created = await this.send(Commands.CreateScriptAsset, { path, className })
+    if (typeof created.path !== "string" || typeof created.uuid !== "string") {
+      throw new Error("The created script's path and uuid must be strings")
+    }
+    return { path: created.path, uuid: created.uuid }
+  }
+
+  /** Makes a folder and those above it that are missing (Ok when it exists) */
+  createFolder(path: string): Promise<void> {
+    return this.send(Commands.CreateFolder, { path })
   }
 
   // ==================== Events ====================

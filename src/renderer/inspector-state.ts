@@ -11,7 +11,7 @@
 import { batch, computed, signal } from "@preact/signals-core"
 import type { ComponentSchema, EntityHeader } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
-import type { EngineApi, JsonObject, ProjectApi } from "../shared/api"
+import type { AssetEntry, EngineApi, JsonObject } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
 import type { EditGroups, GroupHandle } from "./edit-groups"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
@@ -27,7 +27,8 @@ type Engine = Pick<
   | "getLuaFields"
   | "setEntityProperties"
 >
-type Project = Pick<ProjectApi, "listAssets">
+/** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
+type Project = { listAssets(): Promise<AssetEntry[]> }
 
 /** A component of the inspected object: its UUID, its type, and its values as the host stores them */
 export interface ComponentView {

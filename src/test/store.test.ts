@@ -742,7 +742,13 @@ describe("EditorStore", () => {
     )
     await timers.fire()
     assert.equal(store.assetsChangeCount.value, 2)
-    assert.deepEqual(store.lastAssetsChange.value?.removed, ["res://assets/a.lua"])
+    // Two events in one poll are one change that lists the paths of both
+    assert.deepEqual(store.lastAssetsChange.value, {
+      kind: "assetsChanged",
+      added: ["res://assets/a.lua"],
+      removed: ["res://assets/a.lua"],
+      modified: ["res://assets/b.lua"],
+    })
     assert.equal(store.projectChangeCount.value, 1)
   })
 
@@ -1114,6 +1120,26 @@ describe("EditorStore", () => {
       assert.equal(store.view.value, "editor")
       assert.ok(!api.calls.includes("close"))
       api.unsavedAnswers.push("discard")
+      await store.closeProject()
+      assert.equal(store.view.value, "welcome")
+    })
+
+    test("closing the project asks about text files with unsaved changes, and ones without are no reason to ask", async () => {
+      const { api, store } = await withScene(false)
+      store.unsavedFiles = () => []
+      api.confirmAnswers = []
+      await store.closeProject()
+      assert.equal(store.view.value, "welcome")
+    })
+
+    test("a dirty text file is asked about before the project closes", async () => {
+      const { api, store } = await withScene(false)
+      store.unsavedFiles = () => ["Player.lua"]
+      api.confirmAnswers = [false]
+      await store.closeProject()
+      assert.equal(store.view.value, "editor")
+      assert.ok(!api.calls.includes("close"))
+      api.confirmAnswers = [true]
       await store.closeProject()
       assert.equal(store.view.value, "welcome")
     })

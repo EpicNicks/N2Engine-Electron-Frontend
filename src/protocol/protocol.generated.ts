@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.8.0";
+export const PROTOCOL_VERSION = "1.10.0";
 
 // ==================== Types ====================
 
@@ -54,6 +54,17 @@ export interface EditorEvent {
   redoLabel?: string;
   undoCount?: number;
   redoCount?: number;
+  state?: string;
+  frame?: number;
+}
+
+export interface InputEvent {
+  type: string;
+  key?: string;
+  button?: string;
+  down?: boolean;
+  x?: number;
+  y?: number;
 }
 
 export interface HistoryEntry {
@@ -66,6 +77,32 @@ export interface AutosaveInfo {
   path?: string;
   size?: number;
   modified?: number;
+}
+
+export interface SubAssetInfo {
+  key: string;
+  uuid: string;
+  type: string;
+}
+
+export interface AssetInfo {
+  path: string;
+  uuid: string;
+  type: string;
+  size: number;
+  modified: number;
+  subAssets?: SubAssetInfo[];
+}
+
+export interface AssetDetails {
+  path: string;
+  uuid: string;
+  type: string;
+  size: number;
+  modified: number;
+  subAssets?: SubAssetInfo[];
+  customData: unknown;
+  loaded: boolean;
 }
 
 export interface ProjectFile {
@@ -198,6 +235,13 @@ export const CommandType = {
   SetLocalTransform: 0x3A,
   CreateScript: 0x40,
   RescanAssets: 0x41,
+  ListAssets: 0xA0,
+  GetAssetInfo: 0xA1,
+  SetImportSettings: 0xA2,
+  ReadTextAsset: 0xA3,
+  WriteTextAsset: 0xA4,
+  CreateScriptAsset: 0xA5,
+  CreateFolder: 0xA6,
   GetEngineHealth: 0x50,
   GetComponentTypes: 0x60,
   AddComponent: 0x61,
@@ -216,6 +260,11 @@ export const CommandType = {
   GetAutosave: 0x95,
   RestoreAutosave: 0x96,
   DiscardAutosave: 0x97,
+  WritePlaySnapshot: 0xB0,
+  SetPaused: 0xB1,
+  Step: 0xB2,
+  GetPlayState: 0xB3,
+  SendInput: 0xB4,
   Shutdown: 0xFF,
 } as const;
 
@@ -250,6 +299,12 @@ export const ResponseType = {
   EditorCamera: 0x19,
   PickResult: 0x1A,
   Bounds: 0x1B,
+  AssetList: 0xA0,
+  AssetDetail: 0xA1,
+  TextData: 0xA2,
+  AssetCreated: 0xA3,
+  PlaySnapshot: 0xB0,
+  PlayState: 0xB1,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -291,6 +346,13 @@ export const CommandResponse = {
   SetLocalTransform: "Ok",
   CreateScript: "ScriptData",
   RescanAssets: "Ok",
+  ListAssets: "AssetList",
+  GetAssetInfo: "AssetDetail",
+  SetImportSettings: "Ok",
+  ReadTextAsset: "TextData",
+  WriteTextAsset: "Ok",
+  CreateScriptAsset: "AssetCreated",
+  CreateFolder: "Ok",
   GetEngineHealth: "EngineHealth",
   GetComponentTypes: "ComponentTypes",
   AddComponent: "ComponentAdded",
@@ -309,6 +371,11 @@ export const CommandResponse = {
   GetAutosave: "Autosave",
   RestoreAutosave: "SceneInfo",
   DiscardAutosave: "Ok",
+  WritePlaySnapshot: "PlaySnapshot",
+  SetPaused: "Ok",
+  Step: "Ok",
+  GetPlayState: "PlayState",
+  SendInput: "Ok",
   Shutdown: "Ok",
 } as const;
 
@@ -443,6 +510,38 @@ export interface CreateScriptRequest {
   name: string;
 }
 
+export interface ListAssetsRequest {
+  folder: string;
+  recursive: boolean;
+}
+
+export interface GetAssetInfoRequest {
+  uuidOrPath: string;
+}
+
+export interface SetImportSettingsRequest {
+  path: string;
+  customData: unknown;
+}
+
+export interface ReadTextAssetRequest {
+  path: string;
+}
+
+export interface WriteTextAssetRequest {
+  path: string;
+  text: string;
+}
+
+export interface CreateScriptAssetRequest {
+  path: string;
+  className: string;
+}
+
+export interface CreateFolderRequest {
+  path: string;
+}
+
 export interface AddComponentRequest {
   entityId: string;
   typeName: string;
@@ -479,6 +578,22 @@ export interface SetStartupSceneRequest {
 
 export interface BeginEditGroupRequest {
   label: string;
+}
+
+export interface WritePlaySnapshotRequest {
+  scenePath: string;
+}
+
+export interface SetPausedRequest {
+  paused: boolean;
+}
+
+export interface StepRequest {
+  frames: number;
+}
+
+export interface SendInputRequest {
+  events: InputEvent[];
 }
 
 /** Ok has no payload */
@@ -595,6 +710,24 @@ export interface ScriptDataResponse {
   scriptTemplate: string;
 }
 
+export interface AssetListResponse {
+  folders: string[];
+  assets: AssetInfo[];
+}
+
+export interface AssetDetailResponse {
+  info: AssetDetails;
+}
+
+export interface TextDataResponse {
+  text: string;
+}
+
+export interface AssetCreatedResponse {
+  path: string;
+  uuid: string;
+}
+
 export interface EngineHealthResponse {
   healthy: boolean;
   count: number;
@@ -639,6 +772,16 @@ export interface HistoryResponse {
 
 export interface AutosaveResponse {
   info: AutosaveInfo;
+}
+
+export interface PlaySnapshotResponse {
+  file: string;
+}
+
+export interface PlayStateResponse {
+  state: string;
+  frame: number;
+  time: number;
 }
 
 // ==================== Codec runtime ====================
@@ -1334,6 +1477,112 @@ export function decodeCreateScriptRequest(payload: Uint8Array): CreateScriptRequ
   return { name };
 }
 
+/** ListAssets's request payload (without the frame header) */
+export function encodeListAssetsRequest(value: ListAssetsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.folder);
+  writer.bool(value.recursive);
+  return writer.finish();
+}
+
+/** Reads ListAssets's request payload; bytes after the last field are ignored */
+export function decodeListAssetsRequest(payload: Uint8Array): ListAssetsRequest {
+  const reader = new ProtocolReader(payload);
+  const folder = reader.string();
+  const recursive = reader.bool();
+  return { folder, recursive };
+}
+
+/** GetAssetInfo's request payload (without the frame header) */
+export function encodeGetAssetInfoRequest(value: GetAssetInfoRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  return writer.finish();
+}
+
+/** Reads GetAssetInfo's request payload; bytes after the last field are ignored */
+export function decodeGetAssetInfoRequest(payload: Uint8Array): GetAssetInfoRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  return { uuidOrPath };
+}
+
+/** SetImportSettings's request payload (without the frame header) */
+export function encodeSetImportSettingsRequest(value: SetImportSettingsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.json(value.customData);
+  return writer.finish();
+}
+
+/** Reads SetImportSettings's request payload; bytes after the last field are ignored */
+export function decodeSetImportSettingsRequest(payload: Uint8Array): SetImportSettingsRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const customData = reader.json() as unknown;
+  return { path, customData };
+}
+
+/** ReadTextAsset's request payload (without the frame header) */
+export function encodeReadTextAssetRequest(value: ReadTextAssetRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  return writer.finish();
+}
+
+/** Reads ReadTextAsset's request payload; bytes after the last field are ignored */
+export function decodeReadTextAssetRequest(payload: Uint8Array): ReadTextAssetRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  return { path };
+}
+
+/** WriteTextAsset's request payload (without the frame header) */
+export function encodeWriteTextAssetRequest(value: WriteTextAssetRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.string(value.text);
+  return writer.finish();
+}
+
+/** Reads WriteTextAsset's request payload; bytes after the last field are ignored */
+export function decodeWriteTextAssetRequest(payload: Uint8Array): WriteTextAssetRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const text = reader.string();
+  return { path, text };
+}
+
+/** CreateScriptAsset's request payload (without the frame header) */
+export function encodeCreateScriptAssetRequest(value: CreateScriptAssetRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.string(value.className);
+  return writer.finish();
+}
+
+/** Reads CreateScriptAsset's request payload; bytes after the last field are ignored */
+export function decodeCreateScriptAssetRequest(payload: Uint8Array): CreateScriptAssetRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const className = reader.string();
+  return { path, className };
+}
+
+/** CreateFolder's request payload (without the frame header) */
+export function encodeCreateFolderRequest(value: CreateFolderRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  return writer.finish();
+}
+
+/** Reads CreateFolder's request payload; bytes after the last field are ignored */
+export function decodeCreateFolderRequest(payload: Uint8Array): CreateFolderRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  return { path };
+}
+
 /** AddComponent's request payload (without the frame header) */
 export function encodeAddComponentRequest(value: AddComponentRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1456,6 +1705,62 @@ export function decodeBeginEditGroupRequest(payload: Uint8Array): BeginEditGroup
   const reader = new ProtocolReader(payload);
   const label = reader.string();
   return { label };
+}
+
+/** WritePlaySnapshot's request payload (without the frame header) */
+export function encodeWritePlaySnapshotRequest(value: WritePlaySnapshotRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.scenePath);
+  return writer.finish();
+}
+
+/** Reads WritePlaySnapshot's request payload; bytes after the last field are ignored */
+export function decodeWritePlaySnapshotRequest(payload: Uint8Array): WritePlaySnapshotRequest {
+  const reader = new ProtocolReader(payload);
+  const scenePath = reader.string();
+  return { scenePath };
+}
+
+/** SetPaused's request payload (without the frame header) */
+export function encodeSetPausedRequest(value: SetPausedRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.bool(value.paused);
+  return writer.finish();
+}
+
+/** Reads SetPaused's request payload; bytes after the last field are ignored */
+export function decodeSetPausedRequest(payload: Uint8Array): SetPausedRequest {
+  const reader = new ProtocolReader(payload);
+  const paused = reader.bool();
+  return { paused };
+}
+
+/** Step's request payload (without the frame header) */
+export function encodeStepRequest(value: StepRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.frames);
+  return writer.finish();
+}
+
+/** Reads Step's request payload; bytes after the last field are ignored */
+export function decodeStepRequest(payload: Uint8Array): StepRequest {
+  const reader = new ProtocolReader(payload);
+  const frames = reader.u32();
+  return { frames };
+}
+
+/** SendInput's request payload (without the frame header) */
+export function encodeSendInputRequest(value: SendInputRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.events);
+  return writer.finish();
+}
+
+/** Reads SendInput's request payload; bytes after the last field are ignored */
+export function decodeSendInputRequest(payload: Uint8Array): SendInputRequest {
+  const reader = new ProtocolReader(payload);
+  const events = reader.json() as InputEvent[];
+  return { events };
 }
 
 /** Ok's (empty) payload */
@@ -1793,6 +2098,66 @@ export function decodeScriptDataResponse(payload: Uint8Array): ScriptDataRespons
   return { scriptTemplate };
 }
 
+/** AssetList's payload (without the frame header) */
+export function encodeAssetListResponse(value: AssetListResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.folders);
+  writer.json(value.assets);
+  return writer.finish();
+}
+
+/** Reads AssetList's payload; bytes after the last field are ignored */
+export function decodeAssetListResponse(payload: Uint8Array): AssetListResponse {
+  const reader = new ProtocolReader(payload);
+  const folders = reader.json() as string[];
+  const assets = reader.json() as AssetInfo[];
+  return { folders, assets };
+}
+
+/** AssetDetail's payload (without the frame header) */
+export function encodeAssetDetailResponse(value: AssetDetailResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads AssetDetail's payload; bytes after the last field are ignored */
+export function decodeAssetDetailResponse(payload: Uint8Array): AssetDetailResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as AssetDetails;
+  return { info };
+}
+
+/** TextData's payload (without the frame header) */
+export function encodeTextDataResponse(value: TextDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.text);
+  return writer.finish();
+}
+
+/** Reads TextData's payload; bytes after the last field are ignored */
+export function decodeTextDataResponse(payload: Uint8Array): TextDataResponse {
+  const reader = new ProtocolReader(payload);
+  const text = reader.string();
+  return { text };
+}
+
+/** AssetCreated's payload (without the frame header) */
+export function encodeAssetCreatedResponse(value: AssetCreatedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.string(value.uuid);
+  return writer.finish();
+}
+
+/** Reads AssetCreated's payload; bytes after the last field are ignored */
+export function decodeAssetCreatedResponse(payload: Uint8Array): AssetCreatedResponse {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const uuid = reader.string();
+  return { path, uuid };
+}
+
 /** EngineHealth's payload (without the frame header) */
 export function encodeEngineHealthResponse(value: EngineHealthResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1939,6 +2304,38 @@ export function decodeAutosaveResponse(payload: Uint8Array): AutosaveResponse {
   return { info };
 }
 
+/** PlaySnapshot's payload (without the frame header) */
+export function encodePlaySnapshotResponse(value: PlaySnapshotResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.file);
+  return writer.finish();
+}
+
+/** Reads PlaySnapshot's payload; bytes after the last field are ignored */
+export function decodePlaySnapshotResponse(payload: Uint8Array): PlaySnapshotResponse {
+  const reader = new ProtocolReader(payload);
+  const file = reader.string();
+  return { file };
+}
+
+/** PlayState's payload (without the frame header) */
+export function encodePlayStateResponse(value: PlayStateResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.state);
+  writer.u32(value.frame);
+  writer.f32(value.time);
+  return writer.finish();
+}
+
+/** Reads PlayState's payload; bytes after the last field are ignored */
+export function decodePlayStateResponse(payload: Uint8Array): PlayStateResponse {
+  const reader = new ProtocolReader(payload);
+  const state = reader.string();
+  const frame = reader.u32();
+  const time = reader.f32();
+  return { state, frame, time };
+}
+
 /** Each command's request codecs, for commands with request fields */
 export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
@@ -1966,6 +2363,13 @@ export const RequestCodecs = {
   GetEntity: { encode: encodeGetEntityRequest, decode: decodeGetEntityRequest },
   SetLocalTransform: { encode: encodeSetLocalTransformRequest, decode: decodeSetLocalTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
+  ListAssets: { encode: encodeListAssetsRequest, decode: decodeListAssetsRequest },
+  GetAssetInfo: { encode: encodeGetAssetInfoRequest, decode: decodeGetAssetInfoRequest },
+  SetImportSettings: { encode: encodeSetImportSettingsRequest, decode: decodeSetImportSettingsRequest },
+  ReadTextAsset: { encode: encodeReadTextAssetRequest, decode: decodeReadTextAssetRequest },
+  WriteTextAsset: { encode: encodeWriteTextAssetRequest, decode: decodeWriteTextAssetRequest },
+  CreateScriptAsset: { encode: encodeCreateScriptAssetRequest, decode: decodeCreateScriptAssetRequest },
+  CreateFolder: { encode: encodeCreateFolderRequest, decode: decodeCreateFolderRequest },
   AddComponent: { encode: encodeAddComponentRequest, decode: decodeAddComponentRequest },
   RemoveComponent: { encode: encodeRemoveComponentRequest, decode: decodeRemoveComponentRequest },
   SetComponentFields: { encode: encodeSetComponentFieldsRequest, decode: decodeSetComponentFieldsRequest },
@@ -1974,6 +2378,10 @@ export const RequestCodecs = {
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
   BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },
+  WritePlaySnapshot: { encode: encodeWritePlaySnapshotRequest, decode: decodeWritePlaySnapshotRequest },
+  SetPaused: { encode: encodeSetPausedRequest, decode: decodeSetPausedRequest },
+  Step: { encode: encodeStepRequest, decode: decodeStepRequest },
+  SendInput: { encode: encodeSendInputRequest, decode: decodeSendInputRequest },
 } as const;
 
 /** Each response's codecs */
@@ -1997,6 +2405,10 @@ export const ResponseCodecs = {
   EntityList: { encode: encodeEntityListResponse, decode: decodeEntityListResponse },
   EntityData: { encode: encodeEntityDataResponse, decode: decodeEntityDataResponse },
   ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
+  AssetList: { encode: encodeAssetListResponse, decode: decodeAssetListResponse },
+  AssetDetail: { encode: encodeAssetDetailResponse, decode: decodeAssetDetailResponse },
+  TextData: { encode: encodeTextDataResponse, decode: decodeTextDataResponse },
+  AssetCreated: { encode: encodeAssetCreatedResponse, decode: decodeAssetCreatedResponse },
   EngineHealth: { encode: encodeEngineHealthResponse, decode: decodeEngineHealthResponse },
   ComponentTypes: { encode: encodeComponentTypesResponse, decode: decodeComponentTypesResponse },
   ComponentAdded: { encode: encodeComponentAddedResponse, decode: decodeComponentAddedResponse },
@@ -2006,4 +2418,6 @@ export const ResponseCodecs = {
   EditResult: { encode: encodeEditResultResponse, decode: decodeEditResultResponse },
   History: { encode: encodeHistoryResponse, decode: decodeHistoryResponse },
   Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },
+  PlaySnapshot: { encode: encodePlaySnapshotResponse, decode: decodePlaySnapshotResponse },
+  PlayState: { encode: encodePlayStateResponse, decode: decodePlayStateResponse },
 } as const;

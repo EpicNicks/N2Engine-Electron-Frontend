@@ -4,6 +4,8 @@
 import { render } from "preact"
 import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
+import { AssetsState, isDirty } from "./assets-state"
+import { assetEntriesOf, nameOf } from "./asset-tree"
 import { EditController } from "./edit-controller"
 import { editActions } from "./edit-actions"
 import { EditGroups } from "./edit-groups"
@@ -81,7 +83,15 @@ const store = new EditorStore({
 })
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
 const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
-const scene = new SceneState(window.engine, window.project)
+const scene = new SceneState(window.engine)
+// The assets panel: the host's listing, import settings and text files (a save's reload errors are read from the log)
+const assets = new AssetsState(
+  window.engine,
+  { mark: () => store.console.lastEntryId, poll: () => store.console.pollNow() },
+  (what, e) => store.reportError(what, e),
+  // The host refuses the asset writers during a play session
+  () => store.playMode.peek()
+)
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
   // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
@@ -106,19 +116,26 @@ const viewport = new ViewportController({
   // A click in the viewport selects like a click on the hierarchy's row (Ctrl toggles, Shift extends)
   select: (id, modifiers) => hierarchy.pick(id, modifiers),
 })
+store.unsavedFiles = () => assets.tabs.value.filter(isDirty).map((tab) => nameOf(tab.path))
 const app: AppState = {
   store,
   scene,
+  assets,
   hierarchy,
   viewport,
-  inspector: new InspectorState(window.engine, window.project, {
-    confirm: confirmDialog,
-    // The file systems of Windows and macOS don't tell res:// paths apart by case
-    caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
-    // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
-    onError: (what, e) => store.reportError(what, e),
-    groups,
-  }),
+  // The asset fields choose from the assets panel's listing (the host's ListAssets), parts of models included
+  inspector: new InspectorState(
+    window.engine,
+    { listAssets: async () => assetEntriesOf(await assets.current()) },
+    {
+      confirm: confirmDialog,
+      // The file systems of Windows and macOS don't tell res:// paths apart by case
+      caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
+      // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
+      onError: (what, e) => store.reportError(what, e),
+      groups,
+    }
+  ),
   audio: new AudioController(window.engine),
 }
 
@@ -151,7 +168,7 @@ effect(() => {
 
 // Closing or reloading the window with unsaved scene changes asks first (the main process shows the question)
 window.addEventListener("beforeunload", (e) => {
-  if (store.view.value === "editor" && store.sceneDirty.value) {
+  if (store.view.value === "editor" && (store.sceneDirty.value || store.unsavedFiles().length > 0)) {
     e.preventDefault()
     e.returnValue = ""
   }

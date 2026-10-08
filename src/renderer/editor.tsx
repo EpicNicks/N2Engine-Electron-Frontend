@@ -1,4 +1,4 @@
-// The editor's layout once a project is open: the toolbar, then files | viewport over the console and scripts |
+// The editor's layout once a project is open: the toolbar, then assets | viewport over the console and text files |
 // hierarchy, inspector and engine, with splitters between them.
 import { useEffect } from "preact/hooks"
 import { signal } from "@preact/signals"
@@ -7,15 +7,16 @@ import { ConsolePanel } from "./console-panel"
 import { editActions, editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
 import { InspectorPanel } from "./inspector-panel"
-import { EnginePanel, FilesPanel, ScriptEditor } from "./panels"
-import { basename, toResPath } from "./paths"
-import { MenuItem, Splitter, modalOpen, showContextMenu, useApp } from "./ui"
-import type { FileInfo } from "../shared/api"
+import { AssetsPanel, TextEditor } from "./assets-panel"
+import { isDirty } from "./assets-state"
+import { EnginePanel } from "./panels"
+import { basename } from "./paths"
+import { MenuItem, Splitter, confirmDialog, modalOpen, showContextMenu, useApp } from "./ui"
 import { followScene } from "./scene-follow"
 import { Viewport } from "./viewport-panel"
 
 // Panel sizes, in CSS pixels, kept for the session
-const leftWidth = signal(220)
+const leftWidth = signal(300)
 const rightWidth = signal(300)
 const bottomHeight = signal(220)
 /** The bottom panel's tab: the console, or an open script's path */
@@ -23,34 +24,21 @@ const bottomTab = signal<string>("console")
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-/** The scene files in a file tree, as res:// paths */
-function sceneFiles(projectPath: string, files: readonly FileInfo[]): string[] {
-  const found: string[] = []
-  for (const file of files) {
-    if (file.isDirectory) found.push(...sceneFiles(projectPath, file.children ?? []))
-    else if (file.name.toLowerCase().endsWith(".scene")) {
-      const path = toResPath(projectPath, file.path)
-      if (path !== null) found.push(path)
-    }
-  }
-  return found
-}
-
 /** New, Open, Save and Save As for the loaded scene */
 function SceneButtons() {
-  const { store, scene } = useApp()
+  const { store, assets } = useApp()
   const busy = store.busy.value !== null
   const connected = store.connected.value
   const loaded = store.scene.value
-  // A scene command may have made a file
+  // A scene command may have made a file (the host's assetsChanged follows too)
   const done = (result: unknown) => {
-    if (result) scene.refreshFiles().catch((e) => store.reportError("Failed to list files", e))
+    if (result) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
   }
 
   const open = (e: MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     e.stopPropagation()
-    const scenes = sceneFiles(store.projectPath.value ?? "", scene.files.value)
+    const scenes = assets.scenes.value
     const items: MenuItem[] =
       scenes.length === 0
         ? [{ label: "No scenes in the project", action: () => {}, disabled: true }]
@@ -174,9 +162,17 @@ function Toolbar() {
 }
 
 function BottomPanel() {
-  const { scene } = useApp()
-  const scripts = scene.scripts.value
-  const active = scene.activeScript.value
+  const { assets } = useApp()
+  const scripts = assets.tabs.value
+  const active = assets.activeTab.value
+  // Unsaved text is never closed without asking
+  const closeTab = async (path: string) => {
+    const tab = assets.tabs.value.find((t) => t.path === path)
+    if (tab && isDirty(tab) && !(await confirmDialog(`${basename(path)} has unsaved changes.`, "Close without saving"))) {
+      return
+    }
+    assets.closeText(path)
+  }
   // Opening a script shows it
   useEffect(() => {
     if (active) bottomTab.value = active
@@ -203,20 +199,20 @@ function BottomPanel() {
             title={script.path}
             key={script.path}
             onClick={() => {
-              scene.activeScript.value = script.path
+              assets.activeTab.value = script.path
               bottomTab.value = script.path
             }}
           >
             <span>
               {basename(script.path)}
-              {script.dirty ? " •" : ""}
+              {isDirty(script) ? " •" : ""}
             </span>
             <span
               class="close"
               aria-label={`Close ${basename(script.path)}`}
               onClick={(e) => {
                 e.stopPropagation()
-                scene.closeScript(script.path)
+                closeTab(script.path)
               }}
             >
               ×
@@ -224,16 +220,16 @@ function BottomPanel() {
           </div>
         ))}
       </div>
-      {tab === "console" ? <ConsolePanel /> : <ScriptEditor path={tab} />}
+      {tab === "console" ? <ConsolePanel /> : <TextEditor path={tab} />}
     </div>
   )
 }
 
 export function Editor() {
-  const { store, scene, hierarchy, inspector } = useApp()
+  const { store, scene, hierarchy, inspector, assets } = useApp()
 
   // The panels follow the connection, the selection, the assets and the scene's changes (scene-follow.ts)
-  useEffect(() => followScene({ store, scene, hierarchy, inspector }), [])
+  useEffect(() => followScene({ store, scene, hierarchy, inspector, assets }), [])
   // Ctrl+S saves the scene (the script editor handles the key first, for its file)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -250,7 +246,7 @@ export function Editor() {
       void hierarchy.renameSettled
         .then(() => inspector.flush())
         .then(() => store.saveScene())
-        .then((saved) => saved && scene.refreshFiles().catch(() => {}))
+        .then((saved) => saved && assets.refresh().catch(() => {}))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
@@ -282,8 +278,10 @@ export function Editor() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [])
   useEffect(() => {
-    scene.refreshFiles().catch((e) => store.reportError("Failed to list files", e))
-    return () => scene.resetProject()
+    return () => {
+      scene.resetProject()
+      assets.resetProject()
+    }
   }, [store.projectPath.value])
 
   return (
@@ -291,7 +289,7 @@ export function Editor() {
       <Toolbar />
       <div class="main-container">
         <aside class="left-panel" style={{ width: `${leftWidth.value}px` }}>
-          <FilesPanel />
+          <AssetsPanel />
         </aside>
         <Splitter direction="vertical" onDrag={(dx) => (leftWidth.value = clamp(leftWidth.value + dx, 150, 500))} />
         <div class="center-panel">
