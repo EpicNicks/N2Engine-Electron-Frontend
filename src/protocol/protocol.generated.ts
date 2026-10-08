@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.1.0";
+export const PROTOCOL_VERSION = "1.2.0";
 
 // ==================== Types ====================
 
@@ -32,6 +32,16 @@ export interface SubsystemStatus {
   detail: string;
 }
 
+// ==================== JSON shapes (jsonTypes) ====================
+
+export interface EditorEvent {
+  seq: number;
+  kind: string;
+  level?: string;
+  message?: string;
+  time?: number;
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -39,6 +49,7 @@ export const CommandType = {
   SetViewportSize: 0x02,
   GetAudio: 0x03,
   Hello: 0x04,
+  PollEvents: 0x05,
   SetCameraPosition: 0x10,
   GetCameraPosition: 0x12,
   CreateScene: 0x20,
@@ -72,6 +83,7 @@ export const ResponseType = {
   EngineHealth: 0x09,
   AudioSamples: 0x0A,
   ServerInfo: 0x0B,
+  Events: 0x0C,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -82,6 +94,7 @@ export const CommandResponse = {
   SetViewportSize: "Ok",
   GetAudio: "AudioSamples",
   Hello: "ServerInfo",
+  PollEvents: "Events",
   SetCameraPosition: "Ok",
   GetCameraPosition: "CameraPosition",
   CreateScene: "SceneData",
@@ -111,6 +124,12 @@ export interface HelloRequest {
   clientName: string;
   protocolVersion: string;
   token: string;
+}
+
+export interface PollEventsRequest {
+  epoch: number;
+  afterSeq: number;
+  maxEvents: number;
 }
 
 export interface SetCameraPositionRequest {
@@ -182,6 +201,13 @@ export interface ServerInfoResponse {
   engineVersion: string;
   capabilities: string[];
   projectLoaded: boolean;
+}
+
+export interface EventsResponse {
+  epoch: number;
+  nextSeq: number;
+  dropped: number;
+  events: EditorEvent[];
 }
 
 export interface CameraPositionResponse {
@@ -538,6 +564,24 @@ export function decodeHelloRequest(payload: Uint8Array): HelloRequest {
   return { clientName, protocolVersion, token };
 }
 
+/** PollEvents's request payload (without the frame header) */
+export function encodePollEventsRequest(value: PollEventsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.epoch);
+  writer.u32(value.afterSeq);
+  writer.u32(value.maxEvents);
+  return writer.finish();
+}
+
+/** Reads PollEvents's request payload; bytes after the last field are ignored */
+export function decodePollEventsRequest(payload: Uint8Array): PollEventsRequest {
+  const reader = new ProtocolReader(payload);
+  const epoch = reader.u32();
+  const afterSeq = reader.u32();
+  const maxEvents = reader.u32();
+  return { epoch, afterSeq, maxEvents };
+}
+
 /** SetCameraPosition's request payload (without the frame header) */
 export function encodeSetCameraPositionRequest(value: SetCameraPositionRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -757,6 +801,26 @@ export function decodeServerInfoResponse(payload: Uint8Array): ServerInfoRespons
   return { protocolVersion, engineVersion, capabilities, projectLoaded };
 }
 
+/** Events's payload (without the frame header) */
+export function encodeEventsResponse(value: EventsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.epoch);
+  writer.u32(value.nextSeq);
+  writer.u32(value.dropped);
+  writer.json(value.events);
+  return writer.finish();
+}
+
+/** Reads Events's payload; bytes after the last field are ignored */
+export function decodeEventsResponse(payload: Uint8Array): EventsResponse {
+  const reader = new ProtocolReader(payload);
+  const epoch = reader.u32();
+  const nextSeq = reader.u32();
+  const dropped = reader.u32();
+  const events = reader.json() as EditorEvent[];
+  return { epoch, nextSeq, dropped, events };
+}
+
 /** CameraPosition's payload (without the frame header) */
 export function encodeCameraPositionResponse(value: CameraPositionResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -873,6 +937,7 @@ export function decodeEngineHealthResponse(payload: Uint8Array): EngineHealthRes
 export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
   Hello: { encode: encodeHelloRequest, decode: decodeHelloRequest },
+  PollEvents: { encode: encodePollEventsRequest, decode: decodePollEventsRequest },
   SetCameraPosition: { encode: encodeSetCameraPositionRequest, decode: decodeSetCameraPositionRequest },
   CreateScene: { encode: encodeCreateSceneRequest, decode: decodeCreateSceneRequest },
   LoadScene: { encode: encodeLoadSceneRequest, decode: decodeLoadSceneRequest },
@@ -891,6 +956,7 @@ export const ResponseCodecs = {
   FrameData: { encode: encodeFrameDataResponse, decode: decodeFrameDataResponse },
   AudioSamples: { encode: encodeAudioSamplesResponse, decode: decodeAudioSamplesResponse },
   ServerInfo: { encode: encodeServerInfoResponse, decode: decodeServerInfoResponse },
+  Events: { encode: encodeEventsResponse, decode: decodeEventsResponse },
   CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
   SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
   EntityCreated: { encode: encodeEntityCreatedResponse, decode: decodeEntityCreatedResponse },

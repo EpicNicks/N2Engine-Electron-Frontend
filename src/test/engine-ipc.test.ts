@@ -100,6 +100,11 @@ class FakeClient {
   /** What renderFrame resolves with: by default a frame whose pixels are a view into a larger (socket) buffer */
   frame: unknown = null
 
+  async pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<unknown> {
+    this.calls.push(["pollEvents", [epoch, afterSeq, maxEvents]])
+    return { epoch: 7, nextSeq: 1, dropped: 0, events: [{ seq: 1, kind: "log", level: "info", message: "hi", time: 0 }] }
+  }
+
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
     return this.frame
@@ -126,7 +131,7 @@ function setup(options: EngineHostOptions = {}) {
   )
   const ipc = new FakeIpcMain()
   host.register(ipc as unknown as IpcMain)
-  return { ipc, client, editor, sent }
+  return { ipc, host, client, editor, sent }
 }
 
 describe("EngineHost (the main process's engine IPC)", () => {
@@ -183,6 +188,29 @@ describe("EngineHost (the main process's engine IPC)", () => {
     assert.deepEqual(client.calls[0], ["setEntityTransform", ["id", v, v, v]])
   })
 
+  test("pollEvents takes three unsigned 32-bit integers", async () => {
+    const { ipc, client, editor } = setup()
+    const bad: unknown[][] = [
+      [-1, 0, 256],
+      [0, 2 ** 32, 256],
+      [0, 0, 1.5],
+      [0, 0, "256"],
+      [0, 0, NaN],
+      [0, 0],
+      [0, 0, 256, 1],
+    ]
+    for (const args of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, "pollEvents", args)
+      assert.equal(result.ok, false, `pollEvents(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+
+    const result = await ipc.invoke(Channels.engineCall, editor, "pollEvents", [0xffffffff, 0, 256])
+    assert.equal(result.ok, true)
+    assert.deepEqual(client.calls, [["pollEvents", [0xffffffff, 0, 256]]])
+    assert.equal((result as { value: { events: unknown[] } }).value.events.length, 1)
+  })
+
   test("refuses calls from anything but the editor page (its window, main frame and URL)", async () => {
     const { ipc, client, editor } = setup()
     const otherWindow = await ipc.invoke(Channels.engineCall, { mainFrame: {} }, "getCameraPosition", [])
@@ -202,68 +230,66 @@ describe("EngineHost (the main process's engine IPC)", () => {
     assert.equal(client.calls.length, 1)
   })
 
-  test("connects only to this machine, on a valid port", async () => {
-    const { ipc, client, editor } = setup()
-    assert.equal((await ipc.invoke(Channels.engineConnect, editor, "example.com", 9999)).ok, false)
-    assert.equal((await ipc.invoke(Channels.engineConnect, editor, "localhost", 70000)).ok, false)
-    assert.equal((await ipc.invoke(Channels.engineConnect, editor, "localhost", "9999")).ok, false)
+  test("connects only to a valid port, on loopback, and pushes the new state to the page", async () => {
+    const { host, client, sent } = setup()
+    for (const port of [0, 70000, 1.5, NaN]) {
+      await assert.rejects(host.connectTo(port, "t"))
+    }
     assert.equal(client.connectedTo, null)
 
-    const result = await ipc.invoke(Channels.engineConnect, editor, "127.0.0.1", 1234)
-    assert.equal(result.ok, true)
-    assert.equal((result as { value: ConnectionState }).value.connected, true)
+    const state = await host.connectTo(1234, "t")
+    assert.equal(state.connected, true)
     assert.deepEqual(client.connectedTo, ["127.0.0.1", 1234])
+    assert.deepEqual(sent[sent.length - 1], [Channels.engineState, state])
+  })
+
+  test("the page can't pick a host: there is no connect channel", () => {
+    const { ipc } = setup()
+    assert.deepEqual([...ipc.handlers.keys()].sort(), [Channels.engineAttach, Channels.engineCall].sort())
   })
 
   test("a dropped connection is pushed to the page with a newer epoch", async () => {
-    const { ipc, client, editor, sent } = setup()
-    const connected = (await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)) as {
-      value: ConnectionState
-    }
+    const { host, client, sent } = setup()
+    const connected = await host.connectTo(9999, "")
     client.drop()
-    assert.equal(sent.length, 1)
-    const [channel, state] = sent[0] as [string, ConnectionState]
+    const [channel, state] = sent[sent.length - 1] as [string, ConnectionState]
     assert.equal(channel, Channels.engineState)
     assert.equal(state.connected, false)
-    assert.ok(state.epoch > connected.value.epoch)
+    assert.ok(state.epoch > connected.epoch)
   })
 
-  test("attaching (a page load) closes a connection the previous page left open", async () => {
-    const { ipc, client, editor } = setup()
-    await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
+  test("attaching (a page load) closes a connection the previous page left open, and says so", async () => {
+    let attached = 0
+    const { ipc, host, client, editor } = setup({ onAttach: () => attached++ })
+    await host.connectTo(9999, "")
     const result = (await ipc.invoke(Channels.engineAttach, editor)) as { value: ConnectionState }
     assert.equal(result.value.connected, false)
     assert.equal(client.connected, false)
+    assert.equal(attached, 1)
   })
 })
 
 describe("EngineHost Hello", () => {
   test("connects with the host's access token, and reports the ServerInfo in the state", async () => {
-    const { ipc, client, editor } = setup({ token: "the-access-token" })
-    const result = (await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)) as { value: ConnectionState }
+    const { host, client } = setup()
+    const state = await host.connectTo(9999, "the-access-token")
     assert.deepEqual(client.connectOptions, { token: "the-access-token" })
-    assert.equal(result.value.connected, true)
-    assert.deepEqual(result.value.serverInfo, info)
+    assert.equal(state.connected, true)
+    assert.deepEqual(state.serverInfo, info)
     // The token stays in the main process
-    assert.ok(!JSON.stringify(result).includes("the-access-token"))
-  })
-
-  test("without a token, Hello carries none", async () => {
-    const { ipc, client, editor } = setup()
-    await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
-    assert.deepEqual(client.connectOptions, { token: undefined })
+    assert.ok(!JSON.stringify(state).includes("the-access-token"))
   })
 
   test("the token is in nothing sent to the page: results, errors or state pushes", async () => {
     const token = "the-access-token"
-    const { ipc, client, editor, sent } = setup({ token })
+    const { ipc, host, client, editor, sent } = setup()
     const results: unknown[] = []
-    results.push(await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999))
+    await host.connectTo(9999, token)
+    results.push(await ipc.invoke(Channels.engineCall, editor, "getCameraPosition", []))
     client.drop()
     client.refuseHello = "The editor host refused Hello: Invalid access token"
-    const refused = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
-    assert.equal(refused.ok, false)
-    results.push(refused)
+    await assert.rejects(host.connectTo(9999, token), (e: Error) => !e.message.includes(token))
+    results.push(await ipc.invoke(Channels.engineCall, editor, "getCameraPosition", []))
     results.push(await ipc.invoke(Channels.engineAttach, editor))
 
     assert.ok(sent.length >= 2)
@@ -276,11 +302,10 @@ describe("EngineHost Hello", () => {
     }
   })
 
-  test("a failed Hello is an error result, and leaves the page disconnected", async () => {
-    const { ipc, client, editor, sent } = setup({ token: "wrong" })
+  test("a failed Hello rejects, and leaves the page disconnected", async () => {
+    const { host, client, sent } = setup()
     client.refuseHello = "The editor host refused Hello: Invalid access token"
-    const result = await ipc.invoke(Channels.engineConnect, editor, "localhost", 9999)
-    assert.deepEqual(result, { ok: false, error: "The editor host refused Hello: Invalid access token" })
+    await assert.rejects(host.connectTo(9999, "wrong"), /Invalid access token/)
     const [channel, state] = sent[sent.length - 1] as [string, ConnectionState]
     assert.equal(channel, Channels.engineState)
     assert.equal(state.connected, false)

@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.1.0",
+  "protocolVersion": "1.2.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -20,6 +20,16 @@
         "token": "token 2 ✓ é"
       },
       "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
+    },
+    {
+      "command": "PollEvents",
+      "id": "0x05",
+      "fields": {
+        "epoch": 305419896,
+        "afterSeq": 305419897,
+        "maxEvents": 305419898
+      },
+      "payload": "78563412795634127a563412"
     },
     {
       "command": "SetCameraPosition",
@@ -162,6 +172,32 @@
         "projectLoaded": false
       },
       "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00"
+    },
+    {
+      "response": "Events",
+      "id": "0x0C",
+      "fields": {
+        "epoch": 305419896,
+        "nextSeq": 305419897,
+        "dropped": 305419898,
+        "events": [
+          {
+            "kind": "kind 4 ✓",
+            "level": "level 5 ✓",
+            "message": "message 6 ✓",
+            "seq": 5.5,
+            "time": 9.5
+          },
+          {
+            "kind": "kind 5 ✓",
+            "level": "level 6 ✓",
+            "message": "message 7 ✓",
+            "seq": 6.5,
+            "time": 10.5
+          }
+        ]
+      },
+      "payload": "78563412795634127a563412b80000005b7b226b696e64223a226b696e64203420e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c22736571223a352e352c2274696d65223a392e357d2c7b226b696e64223a226b696e64203520e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c22736571223a362e352c2274696d65223a31302e357d5d"
     },
     {
       "response": "CameraPosition",

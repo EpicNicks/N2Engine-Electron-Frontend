@@ -1,6 +1,7 @@
 // The engine connection lives here, in the main process, and the page reaches it through IPC (Channels.engine*).
 // The page never gets a socket: it can only call the commands in EngineCommandArgs, with arguments of the declared
-// types, on an editor host on this machine.
+// types, on the editor host the main process launched for the open project (ProjectSession connects to it, with the
+// host's access token, which the page never sees).
 import { IpcMain } from "electron"
 import { EngineClient } from "../protocol/engine-client"
 import {
@@ -13,12 +14,14 @@ import {
 } from "../shared/api"
 import { EditorPage, handleResult } from "./ipc"
 
-const LoopbackHosts = new Set(["localhost", "127.0.0.1", "::1"])
+/** Launched hosts listen on loopback only (N2EditorHost's default --bind) */
+const HostAddress = "127.0.0.1"
 
 const KindDescriptions: Record<ArgKind, string> = {
   string: "a string",
   number: "a finite number",
   int32: "a 32-bit integer",
+  uint32: "an unsigned 32-bit integer",
   vec3: "an {x, y, z} of finite numbers",
 }
 
@@ -38,6 +41,9 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       break
     case "int32":
       if (Number.isInteger(value) && (value as number) >= -0x80000000 && (value as number) <= 0x7fffffff) return value
+      break
+    case "uint32":
+      if (Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 0xffffffff) return value
       break
     case "vec3":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
@@ -85,11 +91,8 @@ export function ownedViews<T>(value: T): T {
 }
 
 export interface EngineHostOptions {
-  /**
-   * The editor host's access token, sent in each connection's Hello; empty or missing for a host without one. It is
-   * never sent to the page (not in ConnectionState, results or errors), so the page can't read it or choose another.
-   */
-  token?: string
+  /** Called when a page (re)loads, after its connection is closed: a new page starts with no project or host */
+  onAttach?: () => void
 }
 
 export class EngineHost {
@@ -115,33 +118,35 @@ export class EngineHost {
       handleResult(ipcMain, channel, this.page, handler)
 
     handle(Channels.engineCall, (name, args) => this.call(name, args))
-    handle(Channels.engineConnect, (host, port) => this.connect(host, port))
-    handle(Channels.engineDisconnect, () => {
-      this.client.disconnect()
-      return this.bump()
-    })
     handle(Channels.engineAttach, () => {
       // A page that (re)loads starts without a connection, as it did when the client lived in the preload
       this.client.close()
+      this.options.onAttach?.()
       return this.bump()
     })
   }
 
-  /** Closes the connection without shutting the host down (the window closed) */
-  close(): void {
-    this.client.close()
-  }
-
-  private async connect(host: unknown = "localhost", port: unknown = 9999): Promise<ConnectionState> {
-    if (typeof host !== "string" || !LoopbackHosts.has(host)) {
-      throw new Error(`Only an editor host on this machine can be connected to (got ${String(host)})`)
-    }
-    if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
+  /**
+   * Connects to a host the main process launched, on this machine, and says Hello with its access token (empty for
+   * a host without one). The token is never sent to the page: not in ConnectionState, results or errors. The new
+   * state is pushed to the page. A failed Hello rejects, with the connection already closed (and that published).
+   */
+  async connectTo(port: number, token: string): Promise<ConnectionState> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error(`Invalid port ${String(port)}`)
     }
-    // A failed Hello rejects here, with the connection already closed (and the close published)
-    await this.client.connect(host, port, { token: this.options.token })
-    return this.bump()
+    await this.client.connect(HostAddress, port, { token })
+    return this.publish()
+  }
+
+  /** Asks the host to shut down (Shutdown) and closes the connection */
+  disconnect(): void {
+    this.client.disconnect()
+  }
+
+  /** Closes the connection without asking the host to shut down (one started with --exit-on-disconnect exits) */
+  close(): void {
+    this.client.close()
   }
 
   private async call(name: unknown, args: unknown): Promise<unknown> {
@@ -166,12 +171,13 @@ export class EngineHost {
     return this.state
   }
 
-  /** Tells the page the connection changed (it closed, or the host dropped it) */
-  private publish(): void {
+  /** Tells the page the connection changed (it opened or closed, or the host dropped it) */
+  private publish(): ConnectionState {
     const state = this.bump()
     const editor = this.page.getEditor()
     if (editor && !editor.isDestroyed()) {
       editor.send(Channels.engineState, state)
     }
+    return state
   }
 }

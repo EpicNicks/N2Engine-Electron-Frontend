@@ -2,17 +2,20 @@ import { app, BrowserWindow, screen, ipcMain, session } from "electron"
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
+import { Channels, HostState } from "../shared/api"
 import { EngineHost } from "./engine-ipc"
+import { TokenEnvVariable } from "./host-launcher"
+import { HostSettings } from "./host-settings"
 import { EditorPage } from "./ipc"
 import { registerProjectIpc } from "./project-ipc"
 import { ProjectFiles } from "./project-files"
+import { ProjectSession } from "./project-session"
 import { RecentProjects } from "./recent-projects"
 
-// The editor host's access token, for a host started with one. Until the editor launches its own host with a token
-// it generates, it can be given in N2_EDITOR_TOKEN, the variable the host will read it from once it has --token-env
-// (engine #74). Taken out of the environment before any window or child process starts, so none inherits it.
-const accessToken = process.env.N2_EDITOR_TOKEN
-delete process.env.N2_EDITOR_TOKEN
+// The editor generates a fresh access token for each host it launches and puts it in that child's environment only
+// (host-launcher.ts). A token inherited from whatever started the editor is removed before anything starts, so no
+// window or child process inherits it.
+delete process.env[TokenEnvVariable]
 
 // dist/main/main.js: the repo root is two levels up
 const appRoot = path.join(__dirname, "..", "..")
@@ -30,16 +33,34 @@ const page: EditorPage = {
   url: pathToFileURL(pagePath).href,
 }
 
-const engine = new EngineHost(new EngineClient(), page, { token: accessToken })
+function publishHostState(state: HostState): void {
+  const editor = page.getEditor()
+  if (editor && !editor.isDestroyed()) editor.send(Channels.hostState, state)
+}
+
+const userData = app.getPath("userData")
+const files = new ProjectFiles()
+const recent = new RecentProjects(path.join(userData, "recent-projects.json"))
+const settings = new HostSettings(path.join(userData, "settings.json"))
+
+const engine = new EngineHost(new EngineClient(), page, {
+  // A page that (re)loads starts at the welcome screen: no project, no host
+  onAttach: () => {
+    projectSession.reset().catch((e) => console.error("Failed to close the project:", e))
+  },
+})
 engine.register(ipcMain)
 
-registerProjectIpc(
-  ipcMain,
-  getWindow,
-  page,
-  new ProjectFiles(),
-  new RecentProjects(path.join(app.getPath("userData"), "recent-projects.json"))
-)
+const projectSession = new ProjectSession({
+  files,
+  recent,
+  settings,
+  engine,
+  publish: publishHostState,
+  log: (message) => console.log(message),
+})
+
+registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
 
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay()
@@ -60,7 +81,8 @@ function createWindow(): void {
       preload: path.join(appRoot, "dist", "bundle", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      // The page has no Node: the engine connection and the project's files are reached through the typed IPC API
+      // The page has no Node: the engine connection, the host process and the project's files are reached through
+      // the typed IPC API
       sandbox: true,
       // The engine's audio starts playing on connect, without waiting for a click
       autoplayPolicy: "no-user-gesture-required",
@@ -78,7 +100,7 @@ function createWindow(): void {
 
   mainWindow.on("closed", () => {
     mainWindow = null
-    engine.close()
+    projectSession.killHost()
   })
 
   mainWindow.loadFile(pagePath)
@@ -94,7 +116,19 @@ app.whenReady().then(() => {
   createWindow()
 })
 
+// The host never outlives the editor: it's killed however the editor ends. Once connected, closing the connection
+// would end it anyway (--exit-on-disconnect); the kill also covers a host still starting.
+app.on("before-quit", () => projectSession.shutdown())
 app.on("window-all-closed", () => {
-  engine.close()
+  projectSession.shutdown()
   app.quit()
 })
+// Ending some other way (process.exit, a fatal error): "exit" handlers are synchronous, and so is the kill
+process.on("exit", () => projectSession.shutdown())
+// Ctrl+C in the terminal that started the editor, or a kill: quit properly instead of dying with the host running
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    projectSession.shutdown()
+    app.quit()
+  })
+}

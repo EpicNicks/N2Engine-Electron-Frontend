@@ -6,17 +6,48 @@
     <title>N2Engine Editor</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      
+
+      html, body { height: 100%; }
       body {
         background: #1e1e1e;
         color: #ccc;
         font-family: system-ui, -apple-system, sans-serif;
         font-size: 13px;
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
         overflow: hidden;
       }
+      #app { height: 100%; display: flex; flex-direction: column; }
+      body.resizing { user-select: none; }
+
+      button {
+        background: #0078d4;
+        color: #fff;
+        border: none;
+        padding: 5px 12px;
+        cursor: pointer;
+        border-radius: 3px;
+        font-size: 12px;
+        transition: background 0.15s;
+      }
+      button:hover { background: #1084d8; }
+      button:disabled { background: #555; cursor: not-allowed; opacity: 0.6; }
+      button.secondary { background: #444; }
+      button.secondary:hover { background: #555; }
+      button.danger { background: #d32f2f; width: 100%; margin-top: 8px; }
+      button.link { background: none; color: #3794ff; padding: 0 4px; }
+      button.link:hover { text-decoration: underline; }
+
+      input {
+        background: #3c3c3c;
+        border: 1px solid #555;
+        color: #ccc;
+        padding: 4px 6px;
+        border-radius: 2px;
+        font-size: 12px;
+      }
+      input:focus { border-color: #0078d4; outline: none; }
+
+      .empty { color: #666; padding: 10px; }
+      .empty.error { color: #f44336; }
 
       /* Toolbar */
       .toolbar {
@@ -28,44 +59,31 @@
         border-bottom: 1px solid #444;
         flex-shrink: 0;
       }
-      .toolbar button {
-        background: #0078d4;
-        color: #fff;
-        border: none;
-        padding: 5px 12px;
-        cursor: pointer;
-        border-radius: 3px;
-        font-size: 12px;
-        transition: background 0.15s;
-      }
-      .toolbar button:hover { background: #1084d8; }
-      .toolbar button:disabled { 
-        background: #555; 
-        cursor: not-allowed;
-        opacity: 0.6;
-      }
+      .toolbar .project-name { color: #fff; font-weight: 500; }
       .toolbar .separator { width: 1px; height: 20px; background: #555; margin: 0 4px; }
       .toolbar .audio-status { color: #888; font-size: 12px; }
       .toolbar .audio-status.warning { color: #ff9800; }
       .toolbar .status { margin-left: auto; color: #888; font-size: 12px; }
       .toolbar .status.connected { color: #4caf50; font-weight: 500; }
+      .toolbar .status.exited, .toolbar .status.failed { color: #f44336; }
 
-      /* Main Layout */
-      .main-container {
-        flex: 1;
-        display: flex;
-        overflow: hidden;
-        min-height: 0;
-      }
+      /* Layout */
+      .editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+      .main-container { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+      .left-panel, .right-panel { display: flex; flex-direction: column; flex-shrink: 0; min-width: 0; background: #252526; }
+      .right-panel .hierarchy-panel { flex: 0 0 30%; }
+      .right-panel .inspector-panel { flex: 1; }
+      .right-panel .engine-panel { flex: 0 0 auto; max-height: 30%; }
+      .center-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+      .splitter { flex-shrink: 0; background: #444; transition: background 0.15s; }
+      .splitter:hover, body.resizing .splitter:active { background: #0078d4; }
+      .splitter.vertical { width: 4px; cursor: ew-resize; }
+      .splitter.horizontal { height: 4px; cursor: ns-resize; }
 
       /* Panels */
-      .panel {
-        background: #252526;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        min-width: 0;
-      }
+      .panel { display: flex; flex-direction: column; overflow: hidden; min-height: 0; min-width: 0; flex: 1; }
+      .panel + .panel { border-top: 1px solid #444; }
       .panel-header {
         background: #333;
         padding: 6px 10px;
@@ -79,91 +97,36 @@
         gap: 6px;
         flex-shrink: 0;
         user-select: none;
-      }
-      .panel-header button {
-        background: #0078d4;
-        color: #fff;
-        border: none;
-        padding: 2px 8px;
-        cursor: pointer;
-        border-radius: 3px;
-        font-size: 11px;
-        transition: background 0.15s;
-      }
-      .panel-header button:hover { background: #1084d8; }
-      .panel-header button:disabled {
-        background: #555;
-        cursor: not-allowed;
-        opacity: 0.6;
-      }
-      .panel-content {
-        flex: 1;
-        overflow: auto;
-        padding: 4px;
-        min-height: 0;
-      }
-
-      /* Left Panel - File Browser */
-      .left-panel {
-        width: 220px;
-        border-right: 1px solid #444;
-        flex-shrink: 0;
-      }
-
-      /* Center - Viewport */
-      .center-panel {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        min-height: 0;
-      }
-      #viewport-container {
-        flex: 1;
-        position: relative;
-        background: #0a0a0a;
+        white-space: nowrap;
         overflow: hidden;
-        min-height: 0;
-        min-width: 0;
       }
-      /* Sized and centred by the page (showCanvasAtDevicePixels): one frame pixel per device pixel */
-      #viewport {
+      .panel-header > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+      .panel-actions { margin-left: auto; display: flex; gap: 4px; }
+      .panel-header button { padding: 2px 8px; font-size: 11px; text-transform: none; }
+      .panel-content { flex: 1; overflow: auto; padding: 4px; min-height: 0; }
+
+      /* Viewport */
+      .viewport-container { flex: 1; position: relative; background: #0a0a0a; overflow: hidden; min-height: 0; min-width: 0; }
+      /* Sized and centred by ViewportRenderer: one frame pixel per device pixel */
+      .viewport { position: absolute; background: #000; }
+      .viewport-overlay, .viewport-hint {
         position: absolute;
-        background: #000;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #888;
+        background: rgba(30, 30, 30, 0.85);
+        padding: 6px 12px;
+        border-radius: 4px;
+        pointer-events: none;
       }
+      .viewport-overlay { top: 45%; }
+      .viewport-hint { bottom: 12px; }
 
-      /* Right Panel - Inspector */
-      .right-panel {
-        width: 280px;
-        border-left: 1px solid #444;
-        flex-shrink: 0;
-      }
-
-      /* Bottom Panel - Script Editor */
-      .bottom-panel {
-        height: 200px;
-        border-top: 1px solid #444;
-        display: flex;
-        flex-direction: column;
-        background: #1e1e1e;
-        flex-shrink: 0;
-      }
-      .bottom-panel.hidden { display: none; }
-      
-      .tab-bar {
-        display: flex;
-        background: #2d2d2d;
-        border-bottom: 1px solid #444;
-        overflow-x: auto;
-        flex-shrink: 0;
-      }
-      .tab-bar::-webkit-scrollbar {
-        height: 4px;
-      }
-      .tab-bar::-webkit-scrollbar-thumb {
-        background: #555;
-        border-radius: 2px;
-      }
+      /* Bottom panel: console and scripts */
+      .bottom-panel { border-top: 1px solid #444; display: flex; flex-direction: column; background: #1e1e1e; flex-shrink: 0; }
+      .tab-bar { display: flex; background: #2d2d2d; border-bottom: 1px solid #444; overflow-x: auto; flex-shrink: 0; }
+      .tab-bar::-webkit-scrollbar { height: 4px; }
+      .tab-bar::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
       .tab {
         padding: 6px 12px;
         cursor: pointer;
@@ -173,24 +136,12 @@
         gap: 6px;
         white-space: nowrap;
         user-select: none;
-        transition: background 0.15s;
       }
       .tab:hover { background: #333; }
       .tab.active { background: #1e1e1e; border-bottom: 2px solid #0078d4; }
-      .tab .close {
-        width: 16px;
-        height: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 3px;
-        font-size: 16px;
-        line-height: 1;
-        transition: background 0.15s;
-      }
+      .tab .close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 16px; line-height: 1; }
       .tab .close:hover { background: #555; }
-
-      #script-editor {
+      .script-editor {
         flex: 1;
         width: 100%;
         background: #1e1e1e;
@@ -205,174 +156,110 @@
         min-height: 0;
       }
 
-      /* File Tree */
-      .file-tree {
-        font-size: 12px;
-        user-select: none;
-      }
-      .file-item {
-        padding: 3px 6px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        white-space: nowrap;
-        transition: background 0.15s;
-      }
-      .file-item:hover { background: #2a2d2e; }
-      .file-item.selected { background: #094771; }
-      .file-item .icon { 
-        width: 16px; 
-        text-align: center;
-        font-size: 14px;
-      }
+      .console-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+      .console-toolbar { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid #333; flex-shrink: 0; font-size: 12px; }
+      .console-filter { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+      .console-filter.warn { color: #ff9800; }
+      .console-filter.error { color: #f44336; }
+      .console-search { margin-left: auto; width: 180px; }
+      .console-toolbar button { padding: 2px 10px; }
+      .console-list { flex: 1; overflow: auto; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 12px; padding: 2px 0; min-height: 0; }
+      .console-entry { display: flex; gap: 10px; padding: 1px 8px; white-space: pre-wrap; word-break: break-word; }
+      .console-entry:hover { background: #2a2d2e; }
+      .console-entry.warn { color: #ffb74d; }
+      .console-entry.error { color: #ef5350; }
+      .console-entry.from-editor { font-style: italic; color: #9cdcfe; }
+      .console-entry.from-editor.error { color: #ef5350; }
+      .console-time { color: #666; flex-shrink: 0; font-style: normal; }
+      .console-message { flex: 1; min-width: 0; }
 
-      /* Welcome Screen */
+      /* File tree */
+      .file-tree { font-size: 12px; user-select: none; }
+      .file-item { padding: 3px 6px; cursor: pointer; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+      .file-item:hover { background: #2a2d2e; }
+      .file-item .arrow { width: 12px; display: inline-block; font-size: 10px; }
+      .file-item .icon { width: 16px; text-align: center; font-size: 14px; }
+
+      /* Welcome screen */
       .welcome-screen {
         flex: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 20px;
+        gap: 16px;
         background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+        overflow: auto;
+        padding: 24px;
       }
-      .welcome-screen h1 { 
-        color: #fff; 
-        font-size: 32px;
-        font-weight: 300;
-        letter-spacing: 1px;
-      }
+      .welcome-screen h1 { color: #fff; font-size: 32px; font-weight: 300; letter-spacing: 1px; }
       .welcome-screen .actions { display: flex; gap: 12px; }
-      .welcome-screen button {
-        background: #0078d4;
-        color: #fff;
-        border: none;
-        padding: 12px 28px;
-        cursor: pointer;
-        border-radius: 4px;
-        font-size: 14px;
-        transition: all 0.2s;
-        font-weight: 500;
-      }
-      .welcome-screen button:hover { 
-        background: #1084d8;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0, 120, 212, 0.3);
-      }
-      .welcome-screen .recent { 
-        margin-top: 30px; 
-        text-align: center;
-        max-width: 500px;
-      }
-      .welcome-screen .recent h3 { 
-        color: #888; 
-        margin-bottom: 12px;
-        font-size: 14px;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      .welcome-screen .recent-item {
-        padding: 8px 16px;
-        cursor: pointer;
-        color: #0078d4;
-        margin: 4px 0;
-        border-radius: 3px;
-        transition: all 0.15s;
-      }
-      .welcome-screen .recent-item:hover { 
-        background: rgba(0, 120, 212, 0.1);
-        transform: translateX(4px);
-      }
+      .welcome-screen .actions button { padding: 12px 28px; font-size: 14px; font-weight: 500; border-radius: 4px; }
+      .welcome-screen .note { color: #888; font-size: 12px; }
+      .host-location { color: #888; font-size: 12px; display: flex; gap: 8px; align-items: center; max-width: 700px; }
+      .host-location.problem { color: #ff9800; }
+      .host-location span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .welcome-screen .recent { margin-top: 20px; width: 100%; max-width: 560px; }
+      .welcome-screen .recent h3 { color: #888; margin-bottom: 12px; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; text-align: center; }
+      .recent-item { display: flex; align-items: stretch; margin: 4px 0; }
+      .recent-open { flex: 1; min-width: 0; background: none; text-align: left; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; }
+      .recent-open:hover { background: rgba(0, 120, 212, 0.12); }
+      .recent-open:disabled { background: none; }
+      .recent-name { color: #3794ff; font-size: 14px; }
+      .recent-path { color: #777; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .recent-remove { background: none; color: #777; font-size: 16px; padding: 0 10px; }
+      .recent-remove:hover { background: #444; color: #fff; }
 
       /* Hierarchy */
-      .hierarchy-item {
-        padding: 4px 8px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        transition: background 0.15s;
-        user-select: none;
-      }
+      .hierarchy-item { padding: 4px 8px; cursor: pointer; user-select: none; white-space: nowrap; }
       .hierarchy-item:hover { background: #2a2d2e; }
       .hierarchy-item.selected { background: #094771; }
 
       /* Inspector */
-      .inspector-section {
-        margin-bottom: 12px;
-      }
-      .inspector-section h4 {
-        color: #888;
-        font-size: 11px;
-        text-transform: uppercase;
-        margin-bottom: 6px;
-        padding: 4px 0;
-        border-bottom: 1px solid #444;
-        font-weight: 600;
-      }
-      .inspector-row {
-        display: flex;
-        align-items: center;
-        margin-bottom: 6px;
-        gap: 8px;
-      }
-      .inspector-row label {
-        width: 60px;
-        color: #888;
-        font-size: 11px;
-        flex-shrink: 0;
-      }
-      .inspector-row input {
-        flex: 1;
-        background: #3c3c3c;
-        border: 1px solid #555;
-        color: #ccc;
-        padding: 4px 6px;
-        border-radius: 2px;
-        font-size: 12px;
-        transition: border-color 0.15s;
-      }
-      .inspector-row input:focus {
-        border-color: #0078d4;
-        outline: none;
-      }
-      .vector-inputs {
-        display: flex;
-        gap: 4px;
-        flex: 1;
-      }
-      .vector-inputs input { 
-        width: 50px; 
-        flex: 1;
-        min-width: 0;
-      }
+      .inspector-section { margin-bottom: 12px; }
+      .inspector-section h4 { color: #888; font-size: 11px; text-transform: uppercase; margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid #444; font-weight: 600; }
+      .inspector-row { display: flex; align-items: center; margin-bottom: 6px; gap: 8px; }
+      .inspector-row label { width: 60px; color: #888; font-size: 11px; flex-shrink: 0; }
+      .inspector-row > input { flex: 1; min-width: 0; }
+      .vector-inputs { display: flex; gap: 4px; flex: 1; min-width: 0; }
+      .vector-inputs input { width: 50px; flex: 1; min-width: 0; }
 
-      /* Engine Health */
-      .health-item {
-        padding: 3px 8px;
-        font-size: 12px;
-      }
+      /* Engine health */
+      .health-item { padding: 3px 8px; font-size: 12px; }
       .health-item .state { margin-left: 6px; font-weight: 500; }
       .health-item .state.running { color: #4caf50; }
       .health-item .state.failed { color: #f44336; }
       .health-item .state.other { color: #888; }
       .health-item .detail { color: #888; font-size: 11px; padding-left: 8px; }
 
-      /* Modal */
-      #modal-overlay {
-        display: none;
+      /* Error banner */
+      .error-banner {
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.6);
-        z-index: 1000;
-        backdrop-filter: blur(2px);
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        max-width: min(800px, 90vw);
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        background: #5a1d1d;
+        border: 1px solid #be1100;
+        color: #fff;
+        padding: 10px 12px;
+        border-radius: 4px;
+        z-index: 2000;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
       }
-      #modal-overlay > div {
+      .error-banner pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; max-height: 40vh; overflow: auto; }
+      .error-banner button { padding: 0 8px; font-size: 16px; }
+
+      /* Busy overlay */
+      .busy-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 1500; }
+      .busy-box { background: #2d2d2d; border: 1px solid #444; padding: 16px 24px; border-radius: 6px; color: #fff; }
+
+      /* Prompt dialog */
+      .modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 1000; backdrop-filter: blur(2px); }
+      .modal {
         position: absolute;
         top: 50%;
         left: 50%;
@@ -384,158 +271,35 @@
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
         border: 1px solid #444;
       }
-      #modal-overlay label {
-        display: block;
-        margin-bottom: 8px;
-        color: #ccc;
-        font-size: 13px;
-      }
-      #modal-overlay input {
-        width: 100%;
-        padding: 8px;
-        background: #3c3c3c;
-        border: 1px solid #555;
-        color: #ccc;
-        border-radius: 3px;
-        font-size: 13px;
-      }
-      #modal-overlay input:focus {
-        border-color: #0078d4;
-        outline: none;
-      }
-      #modal-overlay button {
-        margin-top: 12px;
-        margin-left: 8px;
-        padding: 6px 16px;
-        background: #0078d4;
-        color: #fff;
-        border: none;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 12px;
-      }
-      #modal-overlay button:hover {
-        background: #1084d8;
-      }
-      #modal-overlay button#modal-cancel {
-        background: #555;
-      }
-      #modal-overlay button#modal-cancel:hover {
-        background: #666;
-      }
+      .modal label { display: flex; flex-direction: column; gap: 8px; color: #ccc; font-size: 13px; }
+      .modal input { width: 100%; padding: 8px; font-size: 13px; }
+      .modal-buttons { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+      .modal-message { white-space: pre-wrap; word-break: break-word; max-width: 520px; color: #ccc; }
 
-      /* Scrollbar styling */
-      ::-webkit-scrollbar {
-        width: 10px;
-        height: 10px;
+      /* Context menu */
+      .context-menu {
+        position: fixed;
+        background: #2d2d2d;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 4px 0;
+        min-width: 150px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        z-index: 10000;
       }
-      ::-webkit-scrollbar-track {
-        background: #1e1e1e;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #555;
-        border-radius: 5px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #666;
-      }
+      .context-menu-item { padding: 6px 12px; cursor: pointer; font-size: 13px; color: #ccc; }
+      .context-menu-item:hover { background: #094771; }
+
+      /* Scrollbars */
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: #1e1e1e; }
+      ::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
+      ::-webkit-scrollbar-thumb:hover { background: #666; }
     </style>
   </head>
   <body>
-    <!-- Welcome Screen (shown when no project is open) -->
-    <div id="welcome-screen" class="welcome-screen">
-      <h1>N2Engine Editor</h1>
-      <div class="actions">
-        <button id="openProjectBtn">Open Project</button>
-        <button id="createProjectBtn">Create New Project</button>
-      </div>
-      <div class="recent" id="recent-projects">
-        <h3>Recent Projects</h3>
-      </div>
-    </div>
-
-    <!-- Editor (hidden until project is opened) -->
-    <div id="editor" style="display: none; flex-direction: column; height: 100%;">
-      <div class="toolbar">
-        <button id="connectBtn">Connect</button>
-        <button id="disconnectBtn" disabled>Disconnect</button>
-        <div class="separator"></div>
-        <button id="saveBtn" disabled>Save Scene</button>
-        <button id="playBtn" disabled>▶ Play</button>
-        <button id="stopBtn" disabled>■ Stop</button>
-        <div class="separator"></div>
-        <button id="muteBtn" title="Mute or unmute the engine's audio">🔊 Mute</button>
-        <span id="audio-status" class="audio-status">Audio: off</span>
-        <span id="status" class="status">Disconnected</span>
-        <span id="project-name" style="margin-left: 12px; color: #888;"></span>
-      </div>
-
-      <div class="main-container">
-        <!-- Left Panel - File Browser -->
-        <div class="panel left-panel">
-          <div class="panel-header">
-            <span>📁</span> Files
-          </div>
-          <div class="panel-content">
-            <div id="file-tree" class="file-tree"></div>
-          </div>
-        </div>
-
-        <!-- Center - Viewport + Script Editor -->
-        <div class="center-panel">
-          <div id="viewport-container">
-            <canvas id="viewport" width="800" height="600"></canvas>
-          </div>
-          
-          <div id="bottom-panel" class="bottom-panel hidden">
-            <div class="tab-bar" id="script-tabs"></div>
-            <textarea id="script-editor" spellcheck="false" placeholder="// Open a script file to edit..."></textarea>
-          </div>
-        </div>
-
-        <!-- Right Panel - Hierarchy & Inspector -->
-        <div class="panel right-panel">
-          <div class="panel-header">
-            <span>🎬</span> Hierarchy
-            <button id="createEntityBtn" style="margin-left: auto;">+ Add</button>
-          </div>
-          <div class="panel-content" style="max-height: 200px;">
-            <div id="hierarchy"></div>
-          </div>
-          
-          <div class="panel-header">
-            <span>⚙️</span> Inspector
-          </div>
-          <div class="panel-content">
-            <div id="inspector">
-              <p style="color: #666; padding: 10px;">Select an entity to inspect</p>
-            </div>
-          </div>
-
-          <div class="panel-header">
-            <span>🩺</span> Engine
-            <button id="refreshHealthBtn" style="margin-left: auto;" disabled>Refresh</button>
-          </div>
-          <div class="panel-content" style="max-height: 180px; flex: none;">
-            <div id="engine-health">
-              <p style="color: #666; padding: 10px;">Not connected</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Modal overlay -->
-    <div id="modal-overlay">
-      <div>
-        <label><input id="modal-input" type="text" value="New Entity" /></label>
-        <div style="margin-top: 12px; text-align: right;">
-          <button id="modal-cancel">Cancel</button>
-          <button id="modal-ok">OK</button>
-        </div>
-      </div>
-    </div>
-
+    <!-- The editor's UI (src/renderer/index.tsx): the welcome screen, or the open project's editor -->
+    <div id="app"></div>
     <script src="../dist/bundle/renderer.js"></script>
   </body>
 </html>
