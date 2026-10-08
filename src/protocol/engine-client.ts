@@ -453,7 +453,11 @@ export class EngineClient {
   async addComponent(entityId: string, typeName: string): Promise<{ componentId: string; values: unknown }> {
     checkId(entityId, "entityId")
     checkId(typeName, "typeName")
-    return this.send(Commands.AddComponent, { entityId, typeName })
+    const added = await this.send(Commands.AddComponent, { entityId, typeName })
+    if (typeof added.componentId !== "string" || added.componentId === "") {
+      throw new Error("AddComponent: the host answered without the new component's UUID")
+    }
+    return added
   }
 
   async removeComponent(entityId: string, componentId: string): Promise<void> {

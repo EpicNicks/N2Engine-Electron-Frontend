@@ -5,6 +5,7 @@
 // these checks give the person a message at once and keep a request from being sent that would be refused.
 import type { ComponentSchema, FieldSchema } from "../protocol/protocol.generated"
 import { FieldKind, isFieldKind } from "../protocol/component-schema"
+import { MaxJsonDepth, MaxJsonNodes } from "../shared/api"
 import type { JsonObject } from "../shared/api"
 
 /** The outcome of checking a value: the value to use, or why it can't be */
@@ -189,28 +190,26 @@ export function pruneUnchanged(values: JsonObject, patch: JsonObject): JsonObjec
   return changed
 }
 
-/** The requests an edit becomes, and what was left out */
+/** The requests an edit becomes */
 export interface RequestPlan {
   /** Sent in order, each when the one before has been answered */
   requests: JsonObject[]
-  /** The scriptData keys not sent: they were written for the script that is being replaced */
-  droppedScriptData: string[]
 }
 
 /**
  * What to send for an edit of a component whose stored values are `values`: only what changed, and never a new
- * scriptUUID together with scriptData (the engine refuses it: the data would be checked against the old script), so the
- * script change goes without it and the data written for the script it replaces is dropped. Echo keys (uuid, scriptPath) are
- * never sent.
+ * scriptUUID together with scriptData (the host refuses it: the data would be checked against the old script). So when
+ * both changed, the data goes first, in a request of its own (for the script the component runs now), then the script
+ * change with the rest. Echo keys (uuid, scriptPath) are never sent.
  */
 export function planRequests(values: JsonObject, patch: JsonObject): RequestPlan {
   const { uuid: _uuid, scriptPath: _scriptPath, ...own } = patch
   const changed = pruneUnchanged(values, own)
   if ("scriptUUID" in changed && "scriptData" in changed) {
-    const { scriptData, ...rest } = changed
-    return { requests: [rest], droppedScriptData: isObject(scriptData) ? Object.keys(scriptData) : [] }
+    const { scriptUUID, ...rest } = changed
+    return { requests: [rest, { scriptUUID }] }
   }
-  return { requests: Object.keys(changed).length > 0 ? [changed] : [], droppedScriptData: [] }
+  return { requests: Object.keys(changed).length > 0 ? [changed] : [] }
 }
 
 // ==================== Numbers ====================
@@ -226,21 +225,29 @@ export interface NumberLimits {
   ranged: boolean
 }
 
+/**
+ * The bits of an integer member of C++ type name: 32 for "int" and the fixed-width names, 8 or 16 for the ones that say
+ * so, and 53 (what a JSON number holds exactly: no hard limit but that) for any other name, 64-bit ones included
+ */
+function intBits(typeName: string): 8 | 16 | 32 | 53 {
+  const fixed = /^u?int(8|16|32)_t$/.exec(typeName)
+  if (fixed) return Number(fixed[1]) as 8 | 16 | 32
+  if (typeName === "int" || typeName === "unsigned int" || typeName === "unsigned") return 32
+  if (typeName === "short" || typeName === "unsigned short") return 16
+  if (typeName === "char" || typeName === "signed char" || typeName === "unsigned char") return 8
+  return 53
+}
+
 /** What a number field can hold: its range when it has one, else the limits of its C++ type (typeName) */
 export function numberLimits(field: FieldSchema): NumberLimits {
   const integer = kindOf(field) === "Int"
   let min: number
   let max: number
   if (integer) {
-    const unsigned = /^(unsigned|uint|size_t)/.test(field.typeName)
-    // How many bits the C++ type has, from its name (int, uint32_t, int64_t, short, unsigned char, ...)
-    const bits = /64|size_t|long long/.test(field.typeName)
-      ? 53 // a JSON number holds integers exactly only up to 2^53
-      : /16|short/.test(field.typeName)
-        ? 16
-        : /(^|[^0-9])8([^0-9]|$)|char/.test(field.typeName)
-          ? 8
-          : 32
+    // The host sends the C++ type's name ("int", "int64", ...), and a Lua field's is "int" whatever the script holds
+    // (a Lua integer is 64 bits). A hard limit is applied only where the name is unambiguous; the host judges the rest.
+    const bits = field.container ? 53 : intBits(field.typeName)
+    const unsigned = !field.container && /^(unsigned|uint|size_t)/.test(field.typeName)
     max = bits === 53 ? Number.MAX_SAFE_INTEGER : unsigned ? 2 ** bits - 1 : 2 ** (bits - 1) - 1
     min = unsigned ? 0 : bits === 53 ? Number.MIN_SAFE_INTEGER : -(2 ** (bits - 1))
   } else {
@@ -314,13 +321,36 @@ function checkRef(field: FieldSchema, value: unknown): Checked<string | null> {
   return ok(value.toLowerCase())
 }
 
-/** Whether a value can be sent as JSON: no undefined, NaN or infinity, no cycles (checked by depth), plain objects */
-function checkJson(value: unknown, depth = 0): boolean {
+/** Whether a value can be sent as JSON: no undefined, NaN or infinity, no functions or class instances */
+function isJson(value: unknown, depth = 0): boolean {
   if (value === null || typeof value === "boolean" || typeof value === "string") return true
   if (typeof value === "number") return Number.isFinite(value)
-  if (depth > 64) return false
-  if (Array.isArray(value)) return value.every((item) => checkJson(item, depth + 1))
-  return isObject(value) && Object.values(value).every((item) => checkJson(item, depth + 1))
+  if (depth > MaxJsonDepth) return false
+  if (Array.isArray(value)) return value.every((item) => isJson(item, depth + 1))
+  return isObject(value) && Object.values(value).every((item) => isJson(item, depth + 1))
+}
+
+/**
+ * Why a JSON value can't be sent as a field's value, or null. The request is {values: {[container]: {name: value}}}
+ * (a Lua reference adds one more level), and the main process refuses more than MaxJsonDepth levels or MaxJsonNodes
+ * values in all (the host's own limits are 64 and 200000), so the wrapper levels and values count too.
+ */
+export function jsonSizeProblem(field: FieldSchema, value: unknown): string | null {
+  const wrappers = field.container ? 1 : 0 // the container's object; the request's own object is level 0
+  let nodes = 1 + wrappers // the request's object, and the container's
+  const stack: Array<[unknown, number]> = [[value, wrappers + 1]]
+  while (stack.length > 0) {
+    const [item, level] = stack.pop()!
+    nodes++
+    if (nodes > MaxJsonNodes) return `${field.displayName} has too many values to send (at most ${MaxJsonNodes})`
+    if (Array.isArray(item) || isObject(item)) {
+      if (level >= MaxJsonDepth) {
+        return `${field.displayName} is nested too deeply to send (at most ${MaxJsonDepth - 1 - wrappers} levels)`
+      }
+      for (const child of Array.isArray(item) ? item : Object.values(item)) stack.push([child, level + 1])
+    }
+  }
+  return null
 }
 
 /**
@@ -372,7 +402,9 @@ export function checkValue(field: FieldSchema, value: unknown): Checked<unknown>
       return ok(items)
     }
     case "Json":
-      return checkJson(value) ? ok(value) : fail(`${field.displayName} must be JSON`)
+      if (!isJson(value)) return fail(`${field.displayName} must be JSON`)
+      const tooBig = jsonSizeProblem(field, value)
+      return tooBig ? fail(tooBig) : ok(value)
   }
 }
 

@@ -6,7 +6,7 @@ import * as fs from "fs"
 import * as path from "path"
 import type { AssetEntry, FileInfo } from "../shared/api"
 import { ProjectTextExtensions } from "../shared/api"
-import { readAssetIndex } from "./asset-index"
+import { AssetIndexCache, readAssetIndex } from "./asset-index"
 
 export class ProjectPathError extends Error {}
 
@@ -21,6 +21,8 @@ const ReservedName = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9�
 
 export class ProjectFiles {
   private root: string | null = null
+  /** The .meta files read for listAssets, so a listing reads only those that changed */
+  private assetCache: AssetIndexCache = new Map()
 
   /** The open project's directory, or null */
   get rootPath(): string | null {
@@ -34,11 +36,13 @@ export class ProjectFiles {
       throw new ProjectPathError(`Not a directory: ${dir}`)
     }
     this.root = resolved
+    this.assetCache = new Map()
     return resolved
   }
 
   close(): void {
     this.root = null
+    this.assetCache = new Map()
   }
 
   listFiles(): FileInfo[] {
@@ -46,8 +50,10 @@ export class ProjectFiles {
   }
 
   /** The assets the host indexed (see readAssetIndex); the project's own .import folder only, never through a link */
-  listAssets(): AssetEntry[] {
-    return readAssetIndex(this.requireRoot())
+  listAssets(): Promise<AssetEntry[]> {
+    const root = this.requireRoot()
+    const cache = this.assetCache
+    return readAssetIndex(root, cache)
   }
 
   readTextFile(filePath: string): string {

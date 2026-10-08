@@ -4,7 +4,16 @@
 // host's access token, which the page never sees).
 import { IpcMain } from "electron"
 import { EngineClient } from "../protocol/engine-client"
-import { ArgKind, Channels, ConnectionState, EngineCommandArgs, EngineCommandName, EngineCommands } from "../shared/api"
+import {
+  ArgKind,
+  Channels,
+  ConnectionState,
+  EngineCommandArgs,
+  EngineCommandName,
+  EngineCommands,
+  MaxJsonDepth,
+  MaxJsonNodes,
+} from "../shared/api"
 import { EditorPage, handleResult } from "./ipc"
 
 /** Launched hosts listen on loopback only (N2EditorHost's default --bind) */
@@ -21,11 +30,8 @@ const KindDescriptions: Record<ArgKind, string> = {
   jsonObject: "a JSON object",
 }
 
-/** How deeply nested a JSON argument may be (the page's merge patches are a few levels; this stops runaway input) */
-export const MaxJsonDepth = 32
-
-/** How many values (every scalar, array and object counts) a JSON argument may hold, shared references counted per use */
-export const MaxJsonNodes = 100_000
+// How deep and how large a JSON argument may be (shared with the page, whose editors check the same limits)
+export { MaxJsonDepth, MaxJsonNodes }
 
 /**
  * A fresh copy of the value if it is plain JSON (null, booleans, finite numbers, strings, arrays and plain

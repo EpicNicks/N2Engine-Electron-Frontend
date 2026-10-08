@@ -79,6 +79,16 @@ describe("parseComponentSchema and parseComponentTypes", () => {
     assert.throws(() => parseComponentSchema(7, "s"), /must be an object/)
   })
 
+  test("a field with no name is left out, not a reason to refuse the type", () => {
+    const parsed = parseComponentSchema({ ...schema, fields: [field, { ...field, name: "" }, { ...field, name: "b" }] }, "s")
+    assert.deepEqual(
+      parsed.fields.map((f) => f.name),
+      ["intensity", "b"]
+    )
+    // Any other fault in a field still refuses it
+    assert.throws(() => parseComponentSchema({ ...schema, fields: [{ ...field, hidden: 1 }] }, "s"), /hidden/)
+  })
+
   test("the type list is an array of schemas, each type once", () => {
     assert.deepEqual(parseComponentTypes([schema, { ...schema, typeName: "Canvas", singleton: true }]).length, 2)
     assert.deepEqual(parseComponentTypes([]), [])

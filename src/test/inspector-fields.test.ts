@@ -1,8 +1,10 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
+import { MaxJsonDepth, MaxJsonNodes } from "../shared/api"
 import type { ComponentSchema, FieldSchema } from "../protocol/protocol.generated"
 import {
   MaxFloat,
+  jsonSizeProblem,
   applyPatch,
   checkNumber,
   checkValue,
@@ -128,46 +130,38 @@ describe("partial updates", () => {
 
   test("planRequests sends only what changed, and nothing for a no-op", () => {
     const values = { uuid: "c1", isActive: true, volume: 1 }
-    assert.deepEqual(planRequests(values, { volume: 1 }), { requests: [], droppedScriptData: [] })
+    assert.deepEqual(planRequests(values, { volume: 1 }), { requests: [] })
     assert.deepEqual(planRequests(values, { volume: 0.5, isActive: true }), {
-      requests: [{ volume: 0.5 }],
-      droppedScriptData: [],
+      requests: [{ volume: 0.5 }]
     })
   })
 
   test("planRequests never sends the echo keys, uuid and scriptPath", () => {
     const values = { uuid: "c1", scriptUUID: U1, scriptPath: "res://a.lua", scriptData: {} }
     assert.deepEqual(planRequests(values, { uuid: "other", scriptPath: "res://b.lua", scriptData: { speed: 1 } }), {
-      requests: [{ scriptData: { speed: 1 } }],
-      droppedScriptData: [],
+      requests: [{ scriptData: { speed: 1 } }]
     })
     assert.deepEqual(planRequests(values, { uuid: "c1", scriptPath: "res://a.lua" }), {
-      requests: [],
-      droppedScriptData: [],
+      requests: []
     })
   })
 
-  test("a new scriptUUID is sent without scriptData: what was written for the old script is dropped", () => {
+  test("a new scriptUUID goes after the scriptData edit, in a request of its own", () => {
     const values = { scriptUUID: U1, scriptData: { speed: 1 } }
     assert.deepEqual(planRequests(values, { scriptUUID: U2, scriptData: { speed: 2, jump: true } }), {
-      requests: [{ scriptUUID: U2 }],
-      droppedScriptData: ["speed", "jump"],
+      requests: [{ scriptData: { speed: 2, jump: true } }, { scriptUUID: U2 }],
     })
-    // The rest of the edit goes with the script
+    // The rest of the edit goes with the data
     assert.deepEqual(planRequests(values, { scriptUUID: U2, scriptData: { speed: 2 }, isActive: false }), {
-      requests: [{ scriptUUID: U2, isActive: false }],
-      droppedScriptData: ["speed"],
+      requests: [{ scriptData: { speed: 2 }, isActive: false }, { scriptUUID: U2 }],
     })
-    // The same script again (an echo) with data is an ordinary data edit
+    // A script alone, or the same script again (an echo) with data, is one request
+    assert.deepEqual(planRequests(values, { scriptUUID: U2 }), { requests: [{ scriptUUID: U2 }] })
     assert.deepEqual(planRequests(values, { scriptUUID: U1, scriptData: { speed: 2 } }), {
       requests: [{ scriptData: { speed: 2 } }],
-      droppedScriptData: [],
     })
     // Clearing the script
-    assert.deepEqual(planRequests(values, { scriptUUID: null }), {
-      requests: [{ scriptUUID: null }],
-      droppedScriptData: [],
-    })
+    assert.deepEqual(planRequests(values, { scriptUUID: null }), { requests: [{ scriptUUID: null }] })
   })
 })
 
@@ -181,9 +175,17 @@ describe("numbers", () => {
       integer: true,
       ranged: false,
     })
+    // A Lua integer has no C++ type: whatever the name, it is 64 bits
+    const lua = numberLimits(field("Int", { typeName: "int", container: "scriptData" }))
+    assert.equal(lua.max, Number.MAX_SAFE_INTEGER)
+    assert.equal(lua.min, Number.MIN_SAFE_INTEGER)
+    // A name the host doesn't send, or an ambiguous one, gets no hard limit (the host judges it)
+    assert.equal(numberLimits(field("Int", { typeName: "long" })).max, Number.MAX_SAFE_INTEGER)
+    assert.equal(numberLimits(field("Int", { typeName: "Priority" })).min, Number.MIN_SAFE_INTEGER)
     assert.equal(numberLimits(field("Int", { typeName: "unsigned int" })).min, 0)
     assert.equal(numberLimits(field("Int", { typeName: "unsigned int" })).max, 4294967295)
     assert.equal(numberLimits(field("Int", { typeName: "uint8_t" })).max, 255)
+    assert.equal(numberLimits(field("Int", { typeName: "short" })).max, 32767)
     assert.equal(numberLimits(field("Int", { typeName: "int16_t" })).min, -32768)
     assert.equal(numberLimits(field("Int", { typeName: "int64_t" })).max, Number.MAX_SAFE_INTEGER)
     assert.equal(numberLimits(field("Int", { typeName: "uint32_t" })).max, 4294967295)
@@ -301,6 +303,33 @@ describe("checkValue per kind", () => {
     let deep: unknown = 1
     for (let i = 0; i < 100; i++) deep = [deep]
     assert.equal(checkValue(j, deep).ok, false)
+  })
+})
+
+describe("JSON limits (the same as the main process's)", () => {
+  const j = field("Json")
+  const nest = (levels: number) => {
+    let value: unknown = 1
+    for (let i = 0; i < levels; i++) value = [value]
+    return value
+  }
+
+  test("the wrapper levels count: a container's field has one level less than a top-level one", () => {
+    // values (0) > value: arrays at levels 1..31 are accepted, one more is not
+    assert.equal(jsonSizeProblem(j, nest(MaxJsonDepth - 1)), null)
+    assert.match(jsonSizeProblem(j, nest(MaxJsonDepth)) ?? "", /nested too deeply to send \(at most 31 levels\)/)
+    const inContainer = field("Json", { container: "scriptData" })
+    assert.equal(jsonSizeProblem(inContainer, nest(MaxJsonDepth - 2)), null)
+    assert.match(jsonSizeProblem(inContainer, nest(MaxJsonDepth - 1)) ?? "", /at most 30 levels/)
+    assert.equal(checkValue(inContainer, nest(MaxJsonDepth - 1)).ok, false)
+  })
+
+  test("the values of the whole request count", () => {
+    const wide = (count: number) => Array.from({ length: count }, (_, i) => i)
+    // the request's object, the array, and its items
+    assert.equal(jsonSizeProblem(j, wide(MaxJsonNodes - 2)), null)
+    assert.match(jsonSizeProblem(j, wide(MaxJsonNodes - 1)) ?? "", /too many values to send \(at most 100000\)/)
+    assert.match(jsonSizeProblem(field("Json", { container: "scriptData" }), wide(MaxJsonNodes - 2)) ?? "", /too many/)
   })
 })
 

@@ -782,6 +782,17 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     await assert.rejects(bad, /singleton must be a boolean|fields must be an array/)
   })
 
+  test("AddComponent's answer must carry the new component's UUID", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const added = client.addComponent("e1", "Light")
+    sockets[0].emit(
+      "data",
+      frame(ResponseType.ComponentAdded, Buffer.from(encodeComponentAddedResponse({ componentId: "", values: {} })))
+    )
+    await assert.rejects(added, /without the new component's UUID/)
+  })
+
   test("an Error answer rejects with the host's message", async () => {
     const { client, sockets } = connectFake()
     await client.connect()

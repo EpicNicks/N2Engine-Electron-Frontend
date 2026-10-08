@@ -278,7 +278,10 @@ describe("InspectorState: reading the object", () => {
     state.connected = false
     await inspector.select("e1")
     assert.equal(inspector.loading.value, false)
-    assert.equal(calls.length, 0)
+    assert.equal(
+      calls.some(([name]) => name === "getEntity"),
+      false
+    )
   })
 })
 
@@ -397,20 +400,62 @@ describe("InspectorState: editing a component", () => {
     assert.deepEqual(sentValues(), [{ scriptData: { speed: 9 } }])
   })
 
-  test("a new script is sent without scriptData, and the script's fields are read again", async () => {
+  test("a new script goes after the data edit that was pending, and the script's fields are read again", async () => {
     const { inspector, sentValues, calls, state } = setup()
     await inspector.select("e1")
     inspector.edit("lua", { scriptData: { speed: 4 } })
     inspector.edit("lua", { scriptUUID: S2 }, { immediate: true })
     await inspector.flush()
-    assert.deepEqual(sentValues(), [{ scriptUUID: S2 }])
-    assert.match(inspector.errors.value.get("lua") ?? "", /speed was set for the previous script/)
+    assert.deepEqual(sentValues(), [{ scriptData: { speed: 4 } }, { scriptUUID: S2 }])
     assert.equal(state.stored.lua?.scriptUUID, S2)
     assert.equal(calls.filter(([name]) => name === "getLuaFields").length, 2)
     assert.deepEqual(
       inspector.schemaFor(inspector.components.value[1])?.fields.map((f) => f.name),
       ["scriptUUID", "jump"]
     )
+  })
+
+  test("overlapping reads of a script's fields share one read, and a late answer for another script is dropped", async () => {
+    const { inspector, engine, state } = setup()
+    const first = deferred<ComponentSchema>()
+    let asked = 0
+    engine.getLuaFields = (_e: string, _c: string) => {
+      asked++
+      return asked === 1 ? first.promise : Promise.resolve(luaSchema(S2))
+    }
+    const selecting = inspector.select("e1")
+    await tick()
+    // The same script again while the read is on its way: no second read
+    const again = [inspector.refresh(), inspector.refresh()]
+    await tick()
+    assert.equal(asked, 1)
+    // The script changes, and its fields are read; then the first (old) answer arrives
+    state.stored.lua = { scriptUUID: S2, scriptData: {} }
+    const changed = inspector.refresh()
+    await tick()
+    await tick()
+    assert.equal(asked, 2)
+    first.resolve(luaSchema(S1))
+    await Promise.all([selecting, changed, ...again])
+    assert.deepEqual(
+      inspector.schemaFor(inspector.components.value[1])?.fields.map((f) => f.name),
+      ["scriptUUID", "jump"]
+    )
+  })
+
+  test("a failed read of the fields leaves a reason and is asked again on the next read", async () => {
+    const { inspector, engine } = setup()
+    let fail = true
+    engine.getLuaFields = async () => {
+      if (fail) throw new Error("script failed")
+      return luaSchema(S1)
+    }
+    await inspector.select("e1")
+    assert.match(inspector.luaProblems.value.get("lua") ?? "", /script failed/)
+    fail = false
+    await inspector.refresh()
+    assert.equal(inspector.luaProblems.value.has("lua"), false)
+    assert.equal(inspector.luaSchemas.value.has("lua"), true)
   })
 
   test("the Lua fields are asked again only when the script changed (or on request)", async () => {
@@ -600,6 +645,23 @@ describe("InspectorState: adding and removing components", () => {
     assert.match(String(calls.find(([name]) => name === "confirm")?.[1][0]), /Remove Light/)
   })
 
+  test("a request of a component that is being removed may be refused, and that isn't shown", async () => {
+    const { inspector, engine, sets, state, errors } = setup()
+    await inspector.select("e1")
+    state.autoReply = false
+    inspector.edit("light", { intensity: 3 }, { immediate: true })
+    const removing = inspector.removeComponent("light")
+    await tick()
+    sets[0].reply.reject(new Error("Component not found: light"))
+    engine.getEntity = async (id) => ({
+      ...entityData(id),
+      entity: { ...entityData(id).entity, components: entityData(id).entity.components.slice(1) },
+    })
+    assert.equal(await removing, true)
+    assert.equal(inspector.errors.value.size, 0)
+    assert.equal(errors.length, 0)
+  })
+
   test("a refused removal is thrown, and the object is read again", async () => {
     const { inspector, engine, calls } = setup()
     await inspector.select("e1")
@@ -648,7 +710,7 @@ describe("InspectorState: assets and references", () => {
     const { inspector } = setup()
     await inspector.loadAssets()
     assert.equal(inspector.assets.value.byUuid(S1)?.path, "res://scripts/a.lua")
-    assert.equal(inspector.assets.value.byPath("res://SCRIPTS/a.lua")?.uuid, S1)
+    assert.equal(inspector.assets.value.byPath("res://SCRIPTS/a.lua"), undefined) // exact by default
     assert.equal(inspector.assets.value.ofType("Mesh").length, 3)
   })
 
@@ -664,6 +726,34 @@ describe("InspectorState: assets and references", () => {
     } finally {
       console.error = quiet
     }
+  })
+
+  test("which object a component belongs to is found by reading the candidates, each once, up to a limit", async () => {
+    const { inspector, engine, calls } = setup()
+    await inspector.select("e1")
+    engine.getEntity = async (id) => {
+      calls.push(["getEntity", [id]])
+      return {
+        ...entityData(id),
+        entity: {
+          ...entityData(id).entity,
+          components: [{ type: "Body", uuid: "body-of-" + id, values: {} }],
+        },
+      }
+    }
+    assert.equal(inspector.componentInfo("body-of-e5"), undefined)
+    assert.equal(await inspector.resolveComponent("body-of-e5", ["e1", "e3", "e4", "e5", "e6"]), true)
+    // e1 is the inspected object (not read again), and the search stopped when it was found
+    const reads = () => calls.filter(([name, args]) => name === "getEntity" && args[0] !== "e1").map(([, args]) => args[0])
+    assert.deepEqual(reads(), ["e3", "e4", "e5"])
+    assert.deepEqual(inspector.componentInfo("body-of-e5"), { type: "Body", entityId: "e5" })
+    // Objects read once aren't read again, and an unknown component isn't found
+    assert.equal(await inspector.resolveComponent("nope", ["e3", "e4", "e5", "e7"]), false)
+    assert.deepEqual(reads(), ["e3", "e4", "e5", "e7"])
+    // The search is capped
+    const many = Array.from({ length: 200 }, (_, i) => "x" + i)
+    await inspector.resolveComponent("nope", many)
+    assert.equal(reads().length, 4 + InspectorState.MaxResolveReads)
   })
 
   test("the components of another object are listed, and remembered by UUID", async () => {

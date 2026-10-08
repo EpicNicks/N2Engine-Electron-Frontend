@@ -85,7 +85,11 @@ export function parseComponentSchema(value: unknown, where: string): ComponentSc
   const typeName = requireString(value, "typeName", where)
   if (typeName === "") throw new Error(`${where}: typeName must not be empty`)
   if (!Array.isArray(value.fields)) throw new Error(`${where}: fields must be an array`)
-  const fields = value.fields.map((field, i) => parseFieldSchema(field, `${where} (${typeName}) field ${i}`))
+  // A field with no name can't be edited or addressed: it is left out, not a reason to refuse the whole type
+  const fields = value.fields
+    .map((field, i) => ({ field, i }))
+    .filter(({ field }) => !(isObject(field) && field.name === ""))
+    .map(({ field, i }) => parseFieldSchema(field, `${where} (${typeName}) field ${i}`))
   const schema: ComponentSchema = { typeName, singleton: requireBool(value, "singleton", where), fields }
   if (value.defaults !== undefined) schema.defaults = value.defaults
   return schema

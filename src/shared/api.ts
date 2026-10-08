@@ -340,6 +340,12 @@ export interface AssetEntry {
   resourceType: string
 }
 
+/** How deeply nested a JSON argument of an engine command may be: the main process refuses more (the host's own limit is 64) */
+export const MaxJsonDepth = 32
+
+/** How many values (every scalar, array and object counts) a JSON argument may hold (the host's own limit is 200000) */
+export const MaxJsonNodes = 100_000
+
 export const ProjectTextExtensions: readonly string[] = [".scene", ".lua", ".json", ".txt"]
 
 /** What an IPC handler returns: errors are carried as data so the page sees the original message */

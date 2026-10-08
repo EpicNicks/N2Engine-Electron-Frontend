@@ -56,6 +56,8 @@ export interface InspectorOptions {
   /** A failure nobody is looking at (an edit's answer after the selection moved on) */
   onError?(what: string, error: unknown): void
   debounceMs?: number
+  /** Whether res:// paths compare without regard to case (Windows and macOS file systems), for a dropped file */
+  caseInsensitivePaths?: boolean
   /** Timers, replaceable in tests */
   timers?: { set(callback: () => void, ms: number): unknown; clear(handle: unknown): void }
 }
@@ -69,7 +71,7 @@ export class InspectorState {
   readonly types = signal<readonly ComponentSchema[] | null>(null)
   /** Why the types couldn't be read (a host before protocol 1.5, say), or null */
   readonly typesProblem = signal<string | null>(null)
-  readonly assets = signal<AssetLookup>(new AssetLookup([]))
+  readonly assets = signal<AssetLookup>(new AssetLookup([], false))
 
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
@@ -97,7 +99,9 @@ export class InspectorState {
   private versions = new Map<string, number>()
   /** The script (scriptUUID) each LuaComponent's fields were read for */
   private luaKeys = new Map<string, string>()
-  private luaFetches = 0
+  private readonly luaReads = new Map<string, { script: string; promise: Promise<void> }>()
+  /** Components being removed: their edits are dropped, and a refusal of one that was on its way isn't news */
+  private readonly removing = new Set<string>()
   private readonly timers = new Map<string, unknown>()
   private readonly sending = new Map<string, Promise<void>>()
   /** Counts the object's own property edits, so a read that began before one doesn't undo it */
@@ -106,7 +110,9 @@ export class InspectorState {
   /** Counts connections that ended, so a read of the types for an earlier one is dropped */
   private typesEpoch = 0
   /** Components other than the inspected one's that were seen, by UUID: what a component reference points at */
-  private readonly known = new Map<string, { type: string; entityId: string }>()
+  readonly known = signal<ReadonlyMap<string, { type: string; entityId: string }>>(new Map())
+  /** The objects whose components were listed for the labels */
+  private readonly scanned = new Set<string>()
 
   private readonly debounceMs: number
   private readonly timer: NonNullable<InspectorOptions["timers"]>
@@ -149,7 +155,7 @@ export class InspectorState {
   /** A component somewhere in the scene, by UUID, when it has been seen (the inspected object's, or one listed for a picker) */
   componentInfo(uuid: string): { type: string; entityId: string } | undefined {
     const own = this.components.value.find((component) => component.id === uuid)
-    return own && this.entityId.value ? { type: own.type, entityId: this.entityId.value } : this.known.get(uuid)
+    return own && this.entityId.value ? { type: own.type, entityId: this.entityId.value } : this.known.value.get(uuid)
   }
 
   toggleCollapsed(componentId: string): void {
@@ -163,21 +169,21 @@ export class InspectorState {
     this.cancelTimers()
     batch(() => {
       this.fetches++
-      this.luaFetches++
       this.typesRead = null
       this.typesEpoch++
       this.types.value = null
       this.typesProblem.value = null
       this.clearEntity()
-      this.known.clear()
+      this.known.value = new Map()
+      this.scanned.clear()
     })
   }
 
   private clearEntity(): void {
     this.fetches++
-    this.luaFetches++
     this.versions = new Map()
     this.luaKeys = new Map()
+    this.luaReads.clear()
     batch(() => {
       this.entityId.value = null
       this.header.value = null
@@ -229,7 +235,7 @@ export class InspectorState {
   /** Reads the project's asset index (the asset fields' names, and what a dropped file means) */
   async loadAssets(): Promise<void> {
     try {
-      this.assets.value = new AssetLookup(await this.project.listAssets())
+      this.assets.value = new AssetLookup(await this.project.listAssets(), this.options.caseInsensitivePaths ?? false)
     } catch (e) {
       console.error("Failed to read the project's assets:", e)
     }
@@ -246,6 +252,8 @@ export class InspectorState {
     if (entityId === null) return
     this.entityId.value = entityId
     this.loading.value = true
+    // Types that couldn't be read are asked for again
+    void this.loadTypes()
     await this.refresh()
   }
 
@@ -311,34 +319,50 @@ export class InspectorState {
 
   /**
    * Reads the script fields of each LuaComponent whose script they weren't read for (all of them with force: a script
-   * was edited, which GetLuaFields has to be asked about again)
+   * was edited, which GetLuaFields has to be asked about again). Calls overlap (a read of the object, a script change,
+   * an assetsChanged): one read per component and script is shared, and an answer counts whenever the component still
+   * runs the script it was asked for.
    */
   private async syncLua(force: boolean): Promise<void> {
     const id = this.entityId.value
     if (id === null) return
-    const fetch = ++this.luaFetches
     const lua = this.components.value.filter((view) => view.type === LuaComponentType)
-    await Promise.all(
-      lua.map(async (view) => {
-        const script = typeof view.values.scriptUUID === "string" ? view.values.scriptUUID : ""
-        if (script === "") {
-          this.luaKeys.delete(view.id)
-          this.setLua(view.id, null, null)
-          return
-        }
-        if (!force && this.luaKeys.get(view.id) === script) return
-        this.luaKeys.set(view.id, script)
-        try {
-          const schema = await this.engine.getLuaFields(id, view.id)
-          if (fetch === this.luaFetches && this.entityId.value === id) this.setLua(view.id, schema, null)
-        } catch (e) {
-          if (fetch === this.luaFetches && this.entityId.value === id) this.setLua(view.id, null, messageOf(e))
-        }
-      })
-    )
+    await Promise.all(lua.map((view) => this.syncLuaOne(id, view, force)))
     // Components gone since
     const alive = new Set(this.components.value.map((view) => view.id))
     for (const key of this.luaKeys.keys()) if (!alive.has(key)) this.luaKeys.delete(key)
+  }
+
+  private syncLuaOne(entityId: string, view: ComponentView, force: boolean): Promise<void> {
+    const script = typeof view.values.scriptUUID === "string" ? view.values.scriptUUID : ""
+    if (script === "") {
+      this.luaKeys.delete(view.id)
+      this.setLua(view.id, null, null)
+      return Promise.resolve()
+    }
+    const running = this.luaReads.get(view.id)
+    if (running && running.script === script && !force) return running.promise
+    if (!force && this.luaKeys.get(view.id) === script) return Promise.resolve()
+    this.luaKeys.set(view.id, script)
+    const current = () => this.entityId.value === entityId && this.luaKeys.get(view.id) === script
+    const read = { script, promise: Promise.resolve() }
+    read.promise = (async () => {
+      await Promise.resolve() // so a read that fails at once is still registered before it is dropped
+      try {
+        const schema = await this.engine.getLuaFields(entityId, view.id)
+        if (current()) this.setLua(view.id, schema, null)
+      } catch (e) {
+        if (current()) {
+          this.setLua(view.id, null, messageOf(e))
+          // So the next read of the object asks again
+          this.luaKeys.delete(view.id)
+        }
+      } finally {
+        if (this.luaReads.get(view.id) === read) this.luaReads.delete(view.id)
+      }
+    })()
+    this.luaReads.set(view.id, read)
+    return read.promise
   }
 
   private setLua(componentId: string, schema: ComponentSchema | null, problem: string | null): void {
@@ -450,12 +474,6 @@ export class InspectorState {
         return
       }
       this.setOverlay(componentId, { inflight: null, pending: {} })
-      if (plan.droppedScriptData.length > 0) {
-        this.setError(
-          componentId,
-          `The script changed: ${plan.droppedScriptData.join(", ")} was set for the previous script and was not sent`
-        )
-      }
       for (const request of plan.requests) {
         if (!(await this.sendOne(entityId, componentId, request))) break
       }
@@ -470,6 +488,7 @@ export class InspectorState {
     try {
       stored = await this.engine.setComponentFields(entityId, componentId, request)
     } catch (e) {
+      if (this.removing.has(componentId)) return false
       const current = this.entityId.value === entityId
       if (current) {
         batch(() => {
@@ -534,15 +553,21 @@ export class InspectorState {
     const view = this.components.value.find((component) => component.id === componentId)
     if (entityId === null || !view) return false
     if (!(await this.options.confirm(`Remove ${view.type}?`, "Remove"))) return false
-    // What was edited is gone with it: not sent
-    this.cancelTimer(componentId)
-    this.setOverlay(componentId, null)
-    await this.sending.get(componentId)
+    // What was edited is gone with it: not sent, and a request already on its way may be refused (the component is
+    // going): that isn't shown
+    this.removing.add(componentId)
     try {
-      await this.engine.removeComponent(entityId, componentId)
+      this.cancelTimer(componentId)
+      this.setOverlay(componentId, null)
+      await this.sending.get(componentId)
+      try {
+        await this.engine.removeComponent(entityId, componentId)
+      } finally {
+        // Whatever happened, what the host has is the truth
+        await this.refresh()
+      }
     } finally {
-      // Whatever happened, what the host has is the truth
-      await this.refresh()
+      this.removing.delete(componentId)
     }
     return true
   }
@@ -587,7 +612,33 @@ export class InspectorState {
     }
     const data = await this.engine.getEntity(entityId)
     const list = data.entity.components.map((component) => ({ id: component.uuid, type: component.type }))
-    for (const component of list) this.known.set(component.id, { type: component.type, entityId })
+    const known = new Map(this.known.value)
+    for (const component of list) known.set(component.id, { type: component.type, entityId })
+    this.known.value = known
+    this.scanned.add(entityId)
     return list
+  }
+
+  /** How many objects are read at most to find what a component reference points at */
+  static readonly MaxResolveReads = 64
+
+  /**
+   * Finds which object a component UUID belongs to, reading the candidate objects (those whose component types could
+   * hold it) one by one until it is found, at most MaxResolveReads of them; each is read once. Resolves with whether it
+   * is known now. A component reference's label shows "Object > Type" once it is.
+   */
+  async resolveComponent(uuid: string, candidates: readonly string[]): Promise<boolean> {
+    let reads = 0
+    for (const entityId of candidates) {
+      if (this.componentInfo(uuid)) return true
+      if (entityId === this.entityId.value || this.scanned.has(entityId)) continue
+      if (++reads > InspectorState.MaxResolveReads) break
+      try {
+        await this.componentsOf(entityId)
+      } catch {
+        this.scanned.add(entityId) // gone or unreadable: not asked again
+      }
+    }
+    return this.componentInfo(uuid) !== undefined
   }
 }

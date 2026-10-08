@@ -24,7 +24,7 @@ const field = (assetType?: string): FieldSchema => ({
 })
 
 describe("AssetLookup", () => {
-  const lookup = new AssetLookup([font, texture, body, audio])
+  const lookup = new AssetLookup([font, texture, body, audio], true)
 
   test("finds an asset by UUID (any case) and by path (any case), a model's sub-asset too", () => {
     assert.equal(lookup.byUuid(font.uuid)?.path, font.path)
@@ -33,6 +33,13 @@ describe("AssetLookup", () => {
     assert.equal(lookup.byPath("res://models/robot.glb#mesh/Body")?.uuid, body.uuid)
     assert.equal(lookup.byPath("res://nope.png"), undefined)
     assert.equal(lookup.byUuid("x"), undefined)
+  })
+
+  test("paths compare exactly unless the file system doesn't tell cases apart", () => {
+    const exact = new AssetLookup([font])
+    assert.equal(exact.byPath("res://fonts/Main.ttf")?.uuid, font.uuid)
+    assert.equal(exact.byPath("res://FONTS/main.ttf"), undefined)
+    assert.equal(new AssetLookup([font], true).byPath("res://FONTS/main.ttf")?.uuid, font.uuid)
   })
 
   test("the engine's built-in meshes are always there", () => {

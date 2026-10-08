@@ -35,14 +35,21 @@ export class AssetLookup {
   private readonly byPathMap = new Map<string, AssetEntry>()
   readonly entries: readonly AssetEntry[]
 
-  constructor(entries: readonly AssetEntry[]) {
+  /** caseInsensitive: res:// paths compare without regard to case (the host's file system does not), else exactly */
+  constructor(
+    entries: readonly AssetEntry[],
+    private readonly caseInsensitive = false
+  ) {
     const all = [...BuiltinMeshes, ...entries]
     this.entries = all
     for (const entry of all) {
       this.byUuidMap.set(entry.uuid.toLowerCase(), entry)
-      // res:// paths are case-insensitive on the file systems the editor runs on (the host spells them as the disk does)
-      this.byPathMap.set(entry.path.toLowerCase(), entry)
+      this.byPathMap.set(this.pathKey(entry.path), entry)
     }
+  }
+
+  private pathKey(resPath: string): string {
+    return this.caseInsensitive ? resPath.toLowerCase() : resPath
   }
 
   byUuid(uuid: string): AssetEntry | undefined {
@@ -51,7 +58,7 @@ export class AssetLookup {
 
   /** The asset of a res:// path (a file, or a model's sub-asset spelled path#key) */
   byPath(resPath: string): AssetEntry | undefined {
-    return this.byPathMap.get(resPath.toLowerCase())
+    return this.byPathMap.get(this.pathKey(resPath))
   }
 
   /** The assets a field can hold (its assetType), by path; all of them for a field that names no type */
