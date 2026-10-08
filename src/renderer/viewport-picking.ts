@@ -32,6 +32,30 @@ export function unionBounds(boxes: Iterable<Bounds>): Bounds | null {
   return out
 }
 
+/** Whether a host speaking this protocol version has PickEntity and GetEntityBounds (1.8.0 added them) */
+export function hostHasPicking(protocolVersion: string | null | undefined): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(protocolVersion ?? "")
+  if (!match) return false
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  return major > 1 || (major === 1 && minor >= 8)
+}
+
+/**
+ * Where a click on the picture lands in the host's viewport when the host was resized since that frame was rendered:
+ * the vertical field of view is fixed, so a pixel's offset from the centre scales by the heights' ratio
+ * (x' = w'/2 + (x - w/2) h'/h, y' = h'/2 + (y - h/2) h'/h). The same size maps to itself.
+ */
+export function remapToHostViewport(
+  pixel: { x: number; y: number },
+  shown: { width: number; height: number },
+  host: { width: number; height: number }
+): { x: number; y: number } {
+  if (shown.width === host.width && shown.height === host.height) return pixel
+  const k = host.height / shown.height
+  return { x: host.width / 2 + (pixel.x - shown.width / 2) * k, y: host.height / 2 + (pixel.y - shown.height / 2) * k }
+}
+
 /** The same box moved by delta */
 export const translateBounds = (b: Bounds, delta: { x: number; y: number; z: number }): Bounds => ({
   min: { x: b.min.x + delta.x, y: b.min.y + delta.y, z: b.min.z + delta.z },

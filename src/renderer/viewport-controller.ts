@@ -15,7 +15,7 @@ import { Bounds, EditorCameraController } from "./viewport-camera"
 import { LatestWinsSender } from "./viewport-frames"
 import type { ClickModifiers } from "./hierarchy-tree"
 import { insideFrame } from "./viewport-size"
-import { translateBounds, unionBounds } from "./viewport-picking"
+import { remapToHostViewport, translateBounds, unionBounds } from "./viewport-picking"
 import {
   AxisDrag,
   DragSource,
@@ -49,6 +49,8 @@ export interface ViewportDeps {
   groups: Pick<EditGroups, "begin" | "end">
   /** Null without the engine's PickEntity and GetEntityBounds (see createPickBackend) */
   picking: PickBackend | null
+  /** Whether the host can be asked to pick and measure now (a scene is open, the host has the commands). Default: yes. */
+  canPick?(): boolean
   /** A failure to show (the page's error banner) */
   onError(what: string, error: unknown): void
   /** Something worth a console line, not a banner (an unverified assumption failed) */
@@ -109,6 +111,16 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (it
 /** One update of a drag may move the object by at most this many handle lengths */
 export const MaxStepHandleLengths = 50
 
+/** A click waiting for, or in, a pick */
+interface PickClick {
+  pixel: Pixel
+  modifiers: ClickModifiers
+  connection: number
+  /** Which click this is (see clickGeneration), and the selection it was made over */
+  generation: number
+  selection: string
+}
+
 export class ViewportController {
   readonly camera = new EditorCameraController()
   /**
@@ -135,7 +147,11 @@ export class ViewportController {
   private ended: Promise<void> = Promise.resolve()
   private pressed: { pixel: Pixel; onGizmo: boolean } | null = null
   /** The click to pick for (one pick in flight; clicks meanwhile wait, and only the newest of them is asked) */
-  private readonly pickSender: LatestWinsSender<{ pixel: Pixel; modifiers: ClickModifiers; connection: number }>
+  private readonly pickSender: LatestWinsSender<PickClick>
+  /** Counts clicks (and misses): only the newest click's answer is applied */
+  private clickGeneration = 0
+  /** The size the host's viewport has been told, while it may differ from the picture's (null: unknown) */
+  private hostSize: PixelSize | null = null
   private boundsRunning = false
   private boundsDirty = false
   /** Counts target loads, so a slow answer can't replace a newer one */
@@ -157,7 +173,7 @@ export class ViewportController {
       (e) => deps.onError("Failed to move the camera", e)
     )
     this.pickSender = new LatestWinsSender(
-      (click) => this.pick(click.pixel, click.modifiers, click.connection),
+      (click) => this.pick(click),
       (e) => deps.onError("Failed to pick an object", e)
     )
   }
@@ -171,9 +187,14 @@ export class ViewportController {
     this.frameListener?.()
   }
 
-  /** Whether a click can select something (the seam has a backend) */
+  /** Whether a click can select something: there is a backend, and the host can be asked (see ViewportDeps.canPick) */
   get canPick(): boolean {
-    return this.deps.picking !== null
+    return this.deps.picking !== null && (this.deps.canPick?.() ?? true)
+  }
+
+  /** The size the host's viewport was last told (null: none), so a click on a picture of another size is mapped exactly */
+  setHostSize(size: PixelSize | null): void {
+    this.hostSize = size
   }
 
   get isDragging(): boolean {
@@ -328,7 +349,7 @@ export class ViewportController {
     if (this.drag) return false
     const id = this.deps.selected()
     if (id === null) return false
-    if (this.deps.picking && this.deps.engine.isConnected()) {
+    if (this.canPick && this.deps.picking && this.deps.engine.isConnected()) {
       try {
         const ids = [...new Set([id, ...this.selectedIds(id)])]
         const found = await this.deps.picking.bounds(ids)
@@ -480,17 +501,21 @@ export class ViewportController {
         const connection = this.connections
         const picking = this.deps.picking
         const ids = [...new Set(this.selectedIds(this.deps.selected()))]
-        if (!picking || ids.length === 0 || !this.deps.engine.isConnected()) {
+        const key = this.selectionKey()
+        if (!picking || !this.canPick || ids.length === 0 || !this.deps.engine.isConnected()) {
           this.setBounds(new Map())
           continue
         }
+        // An answer is out of date only when the selection or the connection changed meanwhile: a change of the scene
+        // still shows it (another read follows), so a storm of events can't keep the boxes from ever appearing
+        const current = (): boolean => connection === this.connections && key === this.selectionKey()
         try {
           const found = await picking.bounds(ids)
-          if (!this.boundsDirty && connection === this.connections) this.setBounds(found ?? new Map())
+          if (current()) this.setBounds(found ?? new Map())
         } catch (e) {
           // The box is a convenience: a host that can't measure leaves the objects unboxed
           console.debug("GetEntityBounds failed:", e)
-          if (!this.boundsDirty) this.setBounds(new Map())
+          if (current()) this.setBounds(new Map())
         }
       } while (this.boundsDirty)
     } finally {
@@ -652,23 +677,43 @@ export class ViewportController {
     return this.ended
   }
 
-  /** A click on the frame: a pixel outside the viewport is a miss (no call); else the host is asked, newest click first */
-  private click(pixel: Pixel, modifiers: ClickModifiers): void {
-    if (!this.deps.picking || !this.deps.engine.isConnected()) return
-    if (!this.size || !insideFrame(pixel, this.size)) {
-      this.pickSender.discard()
-      this.deps.select(null, modifiers)
-      return
-    }
-    this.pickSender.push({ pixel, modifiers, connection: this.connections })
+  /** What is selected, as one string (the primary and every selected id): a pick's answer is for the selection it began over */
+  private selectionKey(): string {
+    return `${this.deps.selected() ?? ""}|${[...new Set(this.selectedIds(this.deps.selected()))].sort().join(",")}`
   }
 
-  private async pick(pixel: Pixel, modifiers: ClickModifiers, connection: number): Promise<void> {
+  /**
+   * A click on the frame. A pixel outside the viewport is a miss (no call). Else the host is asked, at the pixel the
+   * host will see: if its viewport was resized since the picture on screen was rendered, the pixel is mapped to the new
+   * size (remapToHostViewport; one that falls outside the new viewport is a miss too).
+   */
+  private click(pixel: Pixel, modifiers: ClickModifiers): void {
+    if (!this.canPick || !this.deps.engine.isConnected()) return
+    // Every click and miss makes the answers of earlier ones out of date
+    const generation = ++this.clickGeneration
+    const missed = (): void => {
+      this.pickSender.discard()
+      this.deps.select(null, modifiers)
+    }
+    if (!this.size || !insideFrame(pixel, this.size)) return missed()
+    const asked = this.hostSize ? remapToHostViewport(pixel, this.size, this.hostSize) : pixel
+    if (this.hostSize && !insideFrame(asked, this.hostSize)) return missed()
+    this.pickSender.push({ pixel: asked, modifiers, connection: this.connections, generation, selection: this.selectionKey() })
+  }
+
+  private async pick(click: PickClick): Promise<void> {
     const picking = this.deps.picking
     if (!picking) return
-    const id = await picking.pick(pixel.x, pixel.y, false)
-    // The connection ended while it was asked: the answer is about another host's scene
-    if (connection === this.connections) this.deps.select(id, modifiers)
+    const id = await picking.pick(click.pixel.x, click.pixel.y, false)
+    // Applied only for the newest click, on the connection it was made on, and when nothing else (the hierarchy, a
+    // later click) changed the selection while it was asked: an old answer must not undo what came after it
+    if (
+      click.connection === this.connections &&
+      click.generation === this.clickGeneration &&
+      click.selection === this.selectionKey()
+    ) {
+      this.deps.select(id, click.modifiers)
+    }
   }
 
   private redraw(): void {

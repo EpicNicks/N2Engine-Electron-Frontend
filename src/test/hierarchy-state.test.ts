@@ -783,21 +783,23 @@ describe("selecting what the viewport picked", () => {
     assert.deepEqual([...state.selection.value.ids], [id("C")])
   })
 
-  test("Shift extends from the anchor like the rows' shift-click", async () => {
+  test("Shift is a toggle too (no hierarchy range between the anchor and the picked object), as in Unity's scene view", async () => {
     const { state } = setup("A,B,C,D")
     await state.refresh()
     state.pick(id("A"))
     state.pick(id("C"), { range: true })
-    assert.deepEqual([...state.selection.value.ids].sort(), [id("A"), id("B"), id("C")])
+    assert.deepEqual([...state.selection.value.ids].sort(), [id("A"), id("C")], "B is not between them")
     assert.equal(state.selection.value.primary, id("C"))
+    state.pick(id("A"), { range: true })
+    assert.deepEqual([...state.selection.value.ids], [id("C")])
   })
 
-  test("it gives the same selection as the equivalent click on the row", async () => {
+  test("it gives the same selection as the equivalent click on the row (for what a viewport click can do)", async () => {
     const a = setup("A,B,C,D")
     const b = setup("A,B,C,D")
     await a.state.refresh()
     await b.state.refresh()
-    for (const [name, modifiers] of [["B", {}], ["D", { toggle: true }], ["A", { range: true }], ["C", { toggle: true }]] as const) {
+    for (const [name, modifiers] of [["B", {}], ["D", { toggle: true }], ["A", { toggle: true }], ["C", { toggle: true }], ["C", {}]] as const) {
       a.state.pick(id(name), modifiers)
       b.state.click(id(name), modifiers)
       assert.deepEqual([...a.state.selection.value.ids].sort(), [...b.state.selection.value.ids].sort())

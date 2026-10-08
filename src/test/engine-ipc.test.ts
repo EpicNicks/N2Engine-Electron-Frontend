@@ -400,6 +400,8 @@ describe("EngineHost (the main process's engine IPC)", () => {
       ["getEntityBounds", [["a", null]]],
       ["getEntityBounds", [Array.from({ length: 4097 }, (_, i) => `id-${i}`)]], // more than the host takes
       ["getEntityBounds", [["a"], 1]],
+      ["getEntityBounds", [new Array(3)]], // a sparse array: holes aren't strings
+      ["getEntityBounds", [["a", , "b"]]], // eslint-disable-line no-sparse-arrays
     ]
     client.calls.length = 0
     for (const [name, args] of bad) {

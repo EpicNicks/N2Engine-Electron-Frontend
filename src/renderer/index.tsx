@@ -11,7 +11,7 @@ import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
-import { createPickBackend } from "./viewport-picking"
+import { createPickBackend, hostHasPicking } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
@@ -94,6 +94,8 @@ const viewport = new ViewportController({
   engine: window.engine,
   groups,
   picking: createPickBackend(window.engine),
+  // No scene open, or a host from before protocol 1.8.0: a click asks nothing (and raises no error)
+  canPick: () => store.scene.peek() !== null && hostHasPicking(store.serverInfo.peek()?.protocolVersion),
   onError: (what, e) => store.reportError(what, e),
   onNote: (message) => store.console.note("warn", message),
   canEdit: () => store.canEdit.peek(),

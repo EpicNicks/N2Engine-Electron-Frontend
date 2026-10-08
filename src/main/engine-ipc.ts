@@ -102,8 +102,15 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       }
       break
     case "stringArray":
-      if (Array.isArray(value) && value.length <= MaxEntityBoundsIds && value.every((item) => typeof item === "string")) {
-        return [...value]
+      if (Array.isArray(value) && value.length <= MaxEntityBoundsIds) {
+        // An index loop: every, spread and the like skip the holes of a sparse array, which would pass as strings
+        const items: string[] = []
+        for (let i = 0; i < value.length; i++) {
+          const item: unknown = value[i]
+          if (typeof item !== "string") throw new Error(`${where} must be ${KindDescriptions[kind]}`)
+          items.push(item)
+        }
+        return items
       }
       break
     case "jsonObject":

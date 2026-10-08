@@ -16,6 +16,11 @@ export interface ViewportHooks {
   onFrame?(size: PixelSize): void
   /** The canvas was moved, resized or given a new frame size: an overlay on top of it follows */
   onLayout?(): void
+  /**
+   * The size the host's viewport has been told (null: none, or the request failed): the host renders and picks at it
+   * from then on, while the picture on screen may still be a frame of the size before (until the next frame arrives)
+   */
+  onHostSize?(size: PixelSize | null): void
 }
 
 export class ViewportRenderer {
@@ -73,7 +78,12 @@ export class ViewportRenderer {
 
   stop(): void {
     this.scheduler.stop()
-    this.sentSize = null
+    this.setSentSize(null)
+  }
+
+  private setSentSize(size: PixelSize | null): void {
+    this.sentSize = size
+    this.hooks.onHostSize?.(size)
   }
 
   /** The view may have changed (the camera moved, the selected object did): ask for a frame */
@@ -109,7 +119,7 @@ export class ViewportRenderer {
   /** Sends the container's device-pixel size to the engine, if it changed (or always, when forced) */
   private syncSize(force: boolean = false): void {
     if (!this.engine.isConnected()) {
-      this.sentSize = null
+      this.setSentSize(null)
       return
     }
     const rect = this.container.getBoundingClientRect()
@@ -117,7 +127,7 @@ export class ViewportRenderer {
     if (!size) return // hidden
     if (!force && this.sentSize?.width === size.width && this.sentSize?.height === size.height) return
 
-    this.sentSize = size
+    this.setSentSize(size)
     this.engine.setViewportSize(size.width, size.height).then(
       () => {
         // The host's frame changed with its size (it says so in an event too; this needn't wait for the poll)
@@ -125,7 +135,7 @@ export class ViewportRenderer {
       },
       (e) => {
         console.error("Failed to set viewport size:", e)
-        this.sentSize = null
+        this.setSentSize(null)
       }
     )
   }

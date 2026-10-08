@@ -579,9 +579,31 @@ export function boxCorners(min: Vec3, max: Vec3): Vec3[] {
   return corners
 }
 
+interface Clip {
+  x: number
+  y: number
+  z: number
+  w: number
+}
+
+const toClip = (m: Mat4, p: Vec3): Clip => ({
+  x: m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12],
+  y: m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13],
+  z: m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14],
+  w: m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15],
+})
+
+/** A clip-space point on the screen (the perspective divide; w must be positive) */
+const clipToPixel = (c: Clip, width: number, height: number): Pixel => ({
+  x: (c.x / c.w * 0.5 + 0.5) * width,
+  y: (1 - (c.y / c.w * 0.5 + 0.5)) * height,
+})
+
 /**
- * The selection box's edges on screen (the box is the host's world AABB from GetEntityBounds, when the host has one):
- * the edges whose both ends are in front of the camera, as pixel pairs
+ * The selection box's edges on screen (the box is the host's world AABB from GetEntityBounds, when the host has one),
+ * as pixel pairs. Each edge is clipped against the near plane in clip space before the perspective divide (a box the
+ * camera is inside, or one with a corner behind the eye, still draws the parts in front); an edge wholly behind the
+ * near plane is dropped.
  */
 export function projectBox(
   viewProjection: Mat4,
@@ -590,12 +612,23 @@ export function projectBox(
   width: number,
   height: number
 ): Array<[Pixel, Pixel]> {
-  const corners = boxCorners(min, max).map((c) => worldToScreen(viewProjection, c, width, height))
+  const corners = boxCorners(min, max).map((c) => toClip(viewProjection, c))
   const edges: Array<[Pixel, Pixel]> = []
-  for (const [a, b] of BoxEdges) {
-    const from = corners[a]
-    const to = corners[b]
-    if (from && to) edges.push([{ x: from.x, y: from.y }, { x: to.x, y: to.y }])
+  for (const [i, j] of BoxEdges) {
+    let a = corners[i]
+    let b = corners[j]
+    // Inside the near plane: z + w >= 0 (the depth range is -1 to 1)
+    const da = a.z + a.w
+    const db = b.z + b.w
+    if (!(da >= 0 || db >= 0)) continue
+    if (da < 0 || db < 0) {
+      const t = da / (da - db)
+      const cut: Clip = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, w: a.w + (b.w - a.w) * t }
+      if (da < 0) a = cut
+      else b = cut
+    }
+    if (!(a.w > 0 && b.w > 0)) continue
+    edges.push([clipToPixel(a, width, height), clipToPixel(b, width, height)])
   }
   return edges
 }

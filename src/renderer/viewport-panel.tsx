@@ -96,6 +96,7 @@ export function Viewport() {
           if (viewport.setSize(size)) void viewport.verifyMatrices()
         },
         onLayout: () => layoutOverlay(),
+        onHostSize: (size) => viewport.setHostSize(size),
       }
     )
 
@@ -221,9 +222,10 @@ export function Viewport() {
       host.style.cursor = ""
       if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId)
       if (ended.action === "select") {
-        // Ctrl toggles and Shift extends the selection, as in the hierarchy (a click, not a drag: Ctrl at the press snaps)
+        // Ctrl/Cmd and Shift both toggle the picked object, as in Unity's scene view (a click, not a drag: Ctrl at the
+        // press snaps)
         viewport
-          .pointerUp(framePixel(e), { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })
+          .pointerUp(framePixel(e), { toggle: e.ctrlKey || e.metaKey || e.shiftKey })
           .catch(reportFailure("Failed to end the move"))
       }
     }
@@ -297,6 +299,12 @@ export function Viewport() {
         }
       }),
       follow.stop,
+      // Picking needs an open scene and a host that has it: when either changes, the boxes are asked for (or dropped)
+      effect(() => {
+        store.scene.value
+        store.serverInfo.value
+        untracked(() => viewport.reloadBounds())
+      }),
       // The host says the view changed (frameChanged), or a scene change may have: ask for a frame
       effect(() => {
         store.frameChangeCount.value
@@ -359,7 +367,7 @@ export function Viewport() {
             class="viewport-help"
             title={
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
-              "(Shift: faster). F: frame the selection. Click: select (Ctrl: toggle, Shift: extend; empty space clears). Drag a gizmo arrow or square to move " +
+              "(Shift: faster). F: frame the selection. Click: select (Ctrl or Shift: add or remove; empty space clears). Drag a gizmo arrow or square to move " +
               "the selected objects (Ctrl: snap, Esc: cancel)."
             }
           >

@@ -1,7 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { BoundsResponse, PickResultResponse } from "../protocol/protocol.generated"
-import { createPickBackend, translateBounds, unionBounds, validBounds } from "../renderer/viewport-picking"
+import { createPickBackend, hostHasPicking, remapToHostViewport, translateBounds, unionBounds, validBounds } from "../renderer/viewport-picking"
 import { vec3 } from "../renderer/viewport-math"
 
 const box = (min: [number, number, number], max: [number, number, number]) => ({
@@ -28,6 +28,39 @@ describe("unionBounds", () => {
 
   test("translateBounds moves both corners", () => {
     assert.deepEqual(translateBounds(box([0, 0, 0], [1, 2, 3]), vec3(1, -1, 0.5)), box([1, -1, 0.5], [2, 1, 3.5]))
+  })
+})
+
+describe("hostHasPicking", () => {
+  test("from protocol 1.8.0 on", () => {
+    assert.equal(hostHasPicking("1.7.0"), false)
+    assert.equal(hostHasPicking("1.7.9"), false)
+    assert.equal(hostHasPicking("1.8.0"), true)
+    assert.equal(hostHasPicking("1.12.3"), true)
+    assert.equal(hostHasPicking("2.0.0"), true)
+    assert.equal(hostHasPicking("0.9.0"), false)
+    assert.equal(hostHasPicking(""), false)
+    assert.equal(hostHasPicking("1.8"), false)
+    assert.equal(hostHasPicking(null), false)
+    assert.equal(hostHasPicking(undefined), false)
+  })
+})
+
+describe("remapToHostViewport", () => {
+  test("the same size is the identity; the centre is always the centre", () => {
+    const p = { x: 12, y: 34 }
+    assert.equal(remapToHostViewport(p, { width: 800, height: 600 }, { width: 800, height: 600 }), p)
+    assert.deepEqual(remapToHostViewport({ x: 400, y: 300 }, { width: 800, height: 600 }, { width: 301, height: 1200 }), { x: 150.5, y: 600 })
+  })
+
+  test("offsets from the centre scale by the heights' ratio, the vertical field of view being fixed", () => {
+    // Same ray: the angle above the axis is the offset over half the height, and so is the host's
+    const shown = { width: 800, height: 600 }
+    const host = { width: 500, height: 300 }
+    const out = remapToHostViewport({ x: 100, y: 150 }, shown, host)
+    assert.equal((out.y - host.height / 2) / (host.height / 2), (150 - shown.height / 2) / (shown.height / 2))
+    // the horizontal angle too: offset over half the height times the aspect ratio's inverse cancels
+    assert.equal((out.x - host.width / 2) / (host.height / 2), (100 - shown.width / 2) / (shown.height / 2))
   })
 })
 

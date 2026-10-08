@@ -30,6 +30,7 @@ function rig(
     hostCamera?: Partial<EditorCameraResponse>
     /** The selection beyond the primary: every selected id, and the topmost of them (what a drag moves) */
     selection?: { all: string[]; top: string[] }
+    canPick?: () => boolean
   } = {}
 ) {
   const log: string[] = []
@@ -91,6 +92,7 @@ function rig(
       },
     },
     picking: options.picking ?? null,
+    canPick: options.canPick,
     onError: (what) => errors.push(what),
     onNote: (message) => notes.push(message),
     canEdit: () => true,
@@ -611,7 +613,100 @@ describe("click to select", () => {
     assert.equal(m.picks[1].x, 40)
     m.picks[1].answer("last")
     await Promise.all([first, last])
-    assert.deepEqual(r.selected, ["first", "last"])
+    assert.deepEqual(r.selected, ["last"], "the first click's answer came after a newer click: it is not applied")
+  })
+
+  test("a pick answered after a later miss outside the viewport doesn't undo the clear", async () => {
+    const m = manualPicking()
+    const r = rig({ picking: m.backend })
+    r.controller.pointerDown({ x: 10, y: 10 }, false)
+    const first = r.controller.pointerUp({ x: 10, y: 10 })
+    assert.equal(m.picks.length, 1)
+    r.controller.pointerDown({ x: -5, y: 10 }, false)
+    const second = r.controller.pointerUp({ x: -5, y: 10 }) // a miss: clears at once (the pick in flight is waited for)
+    assert.deepEqual(r.selected, [null])
+    m.picks[0].answer("late")
+    await Promise.all([first, second])
+    assert.deepEqual(r.selected, [null], "the late answer is dropped")
+  })
+
+  test("a pick answered after the selection was changed elsewhere (the hierarchy) is dropped", async () => {
+    const m = manualPicking()
+    const r = rig({ picking: m.backend })
+    r.controller.pointerDown({ x: 10, y: 10 }, false)
+    const up = r.controller.pointerUp({ x: 10, y: 10 })
+    r.setSelected("chosen-in-the-hierarchy")
+    m.picks[0].answer("b")
+    await up
+    assert.deepEqual(r.selected, [])
+    // with the selection as it was, the answer is applied
+    r.setSelected("a")
+    r.controller.pointerDown({ x: 10, y: 10 }, false)
+    const again = r.controller.pointerUp({ x: 10, y: 10 })
+    m.picks[1].answer("b")
+    await again
+    assert.deepEqual(r.selected, ["b"])
+  })
+
+  test("no scene open, or a host without picking: a click asks nothing and raises no error", async () => {
+    const m = manualPicking()
+    let allowed = false
+    const r = rig({ picking: m.backend, canPick: () => allowed })
+    assert.equal(r.controller.canPick, false)
+    r.controller.pointerDown({ x: 10, y: 10 }, false)
+    await r.controller.pointerUp({ x: 10, y: 10 })
+    r.controller.pointerDown({ x: -10, y: 10 }, false)
+    await r.controller.pointerUp({ x: -10, y: 10 })
+    assert.equal(m.picks.length, 0)
+    assert.deepEqual(r.selected, [])
+    assert.deepEqual(r.errors, [])
+    r.controller.reloadBounds()
+    await settle()
+    assert.equal(m.boundsAsked.length, 0, "nor are bounds asked for")
+    assert.equal(await r.controller.frameSelected(), true) // the position fallback still frames
+    assert.equal(m.boundsAsked.length, 0)
+    allowed = true
+    assert.equal(r.controller.canPick, true)
+  })
+
+  test("a click on a picture older than the host's viewport is asked at the pixel the host sees", async () => {
+    const m = manualPicking()
+    const r = rig({ picking: m.backend }) // the picture is 800x600
+    r.controller.setHostSize({ width: 1000, height: 300 }) // the host was resized: half the height, wider
+    r.controller.pointerDown({ x: 400, y: 300 }, false)
+    let up = r.controller.pointerUp({ x: 400, y: 300 })
+    assert.deepEqual([m.picks[0].x, m.picks[0].y], [500, 150], "the centre stays the centre")
+    m.picks[0].answer(null)
+    await up
+    r.controller.pointerDown({ x: 500, y: 450 }, false) // 100 right of and 150 below the centre
+    up = r.controller.pointerUp({ x: 500, y: 450 })
+    assert.deepEqual([m.picks[1].x, m.picks[1].y], [550, 225]) // times 300/600
+    m.picks[1].answer(null)
+    await up
+    r.controller.pointerDown({ x: 5, y: 300 }, false) // 395 left of the centre: 197.5 after scaling: inside
+    up = r.controller.pointerUp({ x: 5, y: 300 })
+    assert.equal(m.picks[2].x, 302.5)
+    m.picks[2].answer(null)
+    await up
+    // A host viewport narrower than the picture: a click beyond it is a miss without a call
+    r.controller.setHostSize({ width: 100, height: 600 })
+    r.controller.pointerDown({ x: 700, y: 300 }, false)
+    await r.controller.pointerUp({ x: 700, y: 300 })
+    assert.equal(m.picks.length, 3)
+    assert.deepEqual(r.selected, [null, null, null, null])
+    // The host's size unknown, or the same: the pixel goes as it is
+    r.controller.setHostSize(null)
+    r.controller.pointerDown({ x: 7, y: 8 }, false)
+    up = r.controller.pointerUp({ x: 7, y: 8 })
+    assert.deepEqual([m.picks[3].x, m.picks[3].y], [7, 8])
+    m.picks[3].answer(null)
+    await up
+    r.controller.setHostSize({ width: 800, height: 600 })
+    r.controller.pointerDown({ x: 7, y: 8 }, false)
+    up = r.controller.pointerUp({ x: 7, y: 8 })
+    assert.deepEqual([m.picks[4].x, m.picks[4].y], [7, 8])
+    m.picks[4].answer(null)
+    await up
   })
 
   test("a pick answered after the connection ended selects nothing", async () => {
@@ -668,7 +763,7 @@ describe("the selection box", () => {
     assert.equal(r.controller.boxEdges().length, 0)
   })
 
-  test("reloads are one at a time, and the answer of an out-of-date one is not shown", async () => {
+  test("reloads are one at a time; a change of the scene meanwhile still shows the answer (another read follows)", async () => {
     let calls = 0
     const gates: Array<(bounds: Map<string, Bounds>) => void> = []
     const r = rig({
@@ -681,14 +776,48 @@ describe("the selection box", () => {
     r.controller.reloadBounds()
     r.controller.reloadBounds()
     assert.equal(calls, 1, "one in flight")
-    gates[0](new Map([["a", unit(0)]])) // out of date: asked for again meanwhile
+    gates[0](new Map([["a", unit(0)]]))
     await settle()
+    assert.equal(r.controller.boxEdges().length, 12, "shown at once, though it was asked for again meanwhile")
     assert.equal(calls, 2, "one more, not three")
-    assert.equal(r.controller.boxEdges().length, 0, "the stale answer isn't shown")
     gates[1](new Map([["a", unit(5)]]))
     await settle()
     assert.equal(r.controller.boxEdges().length, 12)
     assert.equal(calls, 2)
+  })
+
+  test("a storm of changes can't keep the boxes from ever appearing", async () => {
+    const gates: Array<(bounds: Map<string, Bounds>) => void> = []
+    const r = rig({ picking: { pick: async () => null, bounds: () => new Promise((resolve) => gates.push(resolve)) } })
+    r.controller.reloadBounds()
+    for (let i = 0; i < 5; i++) {
+      r.controller.objectsChanged(["a"], false) // every answer is asked for again at once
+      gates[i](new Map([["a", unit(i)]]))
+      await settle()
+      assert.equal(r.controller.boxEdges().length, 12, `after answer ${i}`)
+    }
+  })
+
+  test("an answer for another selection, or another connection, is not shown", async () => {
+    const gates: Array<(bounds: Map<string, Bounds>) => void> = []
+    const selection = { all: ["a"], top: ["a"] }
+    const r = rig({ picking: { pick: async () => null, bounds: () => new Promise((resolve) => gates.push(resolve)) }, selection })
+    r.controller.reloadBounds()
+    selection.all = ["b"] // selected elsewhere meanwhile
+    selection.top = ["b"]
+    r.controller.reloadBounds()
+    gates[0](new Map([["a", unit(0)]]))
+    await settle()
+    assert.equal(r.controller.boxEdges().length, 0)
+    gates[1](new Map([["b", unit(0)]]))
+    await settle()
+    assert.equal(r.controller.boxEdges().length, 12)
+    // another connection
+    r.controller.reloadBounds()
+    r.controller.disconnected()
+    gates[2](new Map([["b", unit(0)]]))
+    await settle()
+    assert.equal(r.controller.boxEdges().length, 0)
   })
 
   test("a failing or absent answer leaves no box and reports nothing", async () => {
