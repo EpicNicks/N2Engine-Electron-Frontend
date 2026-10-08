@@ -267,6 +267,8 @@ describe("ProjectSession", () => {
       files: { open: (d: string) => d, close: () => {}, rootPath: null },
       recent: { add: () => {} },
       settings: { require: () => "host", readyTimeoutMs: () => 30000 },
+      // No real N2EditorHost --help: a host older than engine #90
+      probe: async () => ({ create: false }),
       engine: new FakeEngine(),
       publish: (s) => states.push(s),
       launch: (options) =>
