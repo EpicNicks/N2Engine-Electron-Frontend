@@ -130,11 +130,19 @@ export class SceneState {
     await this.refreshEntities()
   }
 
+  /** Shows the new transform at once; if the engine refuses it, the inspector goes back to the one before */
   async setTransform(transform: Transform): Promise<void> {
     const id = this.selectedId.value
     if (!id) return
+    const previous = this.transform.value
     this.transform.value = transform
-    await this.engine.setEntityTransform(id, transform.position, transform.rotation, transform.scale)
+    try {
+      await this.engine.setEntityTransform(id, transform.position, transform.rotation, transform.scale)
+    } catch (e) {
+      // Unless something newer replaced it meanwhile (another edit, or another selection)
+      if (this.selectedId.value === id && this.transform.value === transform) this.transform.value = previous
+      throw e
+    }
   }
 
   /** Reads a .scene file and loads it into the engine */
@@ -181,8 +189,16 @@ export class SceneState {
     const template = await this.engine.createScript(name)
     await this.project.createDirectory(targetDir)
     await this.project.writeTextFile(scriptPath, template)
-    // The host's ResourceLoader picks the new file up
-    await this.engine.rescanAssets()
+    try {
+      // The host's ResourceLoader picks the new file up
+      await this.engine.rescanAssets()
+    } catch (e) {
+      // Don't leave a script behind that the host never registered (deleting a missing file is not an error)
+      await this.project
+        .deleteFile(scriptPath)
+        .catch((cleanup) => console.error("Failed to clean up the script:", cleanup))
+      throw e
+    }
     await this.refreshFiles()
     await this.openScript(scriptPath)
   }
