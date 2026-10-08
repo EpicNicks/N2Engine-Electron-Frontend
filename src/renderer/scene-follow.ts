@@ -8,14 +8,23 @@ import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
 import type { HierarchyState } from "./hierarchy-state"
 import type { InspectorState } from "./inspector-state"
+import type { AssetsState } from "./assets-state"
+import type { AssetsChangedEvent } from "../protocol/editor-events"
 
 export interface FollowDeps {
   store: Pick<
     EditorStore,
-    "connected" | "sceneChangeCount" | "lastSceneChange" | "assetsChangeCount" | "newestSceneRevision" | "reportError"
+    | "connected"
+    | "sceneChangeCount"
+    | "lastSceneChange"
+    | "assetsChangeCount"
+    | "lastAssetsChange"
+    | "newestSceneRevision"
+    | "reportError"
   >
   scene: Pick<SceneState, "selectedId" | "reset" | "refreshTransform">
   hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree">
+  assets: Pick<AssetsState, "reset" | "refresh" | "onAssetsChanged">
   inspector: Pick<
     InspectorState,
     "reset" | "loadTypes" | "loadAssets" | "select" | "applyChange" | "refreshLuaFields"
@@ -23,7 +32,11 @@ export interface FollowDeps {
 }
 
 /** Starts the effects; returns what stops them */
-export function followScene({ store, scene, hierarchy, inspector }: FollowDeps): () => void {
+export function followScene({ store, scene, hierarchy, inspector, assets }: FollowDeps): () => void {
+  // The assetsChanged event the assets panel last handled: a count that moved without a new one means events were missed
+  let handledAssetsChange: AssetsChangedEvent | null = null
+  // The effect's first run is not a change: connecting lists the assets itself
+  let assetsEffectStarted = false
   const stops = [
     // The panels follow the connection: a new connection is a new host, with nothing loaded yet
     effect(() => {
@@ -32,11 +45,14 @@ export function followScene({ store, scene, hierarchy, inspector }: FollowDeps):
           scene.reset()
           hierarchy.reset()
           inspector.reset()
+          assets.reset()
         })
       } else {
         // The component types and the project's assets don't change while the host runs (the assets on a rescan)
         untracked(() => {
           void inspector.loadTypes()
+          // The assets first: the inspector's asset fields use the panel's listing
+          assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
           void inspector.loadAssets()
         })
       }
@@ -49,11 +65,19 @@ export function followScene({ store, scene, hierarchy, inspector }: FollowDeps):
       untracked(() => inspector.select(id)).catch((e) => store.reportError("Failed to read the object", e))
     }),
 
-    // Assets were added, changed or removed: the asset names, and a script's fields
+    // Assets were added, changed or removed: the asset names, a script's fields, the assets panel and the open files
     effect(() => {
       store.assetsChangeCount.value // what this runs on
+      const started = assetsEffectStarted
+      assetsEffectStarted = true
       if (!store.connected.peek()) return
       untracked(() => {
+        // The event itself, when there is a new one; none when the count moved because events were missed
+        const event = store.lastAssetsChange.peek()
+        const fresh = event !== handledAssetsChange ? event : null
+        handledAssetsChange = event
+        // The assets first: the inspector's asset fields use the panel's listing
+        if (started) assets.onAssetsChanged(fresh).catch((e) => store.reportError("Failed to list the assets", e))
         void inspector.loadAssets()
         void inspector.refreshLuaFields()
       })

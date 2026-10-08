@@ -10,34 +10,15 @@ const at = (x: number): Transform => ({
 
 function setup() {
   const calls: string[] = []
-  const files = new Map<string, string>()
   const engine = {
     getEntityTransform: async (_id: string) => at(1),
     setEntityTransform: async (..._args: unknown[]) => {
       calls.push("setEntityTransform")
       if (engine.failSet) throw new Error("No entity with id e1")
     },
-    createScript: async (name: string) => `-- ${name}`,
-    rescanAssets: async () => {
-      calls.push("rescanAssets")
-      if (engine.failRescan) throw new Error("Rescan failed")
-    },
     failSet: false,
-    failRescan: false,
   }
-  const project = {
-    listFiles: async () => [],
-    readTextFile: async (p: string) => files.get(p) ?? "",
-    writeTextFile: async (p: string, text: string) => {
-      files.set(p, text)
-    },
-    createDirectory: async () => {},
-    deleteFile: async (p: string) => {
-      calls.push(`deleteFile ${p}`)
-      files.delete(p)
-    },
-  }
-  return { scene: new SceneState(engine, project), engine, files, calls }
+  return { scene: new SceneState(engine), engine, calls }
 }
 
 describe("SceneState", () => {
@@ -112,21 +93,5 @@ describe("SceneState", () => {
     answer()
     await reading
     assert.deepEqual(scene.transform.value, at(7))
-  })
-
-  test("a script whose rescan fails is deleted again", async () => {
-    const { scene, engine, files, calls } = setup()
-    engine.failRescan = true
-    await assert.rejects(scene.createScript("/p/assets", "Player"), /Rescan failed/)
-    assert.ok(calls.includes("deleteFile /p/assets/scripts/Player.lua"))
-    assert.equal(files.size, 0)
-    assert.deepEqual(scene.scripts.value, [])
-  })
-
-  test("a script that is rescanned is kept and opened", async () => {
-    const { scene, files } = setup()
-    await scene.createScript("/p/assets/scripts", "Player")
-    assert.equal(files.get("/p/assets/scripts/Player.lua"), "-- Player")
-    assert.equal(scene.activeScript.value, "/p/assets/scripts/Player.lua")
   })
 })

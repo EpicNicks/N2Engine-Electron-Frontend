@@ -5,6 +5,7 @@ import { useContext, useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
+import type { AssetsState } from "./assets-state"
 import type { AudioController } from "./audio-controller"
 import type { HierarchyState } from "./hierarchy-state"
 import type { InspectorState } from "./inspector-state"
@@ -17,6 +18,7 @@ import type { AutosaveChoice } from "./autosave"
 export interface AppState {
   store: EditorStore
   scene: SceneState
+  assets: AssetsState
   hierarchy: HierarchyState
   inspector: InspectorState
   viewport: ViewportController

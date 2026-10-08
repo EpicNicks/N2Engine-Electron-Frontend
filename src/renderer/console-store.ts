@@ -29,6 +29,16 @@ export const DefaultMaxEntries = 5000
 
 const Levels: readonly LogLevel[] = ["info", "warn", "error"]
 
+/** The entries after the one with id afterId, up to the one with id upToId when given (see ConsoleStore.lastEntryId), at a level */
+export function entriesAfter(
+  entries: readonly ConsoleEntry[],
+  afterId: number,
+  level: LogLevel,
+  upToId = Infinity
+): ConsoleEntry[] {
+  return entries.filter((entry) => entry.id > afterId && entry.id <= upToId && entry.level === level)
+}
+
 /** An event as a console entry: log events only (other kinds are for other panels), any unknown field defaulted */
 export function entryFromEvent(event: EditorEvent): Omit<ConsoleEntry, "id"> | null {
   if (event.kind !== "log") return null
@@ -105,6 +115,11 @@ export class ConsoleStore {
   /** The cursor the next poll sends (the epoch rule) */
   get position() {
     return this.pump.position
+  }
+
+  /** The id of the newest entry ever added (0 for none), even if it has been cleared or dropped: a mark for entriesAfter */
+  get lastEntryId(): number {
+    return this.nextId - 1
   }
 
   get isPolling(): boolean {

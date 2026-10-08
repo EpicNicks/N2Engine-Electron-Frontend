@@ -42,6 +42,18 @@ export interface Dialogs {
 export type UnsavedChoice = "save" | "discard" | "cancel"
 
 /** The parts of the page's API the store uses */
+/** One assetsChanged event that lists the paths of both (each path once, in the order first seen) */
+export function mergeAssetsChanges(first: AssetsChangedEvent | null, next: AssetsChangedEvent): AssetsChangedEvent {
+  if (!first) return next
+  const union = (a: string[], b: string[]) => [...new Set([...a, ...b])]
+  return {
+    kind: "assetsChanged",
+    added: union(first.added, next.added),
+    removed: union(first.removed, next.removed),
+    modified: union(first.modified, next.modified),
+  }
+}
+
 export interface StoreApi {
   engine: Pick<
     EngineApi,
@@ -280,6 +292,11 @@ export class EditorStore {
 
   async closeProject(): Promise<void> {
     if (!(await this.confirmDiscard("close the project"))) return
+    // Closing drops the text files open in the editor too
+    const files = this.unsavedFiles()
+    if (files.length > 0 && !(await this.api.dialogs.confirm(`${files.join(", ")} has unsaved changes.`, "Discard and close the project"))) {
+      return
+    }
     await this.run("Closing project...", () => this.api.project.close())
     this.projectPath.value = null
     await this.refreshRecent()
@@ -423,6 +440,12 @@ export class EditorStore {
    * Before something discards the loaded scene's unsaved changes: asks whether to save them (and saves), drop them or
    * not go on. Resolves whether to go on; always true when there are none.
    */
+  /**
+   * The names of the text files open in the editor with unsaved changes: the page sets it (the assets state owns the
+   * tabs), so closing the project or the window asks about them as it does about the scene
+   */
+  unsavedFiles: () => string[] = () => []
+
   async confirmDiscard(action: string): Promise<boolean> {
     // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
     if (this.api.engine.isConnected()) {
@@ -693,6 +716,7 @@ export class EditorStore {
     // After missed events everything may have changed, whatever ids this poll's events carry
     const pending: { change: SceneChange | null } = { change: this.sceneMissed ? { full: true, entityIds: [] } : null }
     this.sceneMissed = false
+    let assetsChange: AssetsChangedEvent | null = null
     batch(() => {
       for (const event of events) {
         const parsed = parseStateEvent(event)
@@ -714,7 +738,8 @@ export class EditorStore {
             refetch = true
           }
         } else if (parsed.kind === "assetsChanged") {
-          this.lastAssetsChange.value = parsed
+          // Several in one poll are one change that lists every path any of them did
+          assetsChange = mergeAssetsChanges(assetsChange, parsed)
           this.assetsChangeCount.value++
         } else if (parsed.kind === "historyChanged") {
           this.historyReads++ // an older GetHistory still on its way is out of date
@@ -732,6 +757,7 @@ export class EditorStore {
           this.projectChangeCount.value++
         }
       }
+      if (assetsChange) this.lastAssetsChange.value = assetsChange
     })
     if (pending.change) this.recordSceneChange(pending.change)
     if (refetch) void this.refreshScene()
