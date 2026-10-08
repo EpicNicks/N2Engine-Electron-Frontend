@@ -8,7 +8,8 @@ import { useApp } from "./ui"
 import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
 import { followViewportSelection } from "./viewport-selection"
 import { FlyKeys, pointerActionFor, shortcutFor, wheelPixels, PointerAction } from "./viewport-input"
-import { ViewportRenderer } from "./viewport-renderer"
+import { InputForwarder, scrollLines } from "./play-input"
+import { ViewportRenderer, editTarget, gameTarget } from "./viewport-renderer"
 import { framePixelOf } from "./viewport-size"
 
 const AxisColors: Readonly<Record<'x' | 'y' | 'z', string>> = { x: "#e5484d", y: "#46a758", z: "#3e63dd" }
@@ -68,7 +69,7 @@ function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: H
 }
 
 export function Viewport() {
-  const { store, scene, hierarchy, viewport } = useApp()
+  const { store, scene, hierarchy, viewport, play } = useApp()
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const overlay = useRef<HTMLCanvasElement>(null)
@@ -83,13 +84,30 @@ export function Viewport() {
     let flyFrame: number | null = null
     let flyTime = 0
 
+    const edit = editTarget(window.engine)
+    const game = gameTarget(window.play)
+    // While a game is live the keys, buttons, pointer and wheel over the view go to the game (SendInput), not to the
+    // editor camera, the gizmo or picking
+    const forwarder = new InputForwarder({
+      send: (events) => window.play.sendInput(events),
+      schedule: (callback) => {
+        const request = requestAnimationFrame(callback)
+        return () => cancelAnimationFrame(request)
+      },
+      onError: (e) => void play.failure("Failed to send input to the game", e),
+    })
+
     const renderer = new ViewportRenderer(
       frame,
       host,
-      window.engine,
+      edit,
       // A failed frame stops showing frames until the next connection; usually the connection just dropped, so it's a
-      // console line rather than an error banner
-      (e) => store.console.note("error", `Rendering stopped: ${e instanceof Error ? e.message : String(e)}`),
+      // console line rather than an error banner. A game's frame fails when the game ended, which isn't news: its state
+      // says so (and a failure while it still runs is shown).
+      (e) =>
+        renderer.targetKind === "game"
+          ? void play.failure("The game's picture stopped", e)
+          : store.console.note("error", `Rendering stopped: ${e instanceof Error ? e.message : String(e)}`),
       {
         onFrame: (size) => {
           viewport.setPixelRatio(window.devicePixelRatio || 1)
@@ -115,6 +133,8 @@ export function Viewport() {
       const ctx = over.getContext("2d")
       if (!ctx) return
       ctx.clearRect(0, 0, over.width, over.height)
+      // The game's picture has no gizmo or selection box (they are the editor camera's)
+      if (play.live.peek()) return
       const ratio = window.devicePixelRatio || 1
       untracked(() => {
         const edges = viewport.boxEdges()
@@ -160,9 +180,24 @@ export function Viewport() {
       if (ended?.action === "select") void viewport.cancel().catch(reportFailure("Failed to end the move"))
     }
 
+    /** The pointer over the game's picture: the position, and the button */
+    const playPointer = (e: PointerEvent, button: "down" | "up" | "move"): void => {
+      const pixel = framePixel(e)
+      forwarder.pointer(pixel.x, pixel.y)
+      if (button === "down") forwarder.mouseButton(e.button, true)
+      else if (button === "up") forwarder.mouseButton(e.button, false)
+    }
+
     const onPointerDown = (e: PointerEvent): void => {
       // The controls over the viewport (Frame, the help) are the page's, not the viewport's
       if ((e.target as Element | null)?.closest?.(".viewport-tools")) return
+      if (play.live.peek()) {
+        e.preventDefault()
+        host.focus()
+        host.setPointerCapture(e.pointerId)
+        playPointer(e, "down")
+        return
+      }
       if (gesture || !store.connected.peek()) return
       const action = pointerActionFor(e.button, e)
       if (action === "none") return
@@ -183,6 +218,7 @@ export function Viewport() {
     }
 
     const onPointerMove = (e: PointerEvent): void => {
+      if (play.live.peek()) return playPointer(e, "move")
       if (!gesture || gesture.pointerId !== e.pointerId) {
         if (!gesture) viewport.hover(store.connected.peek() ? framePixel(e) : null)
         return
@@ -213,6 +249,10 @@ export function Viewport() {
     }
 
     const onPointerUp = (e: PointerEvent): void => {
+      if (play.live.peek()) {
+        if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId)
+        return playPointer(e, "up")
+      }
       if (!gesture || gesture.pointerId !== e.pointerId) return
       const ended = gesture
       gesture = null
@@ -231,6 +271,12 @@ export function Viewport() {
     }
 
     const onWheel = (e: WheelEvent): void => {
+      if (play.live.peek()) {
+        e.preventDefault()
+        const lines = scrollLines(e.deltaX, e.deltaY, e.deltaMode)
+        forwarder.scroll(lines.x, lines.y)
+        return
+      }
       if (!store.connected.peek()) return
       e.preventDefault()
       if (viewport.isDragging) return // the camera stays where the drag began
@@ -238,6 +284,19 @@ export function Viewport() {
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
+      if (play.live.peek()) {
+        // Ctrl+Escape leaves the game view (keyboard users aren't trapped in it), and Tab keeps moving the focus
+        if (e.code === "Escape" && e.ctrlKey) {
+          e.preventDefault()
+          forwarder.releaseAll()
+          host.blur()
+          return
+        }
+        if (e.code === "Tab") return
+        // A key the engine names is the game's (and not the page's: Ctrl+S does nothing here); a repeat is a held key
+        if (forwarder.key(e.code, true)) e.preventDefault()
+        return
+      }
       if (isTextEntry(e.target as HTMLElement | null)) return
       boost = e.shiftKey
       if (e.code === "Escape" && gesture?.action === "select") {
@@ -255,10 +314,16 @@ export function Viewport() {
       }
     }
     const onKeyUp = (e: KeyboardEvent): void => {
+      if (play.live.peek()) {
+        if (forwarder.key(e.code, false)) e.preventDefault()
+        return
+      }
       boost = e.shiftKey
       keys.up(e.code)
     }
     const onBlur = (): void => {
+      // Focus left the game view (or the window): nothing stays held down in the game
+      forwarder.releaseAll()
       keys.clear()
       if (gesture) endGesture()
     }
@@ -311,6 +376,18 @@ export function Viewport() {
         store.sceneChangeCount.value // what this runs on
         untracked(() => renderer.invalidate())
       }),
+      // A game going live shows its frames instead of the editor view's, and takes the keys (the view is focused); the
+      // editor view returns, and the keys are the camera's again, when it ends
+      effect(() => {
+        const live = play.live.value
+        untracked(() => {
+          if (gesture) endGesture()
+          forwarder.reset()
+          renderer.setTarget(live ? game : edit)
+          if (live) host.focus()
+          drawOverlay()
+        })
+      }),
       // The overlay follows the gizmo, the selection and the camera
       effect(() => {
         viewport.overlayVersion.value
@@ -323,6 +400,7 @@ export function Viewport() {
 
     return () => {
       stops.forEach((stop) => stop())
+      forwarder.dispose()
       viewport.onFrameNeeded(null)
       if (flyFrame !== null) cancelAnimationFrame(flyFrame)
       host.removeEventListener("pointerdown", onPointerDown)
@@ -348,7 +426,17 @@ export function Viewport() {
       {connected && !store.scene.value && (
         <div class="viewport-hint">No scene loaded: open one with Open scene, or make one with New scene</div>
       )}
-      {connected && store.scene.value && (
+      {connected && store.scene.value && play.live.value && (
+        <div class="viewport-tools">
+          <span
+            class="viewport-help"
+            title="While this view has focus, the keys, the mouse buttons, the pointer and the wheel go to the game"
+          >
+            {play.paused.value ? "Game paused" : "Game"} · the keyboard and mouse are the game's while this view has focus (Ctrl+Esc leaves it)
+          </span>
+        </div>
+      )}
+      {connected && store.scene.value && !play.live.value && (
         <div class="viewport-tools">
           <button
             class="secondary"

@@ -74,6 +74,8 @@ export interface ProjectSessionDeps {
   log?: (message: string) => void
   /** How long a stopped host gets to exit (default StopGraceMs) */
   stopGraceMs?: number
+  /** The --renderer to start hosts with (undefined: the host's default); the play child gets the same */
+  renderer?: () => string | undefined
 }
 
 /** Resolves once the host has exited, or after ms (false then) */
@@ -101,6 +103,8 @@ export class ProjectSession {
    */
   private generation = 0
   private running = 0
+  /** The --renderer the current (or last) host was launched with: the play child gets the same */
+  private launchedRenderer: string | undefined
   private current: HostState = { status: "stopped", launch: 0, projectPath: null, message: null }
   // Operations run one at a time, in order: opening a project while another opens waits for it
   private queue: Promise<unknown> = Promise.resolve()
@@ -153,6 +157,11 @@ export class ProjectSession {
 
   get state(): HostState {
     return this.current
+  }
+
+  /** The --renderer the editor host was launched with (undefined: the host's default) */
+  get hostRenderer(): string | undefined {
+    return this.launchedRenderer
   }
 
   /** The open project's folder, or null */
@@ -323,11 +332,13 @@ export class ProjectSession {
     this.setState({ status: "starting", launch, projectPath, message: null })
 
     let host: HostProcess
+    this.launchedRenderer = this.deps.renderer?.()
     this.launchCancelled = false
     try {
       host = await this.launch({
         hostPath,
         projectDir: projectPath,
+        renderer: this.launchedRenderer,
         readyTimeoutMs: this.deps.settings.readyTimeoutMs(),
         onExit: (exit, h) => this.onExit(h, exit),
         onSpawned: (kill) => (this.killLaunching = kill),

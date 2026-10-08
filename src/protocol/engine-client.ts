@@ -13,6 +13,8 @@ import {
   EventsResponse,
   EditorCameraResponse,
   PickResultResponse,
+  PlayStateResponse,
+  InputEvent,
   BoundsResponse,
   FrameDataResponse,
   FrameUpdateResponse,
@@ -645,6 +647,36 @@ export class EngineClient {
    */
   pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse> {
     return this.send(Commands.PollEvents, { epoch, afterSeq, maxEvents })
+  }
+
+  // ==================== Play mode (protocol 1.10.0) ====================
+
+  /**
+   * Edit host: writes a snapshot file and answers its absolute path. scenePath "" is the open scene as it is in memory
+   * (unsaved edits included); a res:// scene path is that file as it is on disk. Saves nothing, moves no revision.
+   */
+  async writePlaySnapshot(scenePath: string): Promise<string> {
+    return (await this.send(Commands.WritePlaySnapshot, { scenePath })).file
+  }
+
+  /** Play host: pauses or resumes the game */
+  setPaused(paused: boolean): Promise<void> {
+    return this.send(Commands.SetPaused, { paused })
+  }
+
+  /** Play host, paused: runs 1 to 1000 fixed-timestep frames now, without drawing */
+  step(frames: number): Promise<void> {
+    return this.send(Commands.Step, { frames })
+  }
+
+  /** Both hosts: Edit (an edit host), Playing or Paused, with the game's frame count and time in seconds */
+  getPlayState(): Promise<PlayStateResponse> {
+    return this.send(Commands.GetPlayState, {})
+  }
+
+  /** Play host: key, mouse button, pointer and scroll events, at most 1024, applied in order or not at all */
+  sendInput(events: InputEvent[]): Promise<void> {
+    return this.send(Commands.SendInput, { events })
   }
 
   // ==================== Engine Health ====================

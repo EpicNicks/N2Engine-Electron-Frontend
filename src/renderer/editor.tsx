@@ -12,6 +12,7 @@ import { isDirty } from "./assets-state"
 import { EnginePanel } from "./panels"
 import { basename } from "./paths"
 import { MenuItem, Splitter, confirmDialog, modalOpen, showContextMenu, useApp } from "./ui"
+import { GameEndedMessage } from "../shared/api"
 import { followScene } from "./scene-follow"
 import { Viewport } from "./viewport-panel"
 
@@ -74,6 +75,58 @@ function SceneButtons() {
 
 const mac = isMacPlatform(navigator.userAgent)
 
+/** Play, Pause, Step and Stop (play mode: the game runs in a second host process) and what the game is doing */
+function PlayButtons() {
+  const { store, play } = useApp()
+  const state = play.state.value
+  const active = play.active.value
+  const live = play.live.value
+  const paused = play.paused.value
+  const waiting = play.busy.value
+  return (
+    <>
+      <button
+        onClick={() => void play.start()}
+        disabled={!play.canPlay.value}
+        title={
+          store.scene.value
+            ? "Play the open scene as it is now, unsaved changes included, in a game of its own"
+            : "Open a scene to play it"
+        }
+      >
+        ▶ Play
+      </button>
+      <button
+        class="secondary"
+        onClick={() => void play.togglePause()}
+        disabled={!live || waiting}
+        title={paused ? "Resume the game" : "Pause the game"}
+      >
+        {paused ? "⏵ Resume" : "⏸ Pause"}
+      </button>
+      <button
+        class="secondary"
+        onClick={() => void play.step(1)}
+        disabled={!paused || waiting}
+        title="Run one frame of the paused game"
+      >
+        ⏭ Step
+      </button>
+      <button class="secondary" onClick={() => void play.stop()} disabled={!active && state.status === "stopped"} title="End the game">
+        ⏹ Stop
+      </button>
+      {state.status !== "stopped" && (
+        <span
+          class={state.status === "exited" && state.message !== GameEndedMessage || state.status === "failed" ? "play-status warning" : "play-status"}
+          title={state.message ?? undefined}
+        >
+          {play.text.value}
+        </span>
+      )}
+    </>
+  )
+}
+
 /** The Edit menu: Undo and Redo, once something registers them (edit-actions.ts); no button before */
 function EditButton() {
   const { store } = useApp()
@@ -87,7 +140,11 @@ function EditButton() {
     ...(store.autosaveOutstanding.value
       ? [
           { separator: true } as MenuItem,
-          { label: "Recover autosave...", action: () => void store.recoverAutosave() },
+          {
+            label: "Recover autosave...",
+            action: () => void store.recoverAutosave(),
+            disabled: store.playMode.value !== null,
+          },
         ]
       : []),
   ]
@@ -137,6 +194,8 @@ function Toolbar() {
       <div class="separator" />
       <SceneButtons />
       <EditButton />
+      <div class="separator" />
+      <PlayButtons />
       <div class="separator" />
       <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
         {running ? "Restart host" : "Start host"}

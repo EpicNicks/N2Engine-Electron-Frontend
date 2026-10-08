@@ -158,7 +158,7 @@ export class EditorStore {
   })
   /**
    * Why the scene is a play session, not an editable one (the host refuses Undo, Redo and edits then); null while it
-   * is edited. Whatever runs the play session sets it (setPlayMode); nothing does yet, since there is no play mode.
+   * is edited. The play controller sets it (setPlayMode) for as long as a game starts or runs.
    */
   readonly playMode = signal<string | null>(null)
   /** The scene can be edited now: connected, with a scene, nothing busy and not a play session (Undo and Redo need it) */
@@ -465,6 +465,7 @@ export class EditorStore {
 
   /** Opens a scene file (a res:// path), after asking about unsaved changes; undefined when not done */
   async openScene(path: string): Promise<SceneInfoResponse | undefined> {
+    if (this.refusedWhilePlaying("Open scene")) return undefined
     if (!(await this.confirmDiscard("open the scene"))) return undefined
     const opened = await this.sceneAction("Opening scene...", () => this.api.engine.openScene(path))
     // The host looks for an autosave a crash left whenever a scene is opened (again too: that is reverting it)
@@ -477,6 +478,7 @@ export class EditorStore {
    * the loaded one, after asking about unsaved changes. undefined when not done.
    */
   async newScene(defaultPath = "res://scenes/Untitled.scene"): Promise<SceneInfoResponse | undefined> {
+    if (this.refusedWhilePlaying("New scene")) return undefined
     // The unsaved changes first: a "no" there shouldn't come after the user has typed a path
     if (!(await this.confirmDiscard("create the scene"))) return undefined
     const path = this.checkedScenePath(await this.api.dialogs.prompt("New scene (a res:// path)", defaultPath))
@@ -484,6 +486,13 @@ export class EditorStore {
     const made = await this.sceneAction("Creating scene...", () => this.api.engine.newScene(path, ""))
     if (made) void this.checkAutosave(made)
     return made
+  }
+
+  /** While a game runs the scene is read-only: says so (error banner) and returns true for an action that would change it */
+  refusedWhilePlaying(what: string): boolean {
+    if (this.playMode.value === null) return false
+    this.error.value = `${what}: not while ${this.playMode.value}. Stop the game first.`
+    return true
   }
 
   /** What was typed as a scene path, as the host takes it; "" when cancelled or empty, or when it can't be one (error says why) */
@@ -676,6 +685,7 @@ export class EditorStore {
 
   /** Asks about the loaded scene's autosave now (Edit > Recover autosave...), after a "Decide later" or a failed restore */
   async recoverAutosave(): Promise<void> {
+    if (this.refusedWhilePlaying("Recover autosave")) return
     const scene = this.scene.value
     if (scene) await this.checkAutosave(scene, true)
   }

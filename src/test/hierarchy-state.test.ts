@@ -820,3 +820,54 @@ describe("selecting what the viewport picked", () => {
     assert.deepEqual(primaries, [id("A"), null])
   })
 })
+
+describe("HierarchyState while a game runs", () => {
+  const playing = "the game is running"
+
+  test("what changes objects is refused, and nothing reaches the host", async () => {
+    const { scene, state } = setup("A,B")
+    await state.refresh()
+    state.pick(id("A"))
+    state.setReadOnly(playing)
+    assert.equal(state.readOnly.value, true)
+    await assert.rejects(state.create("Cube"), /can't be changed while the game is running/)
+    await assert.rejects(state.setActive(id("A"), false), /can't be changed/)
+    await assert.rejects(state.duplicateSelected(), /can't be changed/)
+    await assert.rejects(state.deleteSelected(), /can't be changed/)
+    await assert.rejects(state.move([id("A")], { parentId: id("B"), index: 0 }), /can't be changed/)
+    assert.deepEqual(scene.calls.filter((c) => !c.startsWith("getHierarchy")), [])
+  })
+
+  test("selecting and expanding still work; renaming doesn't start, and one in progress ends", async () => {
+    const { state } = setup("A(A1),B")
+    await state.refresh()
+    state.beginRename(id("A"))
+    assert.equal(state.renaming.value, id("A"))
+    state.setReadOnly(playing)
+    assert.equal(state.renaming.value, null)
+    state.beginRename(id("A"))
+    assert.equal(state.renaming.value, null)
+    state.click(id("B"))
+    assert.equal(state.primaryId, id("B"))
+    state.toggleExpanded(id("A"))
+    assert.deepEqual(names(state), ["A", "A1", "B"])
+  })
+
+  test("a rename typed when the game started is dropped quietly", async () => {
+    const { scene, state } = setup("A")
+    await state.refresh()
+    state.setReadOnly(playing)
+    await state.commitRename(id("A"), "Renamed")
+    assert.equal(scene.calls.some((c) => c.startsWith("setEntityProperties")), false)
+  })
+
+  test("editing works again once the game ends", async () => {
+    const { scene, state } = setup("A")
+    await state.refresh()
+    state.setReadOnly(playing)
+    state.setReadOnly(null)
+    assert.equal(state.readOnly.value, false)
+    await state.setActive(id("A"), false)
+    assert.equal(scene.calls.some((c) => c.startsWith("setEntityProperties")), true)
+  })
+})

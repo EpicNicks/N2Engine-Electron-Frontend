@@ -12,7 +12,12 @@ import {
   EngineCommands,
   HostApi,
   HostState,
+  InitialPlayState,
   IpcResult,
+  PlayApi,
+  PlayCommandNames,
+  PlayCommands,
+  PlayState,
   ProjectApi,
 } from "../shared/api"
 
@@ -108,6 +113,46 @@ const hostApi: HostApi = {
   locate: () => invoke(Channels.hostLocate),
 }
 
+// ==================== window.play ====================
+
+let playState: PlayState = InitialPlayState
+let playPushed = false
+const playListeners: Array<(state: PlayState) => void> = []
+
+function applyPlayState(state: PlayState): void {
+  playState = state
+  notify(playListeners, state, "Play state")
+}
+
+ipcRenderer.on(Channels.playState, (_event, state: PlayState) => {
+  playPushed = true
+  applyPlayState(state)
+})
+invoke<PlayState>(Channels.playGetState).then(
+  (state) => {
+    if (!playPushed) applyPlayState(state)
+  },
+  (e) => console.error("Failed to get the play state:", e)
+)
+
+const playCommands = {} as Record<string, (...args: unknown[]) => Promise<unknown>>
+for (const name of PlayCommandNames) {
+  playCommands[name] = (...args: unknown[]) => invoke(Channels.playCall, name, args)
+}
+
+const play: PlayApi = {
+  ...(playCommands as unknown as PlayCommands),
+  state: () => playState,
+  onStateChange(listener) {
+    playListeners.push(listener)
+  },
+  start: () => invoke(Channels.playStart),
+  stop: () => invoke(Channels.playStop),
+  setPaused: (paused) => invoke(Channels.playSetPaused, paused),
+  step: (frames) => invoke(Channels.playStep, frames),
+  refresh: () => invoke(Channels.playRefresh),
+}
+
 // ==================== window.project ====================
 
 const project: ProjectApi = {
@@ -136,4 +181,5 @@ const editMenu: EditMenuApi = {
 contextBridge.exposeInMainWorld("engine", engine)
 contextBridge.exposeInMainWorld("editMenu", editMenu)
 contextBridge.exposeInMainWorld("host", hostApi)
+contextBridge.exposeInMainWorld("play", play)
 contextBridge.exposeInMainWorld("project", project)

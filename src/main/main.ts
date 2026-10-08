@@ -2,12 +2,14 @@ import { app, BrowserWindow, dialog, Menu, screen, ipcMain, session } from "elec
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
-import { Channels, HostState } from "../shared/api"
+import { Channels, HostState, PlayState } from "../shared/api"
 import { buildAppMenuTemplate } from "./app-menu"
 import { EngineHost } from "./engine-ipc"
 import { TokenEnvVariable } from "./host-launcher"
 import { HostSettings } from "./host-settings"
 import { EditorPage } from "./ipc"
+import { PlaySession } from "./play-session"
+import { registerPlayIpc } from "./play-ipc"
 import { registerProjectIpc } from "./project-ipc"
 import { ProjectFiles } from "./project-files"
 import { ProjectSession } from "./project-session"
@@ -39,6 +41,11 @@ function publishHostState(state: HostState): void {
   if (editor && !editor.isDestroyed()) editor.send(Channels.hostState, state)
 }
 
+function publishPlayState(state: PlayState): void {
+  const editor = page.getEditor()
+  if (editor && !editor.isDestroyed()) editor.send(Channels.playState, state)
+}
+
 const userData = app.getPath("userData")
 const files = new ProjectFiles()
 const recent = new RecentProjects(path.join(userData, "recent-projects.json"))
@@ -47,6 +54,7 @@ const settings = new HostSettings(path.join(userData, "settings.json"))
 const engine = new EngineHost(new EngineClient(), page, {
   // A page that (re)loads starts at the welcome screen: no project, no host
   onAttach: () => {
+    play.stop().catch((e) => console.error("Failed to stop the game:", e))
     projectSession.reset().catch((e) => console.error("Failed to close the project:", e))
   },
 })
@@ -58,8 +66,32 @@ const projectSession = new ProjectSession({
   settings,
   engine,
   publish: publishHostState,
+  renderer: () => settings.renderer(),
   log: (message) => console.log(message),
 })
+
+// The game runs in a second host process (play-session.ts), beside the project's editor host
+const play = new PlaySession({
+  editor: {
+    get isConnected() {
+      return engine.client.isConnected
+    },
+    writePlaySnapshot: (scenePath) => engine.client.writePlaySnapshot(scenePath),
+  },
+  projectPath: () => projectSession.projectPath,
+  hostPath: () => settings.require(),
+  // What the edit host was launched with, not what settings.json says now: a changed setting mustn't split the two
+  renderer: () => projectSession.hostRenderer,
+  readyTimeoutMs: () => settings.readyTimeoutMs(),
+  createConnection: () => new EngineClient(),
+  publish: publishPlayState,
+  log: (message) => console.log(message),
+})
+// A game outlives neither the editor host it was made from nor its connection (a stopped, restarted or crashed host)
+engine.client.onClose(() => {
+  play.stop("The editor host's connection ended").catch((e) => console.error("Failed to stop the game:", e))
+})
+registerPlayIpc(ipcMain, { page, session: play })
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
 
@@ -117,6 +149,7 @@ function createWindow(): void {
 
   mainWindow.on("closed", () => {
     mainWindow = null
+    play.shutdown()
     projectSession.killHost()
   })
 
@@ -144,19 +177,25 @@ app.whenReady().then(() => {
   createWindow()
 })
 
+/** Kills the game and the editor host, synchronously (the game first: it is the one that depends on the other) */
+function shutdownAll(): void {
+  play.shutdown()
+  projectSession.shutdown()
+}
+
 // The host never outlives the editor: it's killed however the editor ends. Once connected, closing the connection
 // would end it anyway (--exit-on-disconnect); the kill also covers a host still starting.
-app.on("before-quit", () => projectSession.shutdown())
+app.on("before-quit", shutdownAll)
 app.on("window-all-closed", () => {
-  projectSession.shutdown()
+  shutdownAll()
   app.quit()
 })
 // Ending some other way (process.exit, a fatal error): "exit" handlers are synchronous, and so is the kill
-process.on("exit", () => projectSession.shutdown())
+process.on("exit", shutdownAll)
 // Ctrl+C in the terminal that started the editor, or a kill: quit properly instead of dying with the host running
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    projectSession.shutdown()
+    shutdownAll()
     app.quit()
   })
 }

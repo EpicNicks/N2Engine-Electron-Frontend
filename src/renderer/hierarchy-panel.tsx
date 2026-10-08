@@ -86,18 +86,23 @@ export function HierarchyPanel() {
   const renaming = hierarchy.renaming.value
   const drop = indicator.value
   const hasObjects = tree.order.length > 0
+  // A running game can't be edited: selecting still works, nothing that changes objects does
+  const readOnly = hierarchy.readOnly.value
 
   const fail = (what: string) => (e: unknown) => store.reportError(what, e)
   const duplicate = () => hierarchy.duplicateSelected().catch(fail("Failed to duplicate"))
   const remove = () => hierarchy.deleteSelected().catch(fail("Failed to delete"))
 
-  const rowMenu = (id: string): MenuItem[] => [
-    { label: "Rename (F2)", action: () => hierarchy.beginRename(id) },
-    { label: "Duplicate (Ctrl+D)", action: duplicate },
-    { label: "Delete (Del)", action: remove },
-    { separator: true },
-    ...createItems(id),
-  ]
+  const rowMenu = (id: string): MenuItem[] =>
+    readOnly
+      ? [{ label: `Read only: ${hierarchy.readOnlyReason.value}`, action: () => {}, disabled: true }]
+      : [
+          { label: "Rename (F2)", action: () => hierarchy.beginRename(id) },
+          { label: "Duplicate (Ctrl+D)", action: duplicate },
+          { label: "Delete (Del)", action: remove },
+          { separator: true },
+          ...createItems(id),
+        ]
 
   const onKeyDown = (e: KeyboardEvent) => {
     // Only the name being typed keeps its keys (the active checkbox, say, doesn't take them from the list)
@@ -105,6 +110,7 @@ export function HierarchyPanel() {
     const ctrl = e.ctrlKey || e.metaKey
     const isDelete = e.key === "Delete"
     const isDuplicate = ctrl && e.key.toLowerCase() === "d"
+    if (readOnly && (e.key === "F2" || isDelete || isDuplicate)) return void e.preventDefault()
     // A held key would repeat the action on whatever is selected next
     if (e.repeat && (isDelete || isDuplicate)) return void e.preventDefault()
     if (e.key === "F2") hierarchy.beginRename()
@@ -120,7 +126,7 @@ export function HierarchyPanel() {
 
   /** The drop a drag over a row (or the empty space) means, or null when it isn't allowed or isn't our drag */
   const dropAt = (overId: string | null, position: DropPosition): DropTarget | null => {
-    if (dragging.value.length === 0) return null
+    if (dragging.value.length === 0 || readOnly) return null
     const target = resolveDrop(tree, overId, position, expanded)
     return target && canDrop(tree, dragging.value, target) ? target : null
   }
@@ -167,7 +173,7 @@ export function HierarchyPanel() {
           key={row.id}
           data-id={row.id}
           style={{ paddingLeft: `${row.depth * 14 + 4}px` }}
-          draggable={renaming !== row.id}
+          draggable={renaming !== row.id && !readOnly}
           title={`${node.components.join(", ") || "No components"}\nTag: ${node.tag || "(none)"}, layer ${node.layer}`}
           role="treeitem"
           aria-selected={selection.ids.has(row.id)}
@@ -206,7 +212,8 @@ export function HierarchyPanel() {
             type="checkbox"
             class="hierarchy-active"
             checked={node.active}
-            title="Active"
+            title={readOnly ? `Read only: ${hierarchy.readOnlyReason.value}` : "Active"}
+            disabled={readOnly}
             aria-label={`${node.name} active`}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) =>
@@ -234,7 +241,7 @@ export function HierarchyPanel() {
     for (const row of rows ?? []) if (row.dataset.id === primary) row.scrollIntoView({ block: "nearest" })
   }, [primary])
 
-  const canCreate = connected && sceneInfo !== null
+  const canCreate = connected && sceneInfo !== null && !readOnly
   return (
     <Panel
       title={sceneInfo ? `Hierarchy: ${store.sceneLabel.value}` : "Hierarchy"}

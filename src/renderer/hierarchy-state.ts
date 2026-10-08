@@ -72,6 +72,9 @@ export class HierarchyState {
   readonly selection = signal<Selection>(emptySelection)
   /** The object whose name is being edited */
   readonly renaming = signal<string | null>(null)
+  /** Why the hierarchy can't be changed (a game is running); null when it can */
+  readonly readOnlyReason = signal<string | null>(null)
+  readonly readOnly = computed(() => this.readOnlyReason.value !== null)
 
   /** Counts reads, so a slow answer can't replace a newer one */
   private fetches = 0
@@ -87,6 +90,23 @@ export class HierarchyState {
     private readonly engine: Engine,
     private readonly options: HierarchyOptions
   ) {}
+
+  /**
+   * Makes the hierarchy read-only (a game is running, with the reason to show) or editable again (null). Selecting and
+   * expanding still work; what creates, renames, moves, duplicates or deletes is refused, and a rename in progress ends.
+   */
+  setReadOnly(reason: string | null): void {
+    batch(() => {
+      this.readOnlyReason.value = reason
+      if (reason !== null) this.renaming.value = null
+    })
+  }
+
+  /** Throws when the hierarchy is read-only: what changes objects asks first */
+  private assertEditable(): void {
+    const reason = this.readOnlyReason.value
+    if (reason !== null) throw new Error(`The scene can't be changed while ${reason}`)
+  }
 
   /** Everything is gone (disconnected, or another host) */
   reset(): void {
@@ -269,6 +289,7 @@ export class HierarchyState {
    * selects it and starts renaming it
    */
   async create(preset: string, parentId: string = RootId): Promise<string> {
+    this.assertEditable()
     const id = await this.engine.createEntityEx("", parentId, -1, preset)
     await this.refresh() // the newest read: it has the new object, whichever read it was
     batch(() => {
@@ -281,7 +302,7 @@ export class HierarchyState {
   }
 
   beginRename(id: string | null = this.primaryId): void {
-    if (this.isShown(id)) this.renaming.value = id
+    if (this.isShown(id) && !this.readOnly.value) this.renaming.value = id
   }
 
   cancelRename(): void {
@@ -291,6 +312,8 @@ export class HierarchyState {
   /** Ends renaming: sets the name unless it is empty or the same */
   commitRename(id: string, name: string): Promise<void> {
     if (this.renaming.value === id) this.renaming.value = null
+    // A rename that was typed when the game started is dropped, not an error to show
+    if (this.readOnly.value) return Promise.resolve()
     const trimmed = name.trim()
     if (trimmed === "" || trimmed === this.tree.value.nodes.get(id)?.name) return Promise.resolve()
     const done = this.setProperties(id, { name: trimmed })
@@ -331,12 +354,14 @@ export class HierarchyState {
   }
 
   async setActive(id: string, active: boolean): Promise<void> {
+    this.assertEditable()
     await this.setProperties(id, { active })
   }
 
   /** Copies the selected objects, each right after its original, and selects the copies */
   duplicateSelected(): Promise<void> {
     return this.exclusive<void>(undefined, async () => {
+      this.assertEditable()
       const ids = topLevel(this.tree.value, this.selection.value.ids)
       if (ids.length === 0) return
       const copies: string[] = []
@@ -364,6 +389,7 @@ export class HierarchyState {
    */
   deleteSelected(): Promise<boolean> {
     return this.exclusive(false, async () => {
+      this.assertEditable()
       const tree = this.tree.value
       const ids = topLevel(tree, this.selection.value.ids)
       if (ids.length === 0) return false
@@ -392,6 +418,7 @@ export class HierarchyState {
    */
   move(draggedIds: readonly string[], target: DropTarget): Promise<boolean> {
     return this.exclusive(false, async () => {
+      this.assertEditable()
       const moves = planMoves(this.tree.value, draggedIds, target)
       if (moves === null || moves.length === 0) return false
       try {

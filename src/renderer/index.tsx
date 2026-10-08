@@ -2,7 +2,7 @@
 // (the engine connection), window.host (the project's editor host process) and window.project (projects and their
 // files) are the typed IPC API the preload exposes (src/shared/api.ts); there is no Node here.
 import { render } from "preact"
-import { effect } from "@preact/signals-core"
+import { effect, untracked } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
 import { AssetsState, isDirty } from "./assets-state"
 import { assetEntriesOf, nameOf } from "./asset-tree"
@@ -15,6 +15,7 @@ import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
 import { createPickBackend, hostHasPicking } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
+import { PlayController } from "./play-controller"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
 import { EditorStore } from "./store"
@@ -116,6 +117,21 @@ const viewport = new ViewportController({
   // A click in the viewport selects like a click on the hierarchy's row (Ctrl toggles, Shift extends)
   select: (id, modifiers) => hierarchy.pick(id, modifiers),
 })
+// Play mode: the game runs in a second host process; while it does, the scene is read-only and the viewport, the audio
+// and the console are the game's
+const play = new PlayController({
+  api: window.play,
+  setPlayMode: (reason) => store.setPlayMode(reason),
+  // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
+  settle: async () => {
+    await hierarchy.renameSettled
+    await app.inspector.flush()
+  },
+  canStart: () => store.connected.value && store.scene.value !== null && store.busy.value === null,
+  addLog: (entries) => store.console.addEntries(entries),
+  note: (level, message) => store.console.note(level, message),
+  onError: (what, e) => store.reportError(what, e),
+})
 store.unsavedFiles = () => assets.tabs.value.filter(isDirty).map((tab) => nameOf(tab.path))
 const app: AppState = {
   store,
@@ -137,6 +153,7 @@ const app: AppState = {
     }
   ),
   audio: new AudioController(window.engine),
+  play,
 }
 
 // Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y): the host's history, after the editor's own pending edits
@@ -160,6 +177,7 @@ editActions.value = new EditController({
 })
 // A play session makes the inspector read-only too (the host refuses edits then)
 effect(() => app.inspector.setReadOnly(store.playMode.value))
+effect(() => hierarchy.setReadOnly(store.playMode.value))
 // The host ends the groups of a connection that closes (and at the next Hello): none is open on another connection
 effect(() => {
   store.connected.value // what this runs on
@@ -174,10 +192,14 @@ window.addEventListener("beforeunload", (e) => {
   }
 })
 
-// The engine's audio plays while connected
+// The engine's audio plays while connected, and the game's while a game is live
 effect(() => {
   if (store.connected.value) app.audio.start()
   else app.audio.stop()
+})
+effect(() => {
+  const live = play.live.value
+  untracked(() => app.audio.useGame(live ? window.play : null))
 })
 
 render(<App app={app} />, document.getElementById("app")!)
