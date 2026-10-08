@@ -4,8 +4,9 @@
 
 import * as fs from "fs"
 import * as path from "path"
-import type { FileInfo } from "../shared/api"
+import type { AssetEntry, FileInfo } from "../shared/api"
 import { ProjectTextExtensions } from "../shared/api"
+import { readAssetIndex } from "./asset-index"
 
 export class ProjectPathError extends Error {}
 
@@ -42,6 +43,11 @@ export class ProjectFiles {
 
   listFiles(): FileInfo[] {
     return readDirectory(this.requireRoot(), 0)
+  }
+
+  /** The assets the host indexed (see readAssetIndex); the project's own .import folder only, never through a link */
+  listAssets(): AssetEntry[] {
+    return readAssetIndex(this.requireRoot())
   }
 
   readTextFile(filePath: string): string {

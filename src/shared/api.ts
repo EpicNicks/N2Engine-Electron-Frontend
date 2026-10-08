@@ -317,12 +317,27 @@ export interface ProjectApi {
 
   /** The open project's tree (hidden entries skipped, 3 levels deep) */
   listFiles(): Promise<FileInfo[]>
+  /**
+   * The assets the host has indexed (what its .import/*.meta files say), with their UUIDs, for the inspector's asset
+   * fields. A file added since the host's last scan isn't there until RescanAssets (an assetsChanged event follows).
+   */
+  listAssets(): Promise<AssetEntry[]>
   readTextFile(filePath: string): Promise<string>
   writeTextFile(filePath: string, text: string): Promise<void>
   /** Creates the directory and any missing parents */
   createDirectory(dirPath: string): Promise<void>
   /** Deletes a file (never a directory); a file that doesn't exist is not an error */
   deleteFile(filePath: string): Promise<void>
+}
+
+/** An asset the host indexed (a .meta under the project's .import folder), or a sub-asset of a model */
+export interface AssetEntry {
+  /** Lower-case UUID: what an asset field holds */
+  uuid: string
+  /** res://scenes/Main.scene; a sub-asset's is its model's path, #, and its key: res://models/robot.glb#mesh/Body */
+  path: string
+  /** The resource type the host gave it: Texture, Font, Mesh, Material, Model, AudioClip, LuaScript, Scene, ... ("Unknown") */
+  resourceType: string
 }
 
 export const ProjectTextExtensions: readonly string[] = [".scene", ".lua", ".json", ".txt"]
@@ -359,6 +374,7 @@ export const Channels = {
   projectRemoveRecent: "project:removeRecent",
   projectClose: "project:close",
   projectListFiles: "project:listFiles",
+  projectListAssets: "project:listAssets",
   projectReadTextFile: "project:readTextFile",
   projectWriteTextFile: "project:writeTextFile",
   projectCreateDirectory: "project:createDirectory",

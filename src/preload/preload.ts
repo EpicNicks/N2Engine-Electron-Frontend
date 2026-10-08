@@ -118,6 +118,7 @@ const project: ProjectApi = {
   removeRecent: (projectPath) => invoke(Channels.projectRemoveRecent, projectPath),
   close: () => invoke(Channels.projectClose),
   listFiles: () => invoke(Channels.projectListFiles),
+  listAssets: () => invoke(Channels.projectListAssets),
   readTextFile: (filePath) => invoke(Channels.projectReadTextFile, filePath),
   writeTextFile: (filePath, text) => invoke(Channels.projectWriteTextFile, filePath, text),
   createDirectory: (dirPath) => invoke(Channels.projectCreateDirectory, dirPath),
