@@ -29,6 +29,8 @@ export interface PlayControllerDeps {
   api: PlayControllerApi
   /** Makes the scene read-only (EditorStore.setPlayMode: a reason) or editable again (null) */
   setPlayMode(reason: string | null): void
+  /** Waits for the edits still on their way to the edit host (a rename, the inspector's 250 ms debounce) */
+  settle?(): Promise<void>
   /** Whether the editor can start a game now: connected, a scene loaded, nothing busy */
   canStart(): boolean
   /** Adds the game's own log lines to the console */
@@ -95,7 +97,11 @@ export class PlayController {
   /** Plays the open scene (unsaved edits included) */
   async start(): Promise<void> {
     if (!this.canPlay.value) return
-    await this.run(() => this.deps.api.start(), "The game couldn't start")
+    // The snapshot is of what the edit host holds: what was typed a moment ago must have reached it
+    await this.run(async () => {
+      await this.deps.settle?.()
+      await this.deps.api.start()
+    }, "The game couldn't start")
   }
 
   /** Ends the game (not an error when none runs) */

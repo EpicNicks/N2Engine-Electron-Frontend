@@ -285,7 +285,15 @@ export function Viewport() {
 
     const onKeyDown = (e: KeyboardEvent): void => {
       if (play.live.peek()) {
-        // A key the engine names is the game's (and not the page's: Ctrl+S and Tab do nothing here); a repeat is a held key
+        // Ctrl+Escape leaves the game view (keyboard users aren't trapped in it), and Tab keeps moving the focus
+        if (e.code === "Escape" && e.ctrlKey) {
+          e.preventDefault()
+          forwarder.releaseAll()
+          host.blur()
+          return
+        }
+        if (e.code === "Tab") return
+        // A key the engine names is the game's (and not the page's: Ctrl+S does nothing here); a repeat is a held key
         if (forwarder.key(e.code, true)) e.preventDefault()
         return
       }
@@ -424,7 +432,7 @@ export function Viewport() {
             class="viewport-help"
             title="While this view has focus, the keys, the mouse buttons, the pointer and the wheel go to the game"
           >
-            {play.paused.value ? "Game paused" : "Game"} · the keyboard and mouse are the game's while this view has focus
+            {play.paused.value ? "Game paused" : "Game"} · the keyboard and mouse are the game's while this view has focus (Ctrl+Esc leaves it)
           </span>
         </div>
       )}

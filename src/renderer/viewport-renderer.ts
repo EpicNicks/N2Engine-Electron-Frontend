@@ -6,7 +6,7 @@
 // stretched. Frames arrive as RGBA, top row first (engine #69), and are drawn as they are.
 import type { FrameUpdateResponse } from "../protocol/protocol.generated"
 import type { EngineApi, PlayApi } from "../shared/api"
-import { FrameScheduler } from "./viewport-frames"
+import { FrameRetryPolicy, FrameScheduler } from "./viewport-frames"
 import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 
 /** After the container stops changing size for this long, the new size is sent (on the next animation frame) */
@@ -73,6 +73,9 @@ export class ViewportRenderer {
   private settleTimer: number | null = null
   private readonly resizeObserver: ResizeObserver
   private disposed = false
+  /** A game's frame that fails is asked for again a few times before the picture is given up on */
+  private readonly retry = new FrameRetryPolicy()
+  private retryTimer: number | null = null
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -94,6 +97,7 @@ export class ViewportRenderer {
         const { buffer, byteOffset, byteLength } = frame.pixels
         const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
         this.context.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
+        this.retry.succeeded()
         if (this.target.kind === "game") {
           this.hooks.onGameFrame?.({ width: frame.width, height: frame.height })
           // A game changes every frame: the next one is asked for as soon as this one is shown
@@ -106,7 +110,18 @@ export class ViewportRenderer {
         const request = requestAnimationFrame(callback)
         return () => cancelAnimationFrame(request)
       },
-      onError: (e) => this.onError(e),
+      onError: (e) => {
+        // The scheduler stopped. A game that still runs loses a frame now and then (a busy child, a slow poll): ask again
+        if (this.target.kind === "game" && this.target.isConnected() && this.retry.failed()) {
+          this.clearRetry()
+          this.retryTimer = window.setTimeout(() => {
+            this.retryTimer = null
+            if (!this.disposed && this.target.kind === "game" && this.target.isConnected()) this.start()
+          }, 200)
+          return
+        }
+        this.onError(e)
+      },
       isConnected: () => this.target.isConnected(),
     })
     this.resizeObserver = new ResizeObserver(() => {
@@ -125,7 +140,13 @@ export class ViewportRenderer {
     this.scheduler.start()
   }
 
+  private clearRetry(): void {
+    if (this.retryTimer !== null) window.clearTimeout(this.retryTimer)
+    this.retryTimer = null
+  }
+
   stop(): void {
+    this.clearRetry()
     this.scheduler.stop()
     this.setSentSize(null)
   }
@@ -142,10 +163,12 @@ export class ViewportRenderer {
    */
   setTarget(target: FrameTarget): void {
     if (target === this.target) return
-    const running = this.scheduler.isRunning
     this.stop()
     this.target = target
-    if (running) this.start()
+    // Whatever stopped the scheduler before (a failed frame of the game that just ended, a host that wasn't there), the
+    // new source is shown as soon as it can be asked: the editor view comes back when the game ends
+    this.retry.succeeded()
+    if (target.isConnected()) this.start()
   }
 
   get targetKind(): FrameTarget["kind"] {

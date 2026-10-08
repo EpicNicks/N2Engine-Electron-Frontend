@@ -605,8 +605,8 @@ export class EngineClient {
   // ==================== Play mode (protocol 1.10.0) ====================
 
   /**
-   * Edit host: writes the open scene as it is in memory (unsaved edits included), or a res:// scene file as it is on
-   * disk (scenePath ""), to a snapshot file and answers its absolute path. Saves nothing, moves no revision.
+   * Edit host: writes a snapshot file and answers its absolute path. scenePath "" is the open scene as it is in memory
+   * (unsaved edits included); a res:// scene path is that file as it is on disk. Saves nothing, moves no revision.
    */
   async writePlaySnapshot(scenePath: string): Promise<string> {
     return (await this.send(Commands.WritePlaySnapshot, { scenePath })).file

@@ -80,7 +80,8 @@ const play = new PlaySession({
   },
   projectPath: () => projectSession.projectPath,
   hostPath: () => settings.require(),
-  renderer: () => settings.renderer(),
+  // What the edit host was launched with, not what settings.json says now: a changed setting mustn't split the two
+  renderer: () => projectSession.hostRenderer,
   readyTimeoutMs: () => settings.readyTimeoutMs(),
   createConnection: () => new EngineClient(),
   publish: publishPlayState,

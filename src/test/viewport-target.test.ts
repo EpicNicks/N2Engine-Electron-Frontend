@@ -2,6 +2,7 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import { InitialPlayState, PlayState } from "../shared/api"
 import { editTarget, gameTarget } from "../renderer/viewport-renderer"
+import { FrameRetryPolicy, FrameScheduler } from "../renderer/viewport-frames"
 
 describe("frame targets", () => {
   test("the editor view asks for a frame only if it changed, and sizes the editor host", async () => {
@@ -48,5 +49,44 @@ describe("frame targets", () => {
     assert.equal(a.width, 2)
     await target.setViewportSize(640, 480)
     assert.deepEqual(sizes, ["640x480"])
+  })
+})
+
+describe("a game's frames after a failure", () => {
+  test("a transient failure is retried a few times in a row, and a frame starts the count again", () => {
+    const policy = new FrameRetryPolicy(3)
+    assert.deepEqual([policy.failed(), policy.failed(), policy.failed(), policy.failed()], [true, true, true, false])
+    policy.succeeded()
+    assert.equal(policy.failed(), true)
+  })
+
+  test("a stopped scheduler shows the next source's frame once it is started again (a target switch after a failed frame)", async () => {
+    let fail = true
+    const shown: number[] = []
+    const errors: unknown[] = []
+    const scheduler = new FrameScheduler({
+      request: async (since) => {
+        if (fail) throw new Error("Connection closed")
+        return { revision: since + 1, modified: true, width: 1, height: 1, pixels: new Uint8Array(4) }
+      },
+      present: (f) => shown.push(f.revision),
+      schedule: (cb) => {
+        const t = setImmediate(cb)
+        return () => clearImmediate(t)
+      },
+      onError: (e) => errors.push(e),
+      isConnected: () => true,
+    })
+    scheduler.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(errors.length, 1)
+    assert.equal(scheduler.isRunning, false, "a failed frame stops it")
+    // The game ended; the editor view's source takes over and the renderer starts it
+    fail = false
+    scheduler.stop()
+    scheduler.start()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.deepEqual(shown, [1])
+    scheduler.stop()
   })
 })

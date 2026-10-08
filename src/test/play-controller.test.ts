@@ -72,8 +72,14 @@ function setup(options: { canStart?: boolean } = {}) {
   const errors: string[] = []
   const timers: Array<{ callback: () => void; ms: number; stopped: boolean }> = []
   let canStart = options.canStart ?? true
+  const order: string[] = []
   const controller = new PlayController({
     api,
+    settle: async () => {
+      order.push("settle")
+      await turn()
+      order.push("settled")
+    },
     setPlayMode: (reason) => modes.push(reason),
     canStart: () => canStart,
     addLog: (entries) => logs.push(...entries),
@@ -99,7 +105,8 @@ function setup(options: { canStart?: boolean } = {}) {
     pumpCallbacks.shift()?.()
     await turn()
   }
-  return { api, controller, modes, logs, notes, errors, timers, poll, setCanStart: (v: boolean) => (canStart = v) }
+  const startOrder = order
+  return { startOrder, api, controller, modes, logs, notes, errors, timers, poll, setCanStart: (v: boolean) => (canStart = v) }
 }
 
 describe("PlayController", () => {
@@ -109,6 +116,17 @@ describe("PlayController", () => {
     assert.equal(t.controller.live.value, false)
     assert.equal(t.controller.canPlay.value, true)
     assert.equal(t.controller.text.value, "")
+  })
+
+  test("pending edits are settled before the snapshot is asked for", async () => {
+    const t = setup()
+    const start = t.api.start
+    t.api.start = () => {
+      t.startOrder.push("start")
+      return start()
+    }
+    await t.controller.start()
+    assert.deepEqual(t.startOrder, ["settle", "settled", "start"])
   })
 
   test("Play is unavailable while the editor can't start (no scene, busy, not connected)", async () => {

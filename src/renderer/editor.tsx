@@ -151,7 +151,11 @@ function EditButton() {
     ...(store.autosaveOutstanding.value
       ? [
           { separator: true } as MenuItem,
-          { label: "Recover autosave...", action: () => void store.recoverAutosave() },
+          {
+            label: "Recover autosave...",
+            action: () => void store.recoverAutosave(),
+            disabled: store.playMode.value !== null,
+          },
         ]
       : []),
   ]

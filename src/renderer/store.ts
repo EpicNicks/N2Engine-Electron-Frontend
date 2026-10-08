@@ -662,6 +662,7 @@ export class EditorStore {
 
   /** Asks about the loaded scene's autosave now (Edit > Recover autosave...), after a "Decide later" or a failed restore */
   async recoverAutosave(): Promise<void> {
+    if (this.refusedWhilePlaying("Recover autosave")) return
     const scene = this.scene.value
     if (scene) await this.checkAutosave(scene, true)
   }

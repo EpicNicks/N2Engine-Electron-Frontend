@@ -5,7 +5,7 @@ import type { PlayStateResponse } from "../protocol/protocol.generated"
 import { GameEndedMessage, PlayState } from "../shared/api"
 import { HostExit, HostProcess, LaunchOptions } from "../main/host-launcher"
 import { CancelledError } from "../main/project-session"
-import { PlayConnection, PlaySession, PlaySessionDeps, isInside, playFailureReason } from "../main/play-session"
+import { PlayConnection, PlaySession, PlaySessionDeps, isInside, isSnapshotFile, playFailureReason } from "../main/play-session"
 
 const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
@@ -227,6 +227,68 @@ describe("PlaySession", () => {
     assert.equal(isInside("/a/.n2", "/a/other.scene"), false)
     assert.equal(isInside("/a/.n2", "/a/.n2/../x"), false)
     assert.equal(isInside("/a/.n2", "/a/.n2"), false)
+  })
+
+  test("only a .scene directly in <project>/.n2/play is a snapshot", () => {
+    assert.equal(isSnapshotFile(Project, Snapshot), true)
+    assert.equal(isSnapshotFile(Project, path.join(Project, ".n2", "play", "nested", "x.scene")), false)
+    assert.equal(isSnapshotFile(Project, path.join(Project, ".n2", "play", "x.lua")), false)
+    assert.equal(isSnapshotFile(Project, path.join(Project, ".n2", "autosave", "x.scene")), false)
+    assert.equal(isSnapshotFile(Project, path.join(Project, "assets", "Main.scene")), false)
+  })
+
+  test("a snapshot is removed when the start fails or is cancelled before the child is up", async () => {
+    const t = setup()
+    t.hooks.failLaunch = "N2EditorHost exited with code 1 before it was ready"
+    await assert.rejects(t.session.start())
+    await turn()
+    assert.deepEqual(t.removed, [Snapshot])
+
+    const u = setup()
+    let release!: () => void
+    u.hooks.launchGate = new Promise((resolve) => (release = resolve))
+    const started = u.session.start()
+    started.catch(() => {})
+    await turn()
+    const stopped = u.session.stop()
+    release()
+    await stopped
+    await assert.rejects(started, CancelledError)
+    await turn()
+    assert.deepEqual(u.removed, [Snapshot])
+  })
+
+  test("the edit host closing while the snapshot is written is a cancellation, not a failure", async () => {
+    const t = setup()
+    let fail!: () => void
+    t.hooks.snapshotGate = new Promise((_, reject) => (fail = () => reject(new Error("Connection closed"))))
+    const started = t.session.start()
+    started.catch(() => {})
+    await turn()
+    const stopped = t.session.stop("The editor host's connection ended")
+    fail()
+    await stopped
+    await assert.rejects(started, /^CancelledError: Cancelled:/)
+  })
+
+  test("a child that never answers after Hello fails the start instead of staying Starting", async () => {
+    const t = setup({ requestTimeoutMs: 20 })
+    t.hooks.connect = (c) => (c.getPlayState = () => new Promise(() => {}))
+    await assert.rejects(t.session.start(), /didn't answer within/)
+    assert.equal(t.session.state.status, "failed")
+    assert.equal(t.children[0].killed, 1)
+  })
+
+  test("shutdown kills a child that is still being stopped", async () => {
+    const t = setup({ stopGraceMs: 500 })
+    await t.session.start()
+    t.connections[0].onDisconnect = null // ignores Shutdown
+    const stopping = t.session.stop()
+    await turn()
+    assert.equal(t.children[0].killed, 0)
+    t.session.shutdown()
+    assert.equal(t.children[0].killed, 1)
+    await stopping
   })
 
   test("a snapshot that can't be written fails the start, and no child is launched", async () => {

@@ -113,6 +113,26 @@ export class FrameScheduler {
 }
 
 /**
+ * How a game's frame stream treats a failed request: a transient failure (one frame lost while the game still runs)
+ * is retried after a short delay, up to maxFailures in a row, and only then given up on (and reported). A frame that
+ * arrives starts the count again.
+ */
+export class FrameRetryPolicy {
+  private failures = 0
+
+  constructor(private readonly maxFailures: number = 3) {}
+
+  /** A request failed: whether to start again */
+  failed(): boolean {
+    return ++this.failures <= this.maxFailures
+  }
+
+  succeeded(): void {
+    this.failures = 0
+  }
+}
+
+/**
  * Sends the newest of a stream of values, one at a time: while a send is on its way only the latest value is kept, so
  * a drag produces at most one request in flight and the host always ends on the last value. A failed send is reported
  * and does not stop later ones.

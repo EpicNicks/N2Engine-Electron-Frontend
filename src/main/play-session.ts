@@ -74,6 +74,8 @@ export interface PlaySessionDeps {
   log?: (message: string) => void
   /** How long a stopped child gets to exit (default PlayStopGraceMs) */
   stopGraceMs?: number
+  /** How long the child gets to answer a request after Hello (default PlayRequestTimeoutMs) */
+  requestTimeoutMs?: number
 }
 
 /** Resolves once the child has exited, or after ms (false then) */
@@ -93,6 +95,24 @@ export function isInside(dir: string, file: string): boolean {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
 }
 
+/** Whether file is a snapshot the host writes: a .scene directly in <project>/.n2/play */
+export function isSnapshotFile(projectPath: string, file: string): boolean {
+  const dir = path.resolve(projectPath, ".n2", "play")
+  return path.dirname(path.resolve(file)) === dir && path.extname(file).toLowerCase() === ".scene"
+}
+
+/** After Hello, how long the child gets to answer GetPlayState before the start is given up on */
+export const PlayRequestTimeoutMs = 10000
+
+/** The promise, or a rejection after ms */
+function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} didn't answer within ${ms / 1000} s`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 export class PlaySession {
   private current: PlayState = InitialPlayState
   private child: HostProcess | null = null
@@ -104,6 +124,8 @@ export class PlaySession {
   private disposed = false
   /** A start is in progress or the game is running: no second start */
   private active = false
+  /** Children being stopped (Shutdown sent, not yet gone): shutdown() kills these too */
+  private readonly stopping = new Set<HostProcess>()
 
   private readonly launch: (options: LaunchOptions) => Promise<HostProcess>
   private readonly removeFile: (file: string) => Promise<void>
@@ -154,6 +176,8 @@ export class PlaySession {
       try {
         file = await this.deps.editor.writePlaySnapshot(scenePath)
       } catch (e) {
+        // The edit host's connection closed meanwhile: stop() already ended this start
+        if (cancelled()) throw new CancelledError("Cancelled: play was stopped while it started")
         throw new Error(`Couldn't write the play snapshot: ${errorMessage(e)}`)
       }
       if (cancelled()) throw new CancelledError("Cancelled: play was stopped while it started")
@@ -198,10 +222,16 @@ export class PlaySession {
       }
       if (cancelled()) throw new CancelledError("Cancelled: play was stopped while it started")
 
-      const state = await connection.getPlayState()
+      const state = await withTimeout(
+        connection.getPlayState(),
+        this.deps.requestTimeoutMs ?? PlayRequestTimeoutMs,
+        "The game"
+      )
       if (cancelled()) throw new CancelledError("Cancelled: play was stopped while it started")
       this.setState({ ...statusOf(state), message: null })
     } catch (e) {
+      // A snapshot the child never got to load is of no use
+      if (file !== "") void this.discardSnapshot(projectPath, file)
       if (cancelled()) {
         // stop() already ended and reported everything; make sure nothing of this start is left running
         child?.kill()
@@ -243,10 +273,15 @@ export class PlaySession {
     this.setState({ status: "stopped", frame: 0, time: 0, message: reason })
     if (connection && connection.isConnected) connection.disconnect()
     else connection?.close()
-    if (await waitForExit(child, this.stopGraceMs)) return
-    this.deps.log?.("The game didn't exit after Shutdown: killing it")
-    child.kill()
-    await waitForExit(child, this.stopGraceMs)
+    this.stopping.add(child)
+    try {
+      if (await waitForExit(child, this.stopGraceMs)) return
+      this.deps.log?.("The game didn't exit after Shutdown: killing it")
+      child.kill()
+      await waitForExit(child, this.stopGraceMs)
+    } finally {
+      this.stopping.delete(child)
+    }
   }
 
   /** For quitting: synchronous and final. Kills the child (and one being spawned); nothing starts afterwards. */
@@ -261,6 +296,7 @@ export class PlaySession {
     // The connection is closed first, so an --exit-on-disconnect child that outlives the kill still exits
     connection?.close()
     child?.kill()
+    this.stopping.forEach((c) => c.kill())
     this.killLaunching?.()
   }
 
@@ -328,7 +364,7 @@ export class PlaySession {
 
   private async discardSnapshot(projectPath: string, file: string): Promise<void> {
     // Only what the host wrote under the project's own .n2 folder
-    if (!isInside(path.join(projectPath, ".n2"), file)) return
+    if (!isSnapshotFile(projectPath, file)) return
     try {
       await this.removeFile(file)
     } catch (e) {

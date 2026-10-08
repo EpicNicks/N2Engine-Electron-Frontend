@@ -1625,3 +1625,16 @@ describe("EditorStore while a game runs", () => {
     assert.equal(store.refusedWhilePlaying("x"), false)
   })
 })
+
+describe("EditorStore autosave recovery while a game runs", () => {
+  test("Recover autosave is refused", async () => {
+    const { api, store } = makeStore()
+    await store.openProject()
+    await Promise.resolve()
+    store.setPlayMode("the game is running")
+    const before = api.calls.length
+    await store.recoverAutosave()
+    assert.match(store.error.value ?? "", /Recover autosave: not while the game is running/)
+    assert.equal(api.calls.length, before)
+  })
+})

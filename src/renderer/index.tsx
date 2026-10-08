@@ -112,6 +112,11 @@ const viewport = new ViewportController({
 const play = new PlayController({
   api: window.play,
   setPlayMode: (reason) => store.setPlayMode(reason),
+  // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
+  settle: async () => {
+    await hierarchy.renameSettled
+    await app.inspector.flush()
+  },
   canStart: () => store.connected.value && store.scene.value !== null && store.busy.value === null,
   addLog: (entries) => store.console.addEntries(entries),
   note: (level, message) => store.console.note(level, message),
