@@ -19,6 +19,7 @@ import {
   ResponseType,
   ServerInfoResponse,
   decodeAddComponentRequest,
+  decodeBeginEditGroupRequest,
   decodeCreateEntityExRequest,
   decodeDuplicateEntityRequest,
   decodeGetComponentRequest,
@@ -35,13 +36,16 @@ import {
   decodeSetLocalTransformRequest,
   decodeSetProjectSettingsRequest,
   decodeSetStartupSceneRequest,
+  encodeAutosaveResponse,
   encodeComponentAddedResponse,
   encodeComponentDataResponse,
   encodeComponentTypesResponse,
+  encodeEditResultResponse,
   encodeEntityCreatedResponse,
   encodeEntityDataResponse,
   encodeErrorResponse,
   encodeHierarchyResponse,
+  encodeHistoryResponse,
   encodeLuaFieldsResponse,
   encodeOkResponse,
   encodeProjectInfoResponse,
@@ -791,6 +795,88 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
       frame(ResponseType.ComponentAdded, Buffer.from(encodeComponentAddedResponse({ componentId: "", values: {} })))
     )
     await assert.rejects(added, /without the new component's UUID/)
+  })
+
+  test("the undo, group and autosave commands send their ids and payloads and decode the answers", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+    const result = { label: "Create Cube", revision: 7, canUndo: true, canRedo: true, savedRevision: 3 }
+
+    const undone = client.undo()
+    answer(ResponseType.EditResult, encodeEditResultResponse(result))
+    assert.deepEqual(await undone, result)
+    assert.equal(sentFrame(sockets[0], 0).type, 0x90)
+    assert.equal(sentFrame(sockets[0], 0).payload.length, 0)
+
+    const redone = client.redo()
+    answer(ResponseType.EditResult, encodeEditResultResponse({ ...result, canRedo: false }))
+    assert.deepEqual(await redone, { ...result, canRedo: false })
+    assert.equal(sentFrame(sockets[0], 1).type, 0x91)
+
+    const began = client.beginEditGroup("Move 3 objects")
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await began
+    assert.equal(sentFrame(sockets[0], 2).type, 0x92)
+    assert.deepEqual(decodeBeginEditGroupRequest(sentFrame(sockets[0], 2).payload), { label: "Move 3 objects" })
+
+    const ended = client.endEditGroup()
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await ended
+    assert.equal(sentFrame(sockets[0], 3).type, 0x93)
+    assert.equal(sentFrame(sockets[0], 3).payload.length, 0)
+
+    const entries = [
+      { label: "Create Cube", bytes: 300 },
+      { label: "Delete Cube", bytes: 90000 },
+    ]
+    const history = client.getHistory()
+    answer(ResponseType.History, encodeHistoryResponse({ cursor: 1, entries }))
+    assert.deepEqual(await history, { cursor: 1, entries })
+    assert.equal(sentFrame(sockets[0], 4).type, 0x94)
+
+    const none = client.getAutosave()
+    answer(ResponseType.Autosave, encodeAutosaveResponse({ info: { exists: false } }))
+    assert.deepEqual(await none, { exists: false })
+    assert.equal(sentFrame(sockets[0], 5).type, 0x95)
+
+    const found = { exists: true, path: "C:/p/.n2/autosave/scenes/Main.scene", size: 1234, modified: 1_790_000_000_000 }
+    const autosave = client.getAutosave()
+    answer(ResponseType.Autosave, encodeAutosaveResponse({ info: found }))
+    assert.deepEqual(await autosave, found)
+
+    const scene = { path: "res://scenes/Main.scene", name: "Main", uuid: "u", revision: 8, savedRevision: 3 }
+    const restored = client.restoreAutosave()
+    answer(ResponseType.SceneInfo, encodeSceneInfoResponse(scene as never))
+    assert.deepEqual(await restored, scene)
+    assert.equal(sentFrame(sockets[0], 7).type, 0x96)
+
+    const discarded = client.discardAutosave()
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await discarded
+    assert.equal(sentFrame(sockets[0], 8).type, 0x97)
+  })
+
+  test("the history commands refuse a bad label, and a malformed answer, without trusting it", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    await assert.rejects(client.beginEditGroup(""), /label must be a non-empty string/)
+    await assert.rejects(client.beginEditGroup("a\0b"), /label/)
+    await assert.rejects(client.beginEditGroup(5 as never), /label/)
+    assert.equal(sockets[0].written.length, 0)
+
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+    const history = client.getHistory()
+    answer(ResponseType.History, encodeHistoryResponse({ cursor: 3, entries: [{ label: "a", bytes: 1 }] }))
+    await assert.rejects(history, /cursor 3 is past its 1 entries/)
+
+    const autosave = client.getAutosave()
+    answer(ResponseType.Autosave, encodeAutosaveResponse({ info: { exists: true, size: "big" } as never }))
+    await assert.rejects(autosave, /size must be a non-negative number/)
   })
 
   test("an Error answer rejects with the host's message", async () => {

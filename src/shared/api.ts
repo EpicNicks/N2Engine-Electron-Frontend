@@ -3,13 +3,16 @@
 // project's files. Types and plain constants only: this file is imported by all three sides.
 
 import type {
+  AutosaveInfo,
   CameraPositionResponse,
+  EditResultResponse,
   ComponentSchema,
   EngineHealthResponse,
   EntityDataResponse,
   EventsResponse,
   FrameDataResponse,
   HierarchyResponse,
+  HistoryResponse,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
@@ -111,6 +114,29 @@ export interface EngineCommands {
   getComponent(entityId: string, componentId: string): Promise<unknown>
   /** A LuaComponent's fields as its script declares them (each with container "scriptData"); ask again after the script changes */
   getLuaFields(entityId: string, componentId: string): Promise<ComponentSchema>
+
+  /**
+   * Undoes the latest step that is done (protocol 1.6): answers its label, the scene revisions after it and what can
+   * still be undone or redone. Error with nothing to undo, while an edit group is open, and outside edit mode.
+   */
+  undo(): Promise<EditResultResponse>
+  /** Redoes the step undone last; the same errors */
+  redo(): Promise<EditResultResponse>
+  /**
+   * Starts an edit group: every edit until the matching endEditGroup is one undo step named label. Groups nest (16
+   * deep); the host ends a group its client left open when the connection closes and at the next Hello.
+   */
+  beginEditGroup(label: string): Promise<void>
+  /** Ends the innermost edit group; Error when none is open */
+  endEditGroup(): Promise<void>
+  /** Every step, oldest first, and the cursor: the first cursor steps are done, the rest undone */
+  getHistory(): Promise<HistoryResponse>
+  /** Whether the open scene has an autosave (a crash left one), and where it is, how large and when it was written */
+  getAutosave(): Promise<AutosaveInfo>
+  /** Replaces the open scene's content with its autosave, as one undoable step; answers the scene */
+  restoreAutosave(): Promise<SceneInfoResponse>
+  /** Deletes the open scene's autosave; not an error when there is none */
+  discardAutosave(): Promise<void>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -161,6 +187,15 @@ export const EngineCommandArgs = {
   setComponentFields: ["string", "string", "jsonObject"],
   getComponent: ["string", "string"],
   getLuaFields: ["string", "string"],
+
+  undo: [],
+  redo: [],
+  beginEditGroup: ["string"],
+  endEditGroup: [],
+  getHistory: [],
+  getAutosave: [],
+  restoreAutosave: [],
+  discardAutosave: [],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]
