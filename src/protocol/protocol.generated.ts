@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.4.0";
+export const PROTOCOL_VERSION = "1.5.0";
 
 // ==================== Types ====================
 
@@ -114,6 +114,28 @@ export interface EntityDetails {
   components: EntityComponent[];
 }
 
+export interface FieldSchema {
+  name: string;
+  displayName: string;
+  kind: string;
+  typeName: string;
+  hidden: boolean;
+  readOnly: boolean;
+  enumOptions?: string[];
+  assetType?: string;
+  min?: number;
+  max?: number;
+  tooltip?: string;
+  container?: string;
+}
+
+export interface ComponentSchema {
+  typeName: string;
+  singleton: boolean;
+  fields: FieldSchema[];
+  defaults?: unknown;
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -148,6 +170,12 @@ export const CommandType = {
   CreateScript: 0x40,
   RescanAssets: 0x41,
   GetEngineHealth: 0x50,
+  GetComponentTypes: 0x60,
+  AddComponent: 0x61,
+  RemoveComponent: 0x62,
+  SetComponentFields: 0x63,
+  GetComponent: 0x64,
+  GetLuaFields: 0x65,
   GetProjectInfo: 0x70,
   SetProjectSettings: 0x71,
   SetStartupScene: 0x72,
@@ -174,6 +202,10 @@ export const ResponseType = {
   ProjectInfo: 0x0E,
   Hierarchy: 0x0F,
   EntityData: 0x10,
+  ComponentTypes: 0x11,
+  ComponentAdded: 0x12,
+  ComponentData: 0x13,
+  LuaFields: 0x14,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -211,6 +243,12 @@ export const CommandResponse = {
   CreateScript: "ScriptData",
   RescanAssets: "Ok",
   GetEngineHealth: "EngineHealth",
+  GetComponentTypes: "ComponentTypes",
+  AddComponent: "ComponentAdded",
+  RemoveComponent: "Ok",
+  SetComponentFields: "ComponentData",
+  GetComponent: "ComponentData",
+  GetLuaFields: "LuaFields",
   GetProjectInfo: "ProjectInfo",
   SetProjectSettings: "ProjectInfo",
   SetStartupScene: "ProjectInfo",
@@ -324,6 +362,32 @@ export interface CreateScriptRequest {
   name: string;
 }
 
+export interface AddComponentRequest {
+  entityId: string;
+  typeName: string;
+}
+
+export interface RemoveComponentRequest {
+  entityId: string;
+  componentId: string;
+}
+
+export interface SetComponentFieldsRequest {
+  entityId: string;
+  componentId: string;
+  values: unknown;
+}
+
+export interface GetComponentRequest {
+  entityId: string;
+  componentId: string;
+}
+
+export interface GetLuaFieldsRequest {
+  entityId: string;
+  componentId: string;
+}
+
 export interface SetProjectSettingsRequest {
   settings: unknown;
 }
@@ -420,6 +484,23 @@ export interface EngineHealthResponse {
   healthy: boolean;
   count: number;
   subsystems: SubsystemStatus[];
+}
+
+export interface ComponentTypesResponse {
+  types: ComponentSchema[];
+}
+
+export interface ComponentAddedResponse {
+  componentId: string;
+  values: unknown;
+}
+
+export interface ComponentDataResponse {
+  values: unknown;
+}
+
+export interface LuaFieldsResponse {
+  schema: ComponentSchema;
 }
 
 export interface ProjectInfoResponse {
@@ -1049,6 +1130,88 @@ export function decodeCreateScriptRequest(payload: Uint8Array): CreateScriptRequ
   return { name };
 }
 
+/** AddComponent's request payload (without the frame header) */
+export function encodeAddComponentRequest(value: AddComponentRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.typeName);
+  return writer.finish();
+}
+
+/** Reads AddComponent's request payload; bytes after the last field are ignored */
+export function decodeAddComponentRequest(payload: Uint8Array): AddComponentRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const typeName = reader.string();
+  return { entityId, typeName };
+}
+
+/** RemoveComponent's request payload (without the frame header) */
+export function encodeRemoveComponentRequest(value: RemoveComponentRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.componentId);
+  return writer.finish();
+}
+
+/** Reads RemoveComponent's request payload; bytes after the last field are ignored */
+export function decodeRemoveComponentRequest(payload: Uint8Array): RemoveComponentRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const componentId = reader.string();
+  return { entityId, componentId };
+}
+
+/** SetComponentFields's request payload (without the frame header) */
+export function encodeSetComponentFieldsRequest(value: SetComponentFieldsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.componentId);
+  writer.json(value.values);
+  return writer.finish();
+}
+
+/** Reads SetComponentFields's request payload; bytes after the last field are ignored */
+export function decodeSetComponentFieldsRequest(payload: Uint8Array): SetComponentFieldsRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const componentId = reader.string();
+  const values = reader.json() as unknown;
+  return { entityId, componentId, values };
+}
+
+/** GetComponent's request payload (without the frame header) */
+export function encodeGetComponentRequest(value: GetComponentRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.componentId);
+  return writer.finish();
+}
+
+/** Reads GetComponent's request payload; bytes after the last field are ignored */
+export function decodeGetComponentRequest(payload: Uint8Array): GetComponentRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const componentId = reader.string();
+  return { entityId, componentId };
+}
+
+/** GetLuaFields's request payload (without the frame header) */
+export function encodeGetLuaFieldsRequest(value: GetLuaFieldsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.componentId);
+  return writer.finish();
+}
+
+/** Reads GetLuaFields's request payload; bytes after the last field are ignored */
+export function decodeGetLuaFieldsRequest(payload: Uint8Array): GetLuaFieldsRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const componentId = reader.string();
+  return { entityId, componentId };
+}
+
 /** SetProjectSettings's request payload (without the frame header) */
 export function encodeSetProjectSettingsRequest(value: SetProjectSettingsRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1346,6 +1509,64 @@ export function decodeEngineHealthResponse(payload: Uint8Array): EngineHealthRes
   return { healthy, count, subsystems };
 }
 
+/** ComponentTypes's payload (without the frame header) */
+export function encodeComponentTypesResponse(value: ComponentTypesResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.types);
+  return writer.finish();
+}
+
+/** Reads ComponentTypes's payload; bytes after the last field are ignored */
+export function decodeComponentTypesResponse(payload: Uint8Array): ComponentTypesResponse {
+  const reader = new ProtocolReader(payload);
+  const types = reader.json() as ComponentSchema[];
+  return { types };
+}
+
+/** ComponentAdded's payload (without the frame header) */
+export function encodeComponentAddedResponse(value: ComponentAddedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.componentId);
+  writer.json(value.values);
+  return writer.finish();
+}
+
+/** Reads ComponentAdded's payload; bytes after the last field are ignored */
+export function decodeComponentAddedResponse(payload: Uint8Array): ComponentAddedResponse {
+  const reader = new ProtocolReader(payload);
+  const componentId = reader.string();
+  const values = reader.json() as unknown;
+  return { componentId, values };
+}
+
+/** ComponentData's payload (without the frame header) */
+export function encodeComponentDataResponse(value: ComponentDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.values);
+  return writer.finish();
+}
+
+/** Reads ComponentData's payload; bytes after the last field are ignored */
+export function decodeComponentDataResponse(payload: Uint8Array): ComponentDataResponse {
+  const reader = new ProtocolReader(payload);
+  const values = reader.json() as unknown;
+  return { values };
+}
+
+/** LuaFields's payload (without the frame header) */
+export function encodeLuaFieldsResponse(value: LuaFieldsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.schema);
+  return writer.finish();
+}
+
+/** Reads LuaFields's payload; bytes after the last field are ignored */
+export function decodeLuaFieldsResponse(payload: Uint8Array): LuaFieldsResponse {
+  const reader = new ProtocolReader(payload);
+  const schema = reader.json() as ComponentSchema;
+  return { schema };
+}
+
 /** ProjectInfo's payload (without the frame header) */
 export function encodeProjectInfoResponse(value: ProjectInfoResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1387,6 +1608,11 @@ export const RequestCodecs = {
   GetEntity: { encode: encodeGetEntityRequest, decode: decodeGetEntityRequest },
   SetLocalTransform: { encode: encodeSetLocalTransformRequest, decode: decodeSetLocalTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
+  AddComponent: { encode: encodeAddComponentRequest, decode: decodeAddComponentRequest },
+  RemoveComponent: { encode: encodeRemoveComponentRequest, decode: decodeRemoveComponentRequest },
+  SetComponentFields: { encode: encodeSetComponentFieldsRequest, decode: decodeSetComponentFieldsRequest },
+  GetComponent: { encode: encodeGetComponentRequest, decode: decodeGetComponentRequest },
+  GetLuaFields: { encode: encodeGetLuaFieldsRequest, decode: decodeGetLuaFieldsRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
 } as const;
@@ -1409,5 +1635,9 @@ export const ResponseCodecs = {
   EntityData: { encode: encodeEntityDataResponse, decode: decodeEntityDataResponse },
   ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
   EngineHealth: { encode: encodeEngineHealthResponse, decode: decodeEngineHealthResponse },
+  ComponentTypes: { encode: encodeComponentTypesResponse, decode: decodeComponentTypesResponse },
+  ComponentAdded: { encode: encodeComponentAddedResponse, decode: decodeComponentAddedResponse },
+  ComponentData: { encode: encodeComponentDataResponse, decode: decodeComponentDataResponse },
+  LuaFields: { encode: encodeLuaFieldsResponse, decode: decodeLuaFieldsResponse },
   ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },
 } as const;
