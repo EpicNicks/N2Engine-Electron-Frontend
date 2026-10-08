@@ -1,12 +1,14 @@
 {
-  // The page (src/renderer), type checked only: esbuild bundles it (scripts/bundle.js). No Node types, since the
-  // page is sandboxed and can't use Node.
+  // The page (src/renderer), type checked only: esbuild bundles it (scripts/bundle.js). Preact components in .tsx,
+  // with the automatic JSX runtime. No Node types, since the page is sandboxed and can't use Node.
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
