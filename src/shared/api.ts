@@ -3,6 +3,8 @@
 // project's files. Types and plain constants only: this file is imported by all three sides.
 
 import type {
+  AssetDetails,
+  AssetListResponse,
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
@@ -74,6 +76,29 @@ export interface EngineCommands {
 
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
+  /**
+   * The assets of a folder and its subfolders (protocol 1.9.0): folder is res://... (empty: the whole assets folder),
+   * recursive lists everything below. Sorted, not paged; folders are res:// paths found on disk, empty ones too.
+   */
+  listAssets(folder: string, recursive: boolean): Promise<AssetListResponse>
+  /** One asset by res:// path or UUID: its info, import settings (customData) and whether the engine holds it */
+  getAssetInfo(uuidOrPath: string): Promise<AssetDetails>
+  /**
+   * Replaces an asset's import settings with a JSON object (at most 64 KiB) and saves its .meta; the next load of the
+   * asset uses them. An assetsChanged event lists the path as modified.
+   */
+  setImportSettings(path: string, customData: JsonObject): Promise<void>
+  /** A text file (.lua, .scene, .json, .txt ...; at most 4 MiB of valid UTF-8), exactly as it is on disk */
+  readTextAsset(path: string): Promise<string>
+  /**
+   * Writes a text file as it is given (made when missing, in a folder that exists); a script an object holds is
+   * reloaded, and a script error is a log event, not an Error. Refused for the open scene's own file.
+   */
+  writeTextAsset(path: string, text: string): Promise<void>
+  /** Makes a .lua file from the behaviour-script template and the folders above it; answers its path and UUID */
+  createScriptAsset(path: string, className: string): Promise<{ path: string; uuid: string }>
+  /** Makes a folder and those above it that are missing; Ok when it exists */
+  createFolder(path: string): Promise<void>
 
   getEngineHealth(): Promise<EngineHealthResponse>
 
@@ -200,6 +225,13 @@ export const EngineCommandArgs = {
   setStartupScene: ["string"],
   createScript: ["string"],
   rescanAssets: [],
+  listAssets: ["string", "bool"],
+  getAssetInfo: ["string"],
+  setImportSettings: ["string", "jsonObject"],
+  readTextAsset: ["string"],
+  writeTextAsset: ["string", "string"],
+  createScriptAsset: ["string", "string"],
+  createFolder: ["string"],
   getEngineHealth: [],
   pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],

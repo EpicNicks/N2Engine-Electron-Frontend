@@ -6,7 +6,7 @@ import { ComponentChildren } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import { assetName } from "./asset-lookup"
-import { AssetDragType, EntityDragType, FieldDropEffect, dragHas } from "./drag-types"
+import { AssetDragType, EntityDragType, FieldDropEffect, dragHas, parseAssetDrag } from "./drag-types"
 import {
   axesOf,
   checkNumber,
@@ -21,7 +21,6 @@ import {
   parseJsonText,
   parseNumberText,
 } from "./inspector-fields"
-import { toResPath } from "./paths"
 import { useApp } from "./ui"
 
 /** What every editor is given */
@@ -550,7 +549,7 @@ function AssetSlot(props: {
   onChange(uuid: string | null): void
   onProblem(message: string): void
 }) {
-  const { store, inspector } = useApp()
+  const { inspector } = useApp()
   const assets = inspector.assets.value
   const { field, uuid } = props
   const label = uuid ? assets.label(uuid) : null
@@ -564,15 +563,13 @@ function AssetSlot(props: {
     if (checked.ok) props.onChange(checked.value)
     else props.onProblem(checked.error)
   }
+  // An asset dragged from the Assets panel: it names its UUID and type, and the field takes it if the type fits
   const dropped = (e: DragEvent) => {
-    const file = e.dataTransfer?.getData(AssetDragType) ?? ""
-    const resPath = toResPath(store.projectPath.value ?? "", file)
-    if (resPath === null) return props.onProblem("Only files in the project's assets folder are assets")
-    const entry = assets.byPath(resPath)
-    if (!entry) {
-      return props.onProblem(`${resPath} isn't in the host's asset index (a file added just now is indexed on a rescan)`)
-    }
-    choose(entry.uuid)
+    const dragged = parseAssetDrag(e.dataTransfer?.getData(AssetDragType) ?? "")
+    if (!dragged) return props.onProblem("That isn't an asset")
+    const checked = assets.check(field, dragged)
+    if (checked.ok) props.onChange(checked.value)
+    else props.onProblem(checked.error)
   }
   return (
     <Slot

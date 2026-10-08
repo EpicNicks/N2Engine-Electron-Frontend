@@ -155,6 +155,13 @@ class FakeClient {
   getAutosave = (...args: unknown[]) => this.record("getAutosave", args)
   restoreAutosave = (...args: unknown[]) => this.record("restoreAutosave", args)
   discardAutosave = (...args: unknown[]) => this.record("discardAutosave", args)
+  listAssets = (...args: unknown[]) => this.record("listAssets", args)
+  getAssetInfo = (...args: unknown[]) => this.record("getAssetInfo", args)
+  setImportSettings = (...args: unknown[]) => this.record("setImportSettings", args)
+  readTextAsset = (...args: unknown[]) => this.record("readTextAsset", args)
+  writeTextAsset = (...args: unknown[]) => this.record("writeTextAsset", args)
+  createScriptAsset = (...args: unknown[]) => this.record("createScriptAsset", args)
+  createFolder = (...args: unknown[]) => this.record("createFolder", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -521,6 +528,45 @@ describe("EngineHost (the main process's engine IPC)", () => {
       ["getAutosave", [1]],
       ["restoreAutosave", ["x"]],
       ["discardAutosave", [null]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+  })
+
+  test("the asset commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const calls: Array<[string, unknown[]]> = [
+      ["listAssets", ["", true]],
+      ["getAssetInfo", ["res://a.png"]],
+      ["setImportSettings", ["res://a.png", { sRGB: false }]],
+      ["readTextAsset", ["res://a.lua"]],
+      ["writeTextAsset", ["res://a.lua", "print(1)\r\n"]],
+      ["createScriptAsset", ["res://a.lua", ""]],
+      ["createFolder", ["res://scripts"]],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["listAssets", ["res://"]],
+      ["listAssets", ["res://", "yes"]],
+      ["listAssets", [1, true]],
+      ["getAssetInfo", [{ length: 1 }]],
+      ["setImportSettings", ["res://a.png", [1]]],
+      ["setImportSettings", ["res://a.png", "{}"]],
+      ["setImportSettings", ["res://a.png", null]],
+      ["readTextAsset", []],
+      ["writeTextAsset", ["res://a.lua"]],
+      ["writeTextAsset", ["res://a.lua", 5]],
+      ["createScriptAsset", ["res://a.lua"]],
+      ["createFolder", [["res://x"]]],
     ]
     client.calls.length = 0
     for (const [name, args] of bad) {

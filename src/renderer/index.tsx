@@ -4,6 +4,8 @@
 import { render } from "preact"
 import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
+import { AssetsState } from "./assets-state"
+import { assetEntriesOf } from "./asset-tree"
 import { EditController } from "./edit-controller"
 import { editActions } from "./edit-actions"
 import { EditGroups } from "./edit-groups"
@@ -81,7 +83,13 @@ const store = new EditorStore({
 })
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
 const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
-const scene = new SceneState(window.engine, window.project)
+const scene = new SceneState(window.engine)
+// The assets panel: the host's listing, import settings and text files (a save's reload errors are read from the log)
+const assets = new AssetsState(
+  window.engine,
+  { mark: () => store.console.lastEntryId, poll: () => store.console.pollNow() },
+  (what, e) => store.reportError(what, e)
+)
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
   // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
@@ -109,16 +117,22 @@ const viewport = new ViewportController({
 const app: AppState = {
   store,
   scene,
+  assets,
   hierarchy,
   viewport,
-  inspector: new InspectorState(window.engine, window.project, {
-    confirm: confirmDialog,
-    // The file systems of Windows and macOS don't tell res:// paths apart by case
-    caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
-    // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
-    onError: (what, e) => store.reportError(what, e),
-    groups,
-  }),
+  // The asset fields choose from the host's listing, parts of models included
+  inspector: new InspectorState(
+    window.engine,
+    { listAssets: async () => assetEntriesOf(await window.engine.listAssets("", true)) },
+    {
+      confirm: confirmDialog,
+      // The file systems of Windows and macOS don't tell res:// paths apart by case
+      caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
+      // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
+      onError: (what, e) => store.reportError(what, e),
+      groups,
+    }
+  ),
   audio: new AudioController(window.engine),
 }
 
