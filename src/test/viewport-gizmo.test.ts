@@ -10,7 +10,6 @@ import {
   gizmoLayout,
   hitTestGizmo,
   localPositionAfterMove,
-  parentWorldMatrix,
   projectBox,
   snapTo,
 } from "../renderer/viewport-gizmo"
@@ -21,6 +20,8 @@ import {
   mat4Translation,
   projectionMatrix,
   quatFromAxisAngle,
+  quatMultiply,
+  quatRotate,
   vec3,
   viewMatrix,
   worldToScreen,
@@ -45,19 +46,44 @@ function camera(position: Vec3) {
   return { view, viewProjection: mat4Multiply(projection, view) }
 }
 
-/** An object whose parent is the given matrix: its world matrix is parent * local */
-function targetUnder(parent: Mat4, localPosition: Vec3, localRotation: Quat = IdentityQuat, localScale = vec3(1, 1, 1)): GizmoTarget {
+/** A transform as the engine keeps it */
+interface Trs {
+  position: Vec3
+  rotation: Quat
+  scale: Vec3
+}
+
+/** Transform::Combine: position = pPos + pRot * (pScale * lPos), rotation = pRot * lRot, scale = pScale * lScale */
+function combine(parent: Trs, child: Trs): Trs {
+  const scaled = vec3(child.position.x * parent.scale.x, child.position.y * parent.scale.y, child.position.z * parent.scale.z)
+  const rotated = quatRotate(parent.rotation, scaled)
+  return {
+    position: vec3(parent.position.x + rotated.x, parent.position.y + rotated.y, parent.position.z + rotated.z),
+    rotation: quatMultiply(parent.rotation, child.rotation),
+    scale: vec3(parent.scale.x * child.scale.x, parent.scale.y * child.scale.y, parent.scale.z * child.scale.z),
+  }
+}
+
+const rootTrs: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(1, 1, 1) }
+
+/** An object under the given parent: its world matrix is what the engine builds (T * R * S of the combined transform) */
+function targetUnder(parent: Trs, localPosition: Vec3, localRotation: Quat = IdentityQuat, localScale = vec3(1, 1, 1)): GizmoTarget {
+  const world = combine(parent, { position: localPosition, rotation: localRotation, scale: localScale })
   return {
     id: "obj",
     name: "Cube",
     localPosition,
     localRotation,
     localScale,
-    worldMatrix: mat4Multiply(parent, mat4Compose(localPosition, localRotation, localScale)),
+    worldMatrix: mat4Compose(world.position, world.rotation, world.scale),
   }
 }
 
-const identity = mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(1, 1, 1))
+/** Where the object is in the world if its local position were this (the engine's own composition) */
+function worldPositionWith(parent: Trs, target: GizmoTarget, local: Vec3): Vec3 {
+  return combine(parent, { position: local, rotation: target.localRotation, scale: target.localScale }).position
+}
+
 
 describe("gizmoLayout", () => {
   test("the handles are GizmoSizePixels long on screen, at any distance", () => {
@@ -144,37 +170,55 @@ describe("AxisDrag", () => {
   })
 })
 
-describe("local position under a parent", () => {
+describe("local position under a parent (the engine's Transform::Combine)", () => {
+  const quarterY = quatFromAxisAngle(vec3(0, 1, 0), Math.PI / 2)
+  const quarterZ = quatFromAxisAngle(vec3(0, 0, 1), Math.PI / 2)
+
+  /** After the move the engine's own composition puts the object exactly deltaWorld from where it was */
+  function assertMoves(parent: Trs, target: GizmoTarget, delta: Vec3): void {
+    const local = localPositionAfterMove(target, delta)!
+    assert.ok(local, "a local position")
+    const before = mat4Translation(target.worldMatrix)
+    nearVec(worldPositionWith(parent, target, local), vec3(before.x + delta.x, before.y + delta.y, before.z + delta.z), 1e-9)
+  }
+
   test("a root moves by the world move", () => {
-    const target = targetUnder(identity, vec3(1, 2, 3))
+    const target = targetUnder(rootTrs, vec3(1, 2, 3))
     nearVec(localPositionAfterMove(target, vec3(5, 0, 0))!, vec3(6, 2, 3))
   })
 
   test("a parent turned a quarter about Y: a world +X move is a local +Z move", () => {
-    // Local +Z maps to world +X under a +90 degree turn about Y
-    const parent = mat4Compose(vec3(10, 0, 0), quatFromAxisAngle(vec3(0, 1, 0), Math.PI / 2), vec3(1, 1, 1))
+    const parent: Trs = { position: vec3(10, 0, 0), rotation: quarterY, scale: vec3(1, 1, 1) }
     const target = targetUnder(parent, vec3(1, 0, 0), quatFromAxisAngle(vec3(1, 1, 1), 0.9)) // its own rotation doesn't matter
     nearVec(localPositionAfterMove(target, vec3(2, 0, 0))!, vec3(1, 0, 2))
-    // And moving the local position that way really moves the world position by that much
-    const after = mat4Multiply(parent, mat4Compose(vec3(1, 0, 2), target.localRotation, target.localScale))
-    nearVec(mat4Translation(after), { x: mat4Translation(target.worldMatrix).x + 2, y: mat4Translation(target.worldMatrix).y, z: mat4Translation(target.worldMatrix).z })
+    assertMoves(parent, target, vec3(2, 0, 0))
   })
 
-  test("a scaled parent: a world move of 6 under a scale of 3 is 2 in local units", () => {
-    const parent = mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(3, 3, 3))
+  test("a uniformly scaled parent: a world move of 6 under a scale of 3 is 2 in local units", () => {
+    const parent: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(3, 3, 3) }
     const target = targetUnder(parent, vec3(1, 1, 1))
     nearVec(localPositionAfterMove(target, vec3(0, 6, 0))!, vec3(1, 3, 1))
   })
 
-  test("the parent's world matrix is recovered from the object's", () => {
-    const parent = mat4Compose(vec3(1, 2, 3), quatFromAxisAngle(vec3(0, 0, 1), 0.4), vec3(2, 1, 1))
-    const target = targetUnder(parent, vec3(5, 0, 0), quatFromAxisAngle(vec3(0, 1, 0), 1.1), vec3(1, 2, 3))
-    parentWorldMatrix(target)!.forEach((value, i) => near(value, parent[i], 1e-9, `element ${i}`))
+  test("a parent scaled (2, 1, 1) with a child turned a quarter about Z: the child's rotation is not the parent's frame", () => {
+    const parent: Trs = { position: vec3(1, 2, 3), rotation: IdentityQuat, scale: vec3(2, 1, 1) }
+    const target = targetUnder(parent, vec3(1, 1, 0), quarterZ)
+    // The world X move of 4 is 2 local units of X; Y and Z are unscaled
+    nearVec(localPositionAfterMove(target, vec3(4, 0, 0))!, vec3(3, 1, 0))
+    nearVec(localPositionAfterMove(target, vec3(0, 3, 0))!, vec3(1, 4, 0))
+    for (const d of [vec3(4, 0, 0), vec3(0, 3, 0), vec3(0, 0, -2), vec3(1, 2, 3)]) assertMoves(parent, target, d)
   })
 
-  test("an object with a zero scale can't be moved (no inverse)", () => {
-    const target = targetUnder(identity, vec3(0, 0, 0), IdentityQuat, vec3(1, 0, 1))
-    assert.equal(localPositionAfterMove(target, vec3(1, 0, 0)), null)
+  test("a rotated and non-uniformly scaled parent with a rotated, scaled child", () => {
+    const parent: Trs = { position: vec3(-4, 5, 6), rotation: quatFromAxisAngle(vec3(1, 2, 3), 0.8), scale: vec3(2, 0.5, 3) }
+    const target = targetUnder(parent, vec3(3, -2, 1), quatFromAxisAngle(vec3(0, 1, 1), 1.3), vec3(1.5, 2, 0.25))
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(-3, 2, 5)]) assertMoves(parent, target, d)
+  })
+
+  test("a zero scale (the object's or the parent's) can't be moved", () => {
+    assert.equal(localPositionAfterMove(targetUnder(rootTrs, vec3(0, 0, 0), IdentityQuat, vec3(1, 0, 1)), vec3(1, 0, 0)), null)
+    const flat: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(1, 0, 1) }
+    assert.equal(localPositionAfterMove(targetUnder(flat, vec3(1, 1, 1)), vec3(1, 0, 0)), null)
   })
 })
 
@@ -217,8 +261,7 @@ describe("GizmoDrag", () => {
   }
 
   const c = camera(vec3(0, 0, 10))
-  const parent = mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(1, 1, 1))
-  const target = targetUnder(parent, vec3(1, 0, 0), quatFromAxisAngle(vec3(0, 1, 0), 0.5), vec3(2, 2, 2))
+  const target = targetUnder(rootTrs, vec3(1, 0, 0), quatFromAxisAngle(vec3(0, 1, 0), 0.5), vec3(2, 2, 2))
   const pixelAt = (x: number) => worldToScreen(c.viewProjection, vec3(x, 0, 0), W, H)!
   const begin = () => AxisDrag.begin("x", mat4Translation(target.worldMatrix), c.viewProjection, pixelAt(2), W, H)!
 
@@ -347,5 +390,53 @@ describe("the selection box", () => {
     const edges = projectBox(c.viewProjection, vec3(-1, -1, 5), vec3(1, 1, 15), W, H)
     assert.ok(edges.length < 12)
     assert.ok(edges.length > 0)
+  })
+})
+
+describe("AxisDrag limits", () => {
+  const c = camera(vec3(0, 0, 10))
+  const pixelAt = (x: number) => worldToScreen(c.viewProjection, vec3(x, 0, 0), W, H)!
+
+  test("a ray that meets the axis beyond the far plane is not followed", () => {
+    const drag = AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelAt(1), W, H, 5)!
+    assert.equal(drag.moveAt(pixelAt(3)), null) // the nearest point is about 10 from the camera
+    const roomy = AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelAt(1), W, H, 50)!
+    near(roomy.moveAt(pixelAt(3))!, 2, 1e-4)
+  })
+
+  test("near the axis's vanishing point every answer is finite or null", () => {
+    // The camera looks down -X from (20, 1, 0): the X axis runs along its view direction
+    const view = viewMatrix(vec3(20, 1, 0), quatFromAxisAngle(vec3(0, 1, 0), Math.PI / 2))
+    const vp = mat4Multiply(projectionMatrix(settings, W / H), view)
+    const start = worldToScreen(vp, vec3(10, 0, 0), W, H)!
+    const drag = AxisDrag.begin("x", vec3(0, 0, 0), vp, start, W, H, 1000, 100)
+    assert.ok(drag)
+    for (let x = 0; x < W; x += 20) {
+      for (let y = 0; y < H; y += 20) {
+        const move = drag!.moveAt({ x, y })
+        assert.ok(move === null || (Number.isFinite(move) && Math.abs(move) <= 100 * 1000), `${x},${y}: ${move}`)
+      }
+    }
+  })
+
+  test("one update moves the object by at most maxStep: a flick stays bounded", () => {
+    const drag = AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelAt(1), W, H, Infinity, 2)!
+    near(drag.moveAt(pixelAt(100))!, 2, 1e-9)
+    near(drag.moveAt(pixelAt(100))!, 4, 1e-9) // the next update goes on from there
+    near(drag.moveAt(pixelAt(-100))!, 2, 1e-9)
+  })
+})
+
+describe("the gizmo at other pixel ratios", () => {
+  test("the handles are twice as long in frame pixels at ratio 2, and so is the pick distance", () => {
+    const c = camera(vec3(0, 0, 10))
+    const one = gizmoLayout(c.view, c.viewProjection, vec3(0, 0, 0), W, H, 1)!
+    const two = gizmoLayout(c.view, c.viewProjection, vec3(0, 0, 0), W, H, 2)!
+    const len = (l: typeof one) => Math.hypot(l.handles[0].to.x - l.handles[0].from.x, l.handles[0].to.y - l.handles[0].from.y)
+    near(len(two) / len(one), 2, 0.02)
+    const x = two.handles.find((h) => h.axis === "x")!
+    const pixel = { x: (x.from.x + x.to.x) / 2, y: x.from.y + 14 }
+    assert.equal(hitTestGizmo(two, pixel, 1), null) // 14 frame pixels is out of reach at ratio 1
+    assert.equal(hitTestGizmo(two, pixel, 2), "x") // and within 16 at ratio 2
   })
 })

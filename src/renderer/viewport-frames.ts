@@ -131,6 +131,11 @@ export class LatestWinsSender<T> {
     if (this.running === null) this.running = this.drain()
   }
 
+  /** Drops the value that is waiting (not the one on its way) */
+  discard(): void {
+    this.pending = null
+  }
+
   /** Resolves when nothing is pending or in flight */
   async flush(): Promise<void> {
     while (this.running !== null) await this.running

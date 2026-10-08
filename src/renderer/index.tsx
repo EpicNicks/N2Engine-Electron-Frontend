@@ -129,7 +129,8 @@ editActions.value = new EditController({
     await app.hierarchy.actionSettled
     await app.inspector.flush()
     await app.inspector.gestureEnded
-    await app.viewport.gestureEnded
+    // A gizmo drag in progress is finished first: Undo is refused while its group is open
+    await app.viewport.endActiveDrag()
   },
   refreshHistory: () => store.refreshHistory(),
   syncAfterEdit: () => store.syncAfterEdit(),

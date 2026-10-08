@@ -5,6 +5,7 @@ import {
   EditorCameraController,
   FrameMargin,
   MaxDistance,
+  MaxPosition,
   MaxPitch,
   MinDistance,
   PointFrameDistance,
@@ -218,5 +219,18 @@ describe("frame", () => {
     nearVec(camera.target, vec3(10, 20, 30))
     near(camera.distance, PointFrameDistance)
     nearVec(camera.forward, forward, 1e-9)
+  })
+})
+
+describe("the host's position limit", () => {
+  test("flying or panning far keeps the position inside it, and the look direction", () => {
+    const camera = new EditorCameraController()
+    camera.distance = 90000
+    for (let i = 0; i < 50; i++) camera.fly(vec3(0, 0, -1), 1, 1e6)
+    const request = camera.toRequest()
+    for (const v of [request.position.x, request.position.y, request.position.z]) assert.ok(Math.abs(v) <= MaxPosition)
+    nearVec(camera.forward, vec3(0, 0, -1))
+    camera.pan(1e9, 1e9, 1)
+    for (const v of [camera.position.x, camera.position.y, camera.position.z]) assert.ok(Math.abs(v) <= MaxPosition)
   })
 })

@@ -30,6 +30,8 @@ export const DefaultCamera = {
 
 export const MinDistance = 0.01
 export const MaxDistance = 100000
+/** The host refuses a position coordinate beyond this (SetEditorCamera) */
+export const MaxPosition = 1000000
 /** A pitch of exactly +-90 degrees would make yaw and roll the same axis */
 export const MaxPitch = (89 * Math.PI) / 180
 /** Radians of rotation per pixel of mouse travel */
@@ -66,6 +68,17 @@ export class EditorCameraController {
   farPlane = DefaultCamera.farPlane
   /** Counts changes of the pose: whoever sends it can tell whether it is the one it sent */
   version = 0
+
+  /** A change of the pose: the position is kept inside what the host accepts, and the version moves */
+  private changed(): void {
+    const p = this.position
+    const limit = (v: number): number => Math.max(-MaxPosition, Math.min(MaxPosition, v))
+    const clamped = vec3(limit(p.x), limit(p.y), limit(p.z))
+    if (clamped.x !== p.x || clamped.y !== p.y || clamped.z !== p.z) {
+      this.target = add(clamped, scale(this.forward, this.distance))
+    }
+    this.version++
+  }
 
   /** The camera's rotation */
   get rotation(): Quat {
@@ -116,14 +129,14 @@ export class EditorCameraController {
     this.nearPlane = camera.nearPlane
     this.farPlane = camera.farPlane
     this.target = add(camera.position, scale(this.forward, this.distance))
-    this.version++
+    this.changed()
   }
 
   /** Orbit around the target: dragging right turns the view to the right, dragging down looks down on it */
   orbit(dxPixels: number, dyPixels: number): void {
     this.yaw -= dxPixels * RadiansPerPixel
     this.pitch = clamp(this.pitch - dyPixels * RadiansPerPixel, -MaxPitch, MaxPitch)
-    this.version++
+    this.changed()
   }
 
   /** Turn the camera where it stands (the fly camera's mouse look): the target swings with it */
@@ -132,7 +145,7 @@ export class EditorCameraController {
     this.yaw -= dxPixels * RadiansPerPixel
     this.pitch = clamp(this.pitch - dyPixels * RadiansPerPixel, -MaxPitch, MaxPitch)
     this.target = add(position, scale(this.forward, this.distance))
-    this.version++
+    this.changed()
   }
 
   /**
@@ -144,13 +157,13 @@ export class EditorCameraController {
     const worldPerPixel = (2 * this.distance * Math.tan((this.fovY * Math.PI) / 360)) / viewportHeight
     const move = add(scale(this.right, -dxPixels * worldPerPixel), scale(this.up, dyPixels * worldPerPixel))
     this.target = add(this.target, move)
-    this.version++
+    this.changed()
   }
 
   /** Dolly towards (negative) or away from (positive) the target; the wheel's deltaY in pixels */
   zoom(deltaPixels: number): void {
     this.distance = clamp(this.distance * Math.exp(deltaPixels * ZoomPerPixel), MinDistance, MaxDistance)
-    this.version++
+    this.changed()
   }
 
   /**
@@ -167,7 +180,7 @@ export class EditorCameraController {
     const l = length(delta)
     // Diagonals are no faster than straight lines
     this.target = add(this.target, scale(delta, (speed * dtSeconds) / Math.max(1, l)))
-    this.version++
+    this.changed()
   }
 
   /** The fly speed (units a second): a camera far out moves faster; boost is shift held */
@@ -186,7 +199,7 @@ export class EditorCameraController {
     const fitted = radius > 0 ? (radius * FrameMargin) / Math.sin(halfFov) : PointFrameDistance
     this.target = center
     this.distance = clamp(fitted, Math.max(MinDistance, this.nearPlane * 2), MaxDistance)
-    this.version++
+    this.changed()
   }
 
   /** Look at a point: with no bounds known, the camera stands PointFrameDistance away */
@@ -194,6 +207,6 @@ export class EditorCameraController {
     if (!Number.isFinite(point.x + point.y + point.z)) return
     this.target = point
     this.distance = PointFrameDistance
-    this.version++
+    this.changed()
   }
 }

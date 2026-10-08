@@ -12,8 +12,8 @@ import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 const ViewportSettleMilliseconds = 100
 
 export interface ViewportHooks {
-  /** The viewport size the host now renders at (after SetViewportSize was answered) */
-  onSized?(size: PixelSize): void
+  /** A frame was presented: its size is the one the picture (and so the gizmo's maths) has */
+  onFrame?(size: PixelSize): void
   /** The canvas was moved, resized or given a new frame size: an overlay on top of it follows */
   onLayout?(): void
 }
@@ -46,6 +46,7 @@ export class ViewportRenderer {
         const { buffer, byteOffset, byteLength } = frame.pixels
         const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
         this.context.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
+        this.hooks.onFrame?.({ width: frame.width, height: frame.height })
       },
       schedule: (callback) => {
         const request = requestAnimationFrame(callback)
@@ -121,7 +122,6 @@ export class ViewportRenderer {
       () => {
         // The host's frame changed with its size (it says so in an event too; this needn't wait for the poll)
         this.scheduler.invalidate()
-        this.hooks.onSized?.(size)
       },
       (e) => {
         console.error("Failed to set viewport size:", e)

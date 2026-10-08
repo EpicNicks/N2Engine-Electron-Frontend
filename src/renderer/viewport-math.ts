@@ -215,13 +215,18 @@ export function screenRay(viewProjection: Mat4, x: number, y: number, width: num
  * (nearly) parallel to the line, where the answer is meaningless.
  */
 export function closestParamOnLine(ray: Ray, point: Vec3, axis: Vec3): number | null {
+  return closestOnLine(ray, point, axis)?.t ?? null
+}
+
+/** As closestParamOnLine, with s too: the distance along the ray (from its origin) of the nearest point on it */
+export function closestOnLine(ray: Ray, point: Vec3, axis: Vec3): { t: number; s: number } | null {
   const w0 = sub(point, ray.origin)
   const b = dot(axis, ray.direction)
   const denominator = 1 - b * b // a = c = 1: both are unit vectors
   if (denominator < 1e-6) return null
   const d = dot(axis, w0)
   const e = dot(ray.direction, w0)
-  return (b * e - d) / denominator
+  return { t: (b * e - d) / denominator, s: (e - b * d) / denominator }
 }
 
 /** The distance from a pixel to a segment */

@@ -13,13 +13,13 @@ import { LatestWinsSender } from "./viewport-frames"
 import {
   Pixel,
   add,
-  closestParamOnLine,
   distanceToSegment,
-  mat4Compose,
-  mat4Invert,
-  mat4Multiply,
+  closestOnLine,
+  dot,
+  isFiniteVec3,
+  length,
   mat4Translation,
-  mat4TransformDirection,
+  quatRotate,
   scale,
   screenRay,
   vec3,
@@ -34,7 +34,7 @@ export const AxisDirections: Readonly<Record<Axis, Vec3>> = {
   z: vec3(0, 0, 1),
 }
 
-/** How long the handles are on screen, in pixels */
+/** How long the handles are on screen, in CSS pixels (times devicePixelRatio in frame pixels) */
 export const GizmoSizePixels = 96
 /** How close (pixels) the pointer has to be to a handle to take it */
 export const GizmoPickPixels = 8
@@ -65,8 +65,9 @@ export function gizmoLayout(
   origin: Vec3,
   width: number,
   height: number,
-  sizePixels: number = GizmoSizePixels
+  pixelRatio: number = 1
 ): GizmoLayout | null {
+  const sizePixels = GizmoSizePixels * pixelRatio
   const center = worldToScreen(viewProjection, origin, width, height)
   if (!center) return null
   const right = vec3(view[0], view[4], view[8])
@@ -78,14 +79,19 @@ export function gizmoLayout(
   const handles: GizmoHandle[] = []
   for (const axis of Axes) {
     const end = worldToScreen(viewProjection, add(origin, scale(AxisDirections[axis], worldLength)), width, height)
-    if (!end || Math.hypot(end.x - center.x, end.y - center.y) < MinHandlePixels) continue
+    if (!end || Math.hypot(end.x - center.x, end.y - center.y) < MinHandlePixels * pixelRatio) continue
     handles.push({ axis, from: { x: center.x, y: center.y }, to: { x: end.x, y: end.y } })
   }
   return { origin: { x: center.x, y: center.y }, worldLength, handles }
 }
 
 /** The handle under the pixel, the nearest within tolerance; null for none */
-export function hitTestGizmo(layout: GizmoLayout, pixel: Pixel, tolerance: number = GizmoPickPixels): Axis | null {
+export function hitTestGizmo(
+  layout: GizmoLayout,
+  pixel: Pixel,
+  pixelRatio: number = 1,
+  tolerance: number = GizmoPickPixels * pixelRatio
+): Axis | null {
   let best: { axis: Axis; distance: number } | null = null
   for (const handle of layout.handles) {
     const d = distanceToSegment(pixel, handle.from, handle.to)
@@ -104,21 +110,33 @@ export interface GizmoTarget {
   worldMatrix: Mat4
 }
 
-/** The object's parent's world matrix: world = parentWorld * local, so parentWorld = world * local^-1; null when singular */
-export function parentWorldMatrix(target: GizmoTarget): Mat4 | null {
-  const inverse = mat4Invert(mat4Compose(target.localPosition, target.localRotation, target.localScale))
-  return inverse ? mat4Multiply(target.worldMatrix, inverse) : null
-}
-
 /**
- * The local position after moving the object by deltaWorld in the world: the parent's inverse turns the move into
- * the parent's space, where the local position lives. Null when the parent can't be inverted (a zero scale).
+ * The local position after moving the object by deltaWorld in the world. The engine does not compose
+ * world = parentWorld * local: Transform::Combine gives position = pPos + pRot * (pScale * lPos), rotation =
+ * pRot * lRot and scale = pScale * lScale (per component), and the world matrix is T * R * S, so there is no skew. The
+ * world matrix gives gRot (its normalised columns) and gScale (their lengths), hence pRot = gRot * lRot^-1 and
+ * pScale = gScale / lScale, and the local change is S(pScale)^-1 * R(pRot)^-1 * deltaWorld, with
+ * R(pRot)^-1 = R(lRot) * R(gRot)^-1. Null when a scale is zero (nothing can be divided by it).
  */
 export function localPositionAfterMove(target: GizmoTarget, deltaWorld: Vec3): Vec3 | null {
-  const parent = parentWorldMatrix(target)
-  const inverse = parent ? mat4Invert(parent) : null
-  if (!inverse) return null
-  return add(target.localPosition, mat4TransformDirection(inverse, deltaWorld))
+  const m = target.worldMatrix
+  const c0 = vec3(m[0], m[1], m[2])
+  const c1 = vec3(m[4], m[5], m[6])
+  const c2 = vec3(m[8], m[9], m[10])
+  const gScale = vec3(length(c0), length(c1), length(c2))
+  const l = target.localScale
+  if (!(gScale.x > 1e-9 && gScale.y > 1e-9 && gScale.z > 1e-9) || l.x === 0 || l.y === 0 || l.z === 0) return null
+  // R(gRot)^-1 * delta: the columns are the rotation's axes (times the scale), so the inverse takes dot products with them
+  const inGlobalFrame = vec3(
+    dot(deltaWorld, c0) / gScale.x,
+    dot(deltaWorld, c1) / gScale.y,
+    dot(deltaWorld, c2) / gScale.z
+  )
+  const rotated = quatRotate(target.localRotation, inGlobalFrame)
+  const pScale = vec3(gScale.x / Math.abs(l.x), gScale.y / Math.abs(l.y), gScale.z / Math.abs(l.z))
+  const local = vec3(rotated.x / pScale.x, rotated.y / pScale.y, rotated.z / pScale.z)
+  if (!isFiniteVec3(local)) return null
+  return add(target.localPosition, local)
 }
 
 /** The drag's move rounded to a multiple of step (ctrl held) */
@@ -134,6 +152,8 @@ export const SnapStep = 0.5
  */
 export class AxisDrag {
   private readonly startParam: number
+  /** The last move accepted: a jump from it of more than maxStep is cut to maxStep */
+  private last = 0
 
   private constructor(
     readonly axis: Axis,
@@ -141,30 +161,45 @@ export class AxisDrag {
     private readonly viewProjection: Mat4,
     private readonly width: number,
     private readonly height: number,
-    startParam: number
+    startParam: number,
+    private readonly farPlane: number,
+    private readonly maxStep: number
   ) {
     this.startParam = startParam
   }
 
-  /** Null when the drag can't start (the pointer's ray can't be made, or runs along the axis) */
+  /**
+   * Null when the drag can't start (the pointer's ray can't be made, or runs along the axis). farPlane is how far the
+   * pointer's ray may meet the axis, and maxStep how far one update may move the object: near the axis's vanishing
+   * point the nearest point runs off to infinity, and neither a point behind the camera nor a jump to it is followed.
+   */
   static begin(
     axis: Axis,
     origin: Vec3,
     viewProjection: Mat4,
     pixel: Pixel,
     width: number,
-    height: number
+    height: number,
+    farPlane: number = Infinity,
+    maxStep: number = Infinity
   ): AxisDrag | null {
     const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
-    const t = ray ? closestParamOnLine(ray, origin, AxisDirections[axis]) : null
-    return t === null ? null : new AxisDrag(axis, origin, viewProjection, width, height, t)
+    const hit = ray ? closestOnLine(ray, origin, AxisDirections[axis]) : null
+    return hit === null ? null : new AxisDrag(axis, origin, viewProjection, width, height, hit.t, farPlane, maxStep)
   }
 
-  /** The world move for the pointer now (the last one's answer is kept by the caller when this is null) */
+  /**
+   * The world move for the pointer now. Null (keep the last one) while the ray runs along the axis, or meets it behind
+   * the camera or beyond the far plane; otherwise cut to maxStep from the last move.
+   */
   moveAt(pixel: Pixel): number | null {
     const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
-    const t = ray ? closestParamOnLine(ray, this.origin, AxisDirections[this.axis]) : null
-    return t === null ? null : t - this.startParam
+    const hit = ray ? closestOnLine(ray, this.origin, AxisDirections[this.axis]) : null
+    if (!hit || !(hit.s > 0) || hit.s > this.farPlane) return null
+    const move = hit.t - this.startParam
+    if (!Number.isFinite(move)) return null
+    this.last = Math.max(this.last - this.maxStep, Math.min(this.last + this.maxStep, move))
+    return this.last
   }
 }
 
@@ -234,7 +269,23 @@ export class GizmoDrag {
     return this.finished
   }
 
-  /** Escape: the object goes back to where it was, and the group ends with nothing in it (so no undo step) */
+  /**
+   * The connection went or the scene was replaced: what is waiting to be sent is dropped (it is for objects that are
+   * gone), and the group ends. A move already on its way can't be recalled.
+   */
+  abandon(): Promise<void> {
+    if (!this.finished) {
+      this.sender.discard()
+      this.finished = this.finish()
+    }
+    return this.finished
+  }
+
+  /**
+   * Escape: the object goes back to where it was, and the group ends. The group still holds the move and the move
+   * back, so the host records a "Move" step that changes nothing (its FinishGroup skips only a group with no
+   * edits): it marks the scene as changed and clears redo. Escape is kept as it is until the host skips such groups.
+   */
   cancel(): Promise<void> {
     if (!this.finished) {
       if (this.moved) {

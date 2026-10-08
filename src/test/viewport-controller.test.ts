@@ -439,3 +439,108 @@ test("the defaults match the host's documented camera", () => {
   assert.equal(DefaultCamera.nearPlane, 0.1)
   assert.equal(DefaultCamera.farPlane, 1000)
 })
+
+describe("a drag and what happens around it", () => {
+  async function dragging() {
+    const r = rig()
+    await r.controller.loadTarget("a")
+    const m = r.controller.matrices()!
+    const onHandle = worldToScreen(m.viewProjection, vec3(1.6, 2, 3), 800, 600)!
+    r.controller.pointerDown(onHandle, false)
+    r.controller.pointerMove(worldToScreen(m.viewProjection, vec3(3.6, 2, 3), 800, 600)!, false)
+    return { r, onHandle, m }
+  }
+
+  test("endActiveDrag finishes the drag (its group ends) before an undo goes on, and the release after it does nothing", async () => {
+    const { r, onHandle } = await dragging()
+    await r.controller.endActiveDrag()
+    assert.equal(r.controller.dragging.value, false)
+    assert.equal(r.log.filter((l) => l === "end").length, 1)
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform")).length
+    assert.ok(sets >= 1, "the move so far was sent before the group ended")
+    assert.ok(r.log.lastIndexOf("end") > r.log.map((l) => l.startsWith("setLocalTransform")).lastIndexOf(true))
+    r.controller.pointerMove(onHandle, false) // the pointer is still down: nothing is sent any more
+    await r.controller.pointerUp(onHandle)
+    await settle()
+    assert.equal(r.log.filter((l) => l === "end").length, 1)
+    assert.equal(r.log.filter((l) => l.startsWith("setLocalTransform")).length, sets)
+    assert.equal(r.log.filter((l) => l.startsWith("begin")).length, 1)
+  })
+
+  test("endActiveDrag with no drag resolves", async () => {
+    const r = rig()
+    await r.controller.endActiveDrag()
+  })
+
+  test("the camera is frozen while a handle is dragged: wheel, orbit, pan, look, fly and frame do nothing", async () => {
+    const { r } = await dragging()
+    const version = r.controller.camera.version
+    r.controller.zoom(100)
+    r.controller.orbit(10, 10)
+    r.controller.pan(10, 10)
+    r.controller.look(10, 10)
+    r.controller.fly(vec3(0, 0, 1), 1, false)
+    assert.equal(await r.controller.frameSelected(), false)
+    assert.equal(r.controller.camera.version, version)
+    await r.controller.cancel()
+    r.controller.zoom(100)
+    assert.ok(r.controller.camera.version > version)
+  })
+
+  test("a disconnect mid-drag drops what is waiting and ends the group", async () => {
+    const { r } = await dragging()
+    r.disconnect()
+    r.controller.disconnected()
+    await r.controller.gestureEnded
+    assert.equal(r.controller.dragging.value, false)
+    assert.equal(r.controller.target.value, null)
+    assert.ok(r.log.includes("end"))
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform")).length
+    await settle()
+    assert.equal(r.log.filter((l) => l.startsWith("setLocalTransform")).length, sets)
+  })
+
+  test("another scene loaded mid-drag (a full change) abandons the drag; a change naming other objects does not", async () => {
+    const { r } = await dragging()
+    r.controller.objectsChanged(["other"], false)
+    assert.equal(r.controller.dragging.value, true)
+    r.controller.objectsChanged([], true)
+    await r.controller.gestureEnded
+    assert.equal(r.controller.dragging.value, false)
+    assert.ok(r.log.includes("end"))
+  })
+})
+
+describe("the pixel ratio and the frame's size", () => {
+  test("setSize says whether the size changed, and only that redraws", () => {
+    const r = rig()
+    const version = r.controller.overlayVersion.value
+    assert.equal(r.controller.setSize({ width: 800, height: 600 }), false)
+    assert.equal(r.controller.overlayVersion.value, version)
+    assert.equal(r.controller.setSize({ width: 1600, height: 1200 }), true)
+    assert.ok(r.controller.overlayVersion.value > version)
+  })
+
+  test("a press that moved 6 frame pixels is a click at ratio 2 and a drag at ratio 1", async () => {
+    const picked: number[] = []
+    const picking: PickBackend = { pick: async (x) => (picked.push(x), null), bounds: async () => null }
+    const two = rig({ picking })
+    two.controller.setPixelRatio(2)
+    two.controller.pointerDown({ x: 100, y: 100 }, false)
+    await two.controller.pointerUp({ x: 106, y: 100 })
+    assert.equal(picked.length, 1)
+    const one = rig({ picking })
+    one.controller.pointerDown({ x: 100, y: 100 }, false)
+    await one.controller.pointerUp({ x: 106, y: 100 })
+    assert.equal(picked.length, 1)
+  })
+
+  test("connecting verifies the matrices at the end, once the camera was adopted", async () => {
+    const r = rig()
+    const mine = r.controller.matrices()!
+    r.host.view = mine.view.map((v, i) => (i === 12 ? v + 5 : v))
+    r.host.projection = mine.projection
+    await r.controller.connected()
+    assert.equal(r.notes.length, 1)
+  })
+})

@@ -25,7 +25,7 @@ import {
 } from "./viewport-gizmo"
 import { Pixel, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
 import type { PixelSize } from "./viewport-size"
-import { isClick } from "./viewport-input"
+import { ClickSlop, isClick } from "./viewport-input"
 
 /**
  * The host's picking and bounds (E7b: PickEntity and GetEntityBounds; neither exists in protocol 1.7.0). Implement it
@@ -75,6 +75,9 @@ export function maxMatrixDifference(a: readonly number[], b: readonly number[]):
 /** Matrices that differ by less than this agree (the host's are float32) */
 export const MatrixTolerance = 1e-3
 
+/** One update of a drag may move the object by at most this many handle lengths */
+export const MaxStepHandleLengths = 50
+
 export class ViewportController {
   readonly camera = new EditorCameraController()
   /** The selected object as the gizmo needs it; null with none, or one that has no transform */
@@ -96,6 +99,8 @@ export class ViewportController {
   private loads = 0
   private connections = 0
   private warned = false
+  /** Frame pixels per CSS pixel: the gizmo's size, its pick distance and the click slop are CSS pixels */
+  private ratio = 1
   private frameListener: (() => void) | null = null
 
   constructor(private readonly deps: ViewportDeps) {
@@ -128,10 +133,20 @@ export class ViewportController {
     return this.drag !== null
   }
 
-  /** The viewport's pixel size (as sent to SetViewportSize) */
-  setSize(size: PixelSize | null): void {
+  /** The viewport's pixel size: the size of the frame on screen, which the host renders at (not the one last asked for) */
+  setSize(size: PixelSize | null): boolean {
+    const same = size?.width === this.size?.width && size?.height === this.size?.height && (size === null) === (this.size === null)
     this.size = size
-    this.redraw()
+    if (!same) this.redraw()
+    return !same
+  }
+
+  /** devicePixelRatio, for what is sized in CSS pixels */
+  setPixelRatio(ratio: number): void {
+    if (Number.isFinite(ratio) && ratio > 0 && ratio !== this.ratio) {
+      this.ratio = ratio
+      this.redraw()
+    }
   }
 
   // ==================== Connection ====================
@@ -149,13 +164,14 @@ export class ViewportController {
       this.deps.onError("Failed to read the editor camera", e)
     }
     await this.loadTarget(this.deps.selected())
+    await this.verifyMatrices()
   }
 
   /** The connection ended: nothing of the host's is valid */
   disconnected(): void {
     this.connections++
     this.loads++
-    this.drag = null
+    if (this.drag) void this.finishDrag("abandon", false)
     this.pressed = null
     this.target.value = null
     this.selectionBounds.value = null
@@ -221,27 +237,32 @@ export class ViewportController {
   }
 
   orbit(dx: number, dy: number): void {
+    if (this.drag) return // the drag's maths is for the camera it began with
     this.camera.orbit(dx, dy)
     this.cameraChanged()
   }
 
   look(dx: number, dy: number): void {
+    if (this.drag) return // the drag's maths is for the camera it began with
     this.camera.look(dx, dy)
     this.cameraChanged()
   }
 
   pan(dx: number, dy: number): void {
+    if (this.drag) return // the drag's maths is for the camera it began with
     if (!this.size) return
     this.camera.pan(dx, dy, this.size.height)
     this.cameraChanged()
   }
 
   zoom(deltaPixels: number): void {
+    if (this.drag) return // the drag's maths is for the camera it began with
     this.camera.zoom(deltaPixels)
     this.cameraChanged()
   }
 
   fly(move: Vec3, dtSeconds: number, boost: boolean): void {
+    if (this.drag) return
     this.camera.fly(move, dtSeconds, this.camera.flySpeed(boost))
     this.cameraChanged()
   }
@@ -251,6 +272,7 @@ export class ViewportController {
    * (GetEntity's world matrix) at a fixed distance. False when nothing is selected or the object can't be read.
    */
   async frameSelected(): Promise<boolean> {
+    if (this.drag) return false
     const id = this.deps.selected()
     if (id === null) return false
     if (this.deps.picking) {
@@ -315,7 +337,12 @@ export class ViewportController {
   /** Scene objects changed: the selected one is read again, unless this client is moving it (the drag knows) */
   objectsChanged(entityIds: readonly string[], full: boolean): void {
     const id = this.deps.selected()
-    if (id === null || this.drag) return
+    if (this.drag) {
+      // The scene was replaced under the drag: its object is gone. Anything else is the echo of the drag's own edits.
+      if (full) void this.finishDrag("abandon", true)
+      return
+    }
+    if (id === null) return
     if (full || entityIds.includes(id)) void this.loadTarget(id)
   }
 
@@ -339,7 +366,7 @@ export class ViewportController {
     if (!target || !m || !this.size || (!this.drag && !this.deps.canEdit())) return null
     // While dragging, the object is where the drag has put it, not where the host last said
     const origin = mat4Translation(target.worldMatrix)
-    return gizmoLayout(m.view, m.viewProjection, this.dragOrigin ?? origin, this.size.width, this.size.height)
+    return gizmoLayout(m.view, m.viewProjection, this.dragOrigin ?? origin, this.size.width, this.size.height, this.ratio)
   }
 
   /** The world position the gizmo is drawn at during a drag (the host's reading of it lags the drag) */
@@ -357,7 +384,7 @@ export class ViewportController {
   hover(pixel: Pixel | null): void {
     if (this.drag) return
     const layout = pixel ? this.layout() : null
-    const axis = layout && pixel ? hitTestGizmo(layout, pixel) : null
+    const axis = layout && pixel ? hitTestGizmo(layout, pixel, this.ratio) : null
     if (axis !== this.hoverAxis.value) {
       this.hoverAxis.value = axis
       this.redraw()
@@ -372,11 +399,20 @@ export class ViewportController {
     const target = this.target.value
     const layout = this.layout()
     const m = this.matrices()
-    const axis = layout ? hitTestGizmo(layout, pixel) : null
+    const axis = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
     this.pressed = { pixel, onGizmo: false }
     if (!target || !layout || !m || !this.size || !axis) return false
     const origin = mat4Translation(target.worldMatrix)
-    const axisDrag = AxisDrag.begin(axis, origin, m.viewProjection, pixel, this.size.width, this.size.height)
+    const axisDrag = AxisDrag.begin(
+      axis,
+      origin,
+      m.viewProjection,
+      pixel,
+      this.size.width,
+      this.size.height,
+      this.camera.farPlane,
+      layout.worldLength * MaxStepHandleLengths
+    )
     if (!axisDrag) return false
     this.pressed.onGizmo = true
     this.drag = new GizmoDrag(
@@ -415,33 +451,37 @@ export class ViewportController {
   async pointerUp(pixel: Pixel): Promise<void> {
     const pressed = this.pressed
     this.pressed = null
-    const drag = this.drag
-    if (drag) {
-      this.drag = null
-      this.dragOrigin = null
-      this.dragging.value = false
-      const done = drag.end()
-      this.ended = done.then(() => undefined, () => undefined)
-      await done
-      // The host's reading of the object is the truth again
-      await this.loadTarget(this.deps.selected())
-      return
-    }
-    if (pressed && !pressed.onGizmo && isClick(pressed.pixel, pixel)) await this.click(pixel)
+    if (this.drag) return this.finishDrag("end", true)
+    if (pressed && !pressed.onGizmo && isClick(pressed.pixel, pixel, ClickSlop * this.ratio)) await this.click(pixel)
   }
 
   /** The press was cancelled (Escape, or the window lost the pointer): a drag in progress puts the object back */
   async cancel(): Promise<void> {
     this.pressed = null
-    const drag = this.drag
-    if (!drag) return
+    if (this.drag) await this.finishDrag("cancel", true)
+  }
+
+  /**
+   * Finishes a drag in progress as it is (the host's Undo and Redo are refused while its group is open, and a drag
+   * that went on across one would be split in two): resolves when the group has ended. Nothing to do without a drag.
+   */
+  async endActiveDrag(): Promise<void> {
+    if (this.drag) await this.finishDrag("end", true)
+    else await this.ended
+  }
+
+  private finishDrag(how: "end" | "cancel" | "abandon", reload: boolean): Promise<void> {
+    const drag = this.drag!
     this.drag = null
     this.dragOrigin = null
     this.dragging.value = false
-    const done = drag.cancel()
-    this.ended = done.then(() => undefined, () => undefined)
-    await done
-    await this.loadTarget(this.deps.selected())
+    const done = how === "end" ? drag.end() : how === "cancel" ? drag.cancel() : drag.abandon()
+    this.ended = done.then(
+      () => undefined,
+      () => undefined
+    )
+    // The host's reading of the object is the truth again
+    return done.then(() => (reload ? this.loadTarget(this.deps.selected()) : undefined))
   }
 
   /** Resolves when a drag's group has ended (what the undo waits for) */

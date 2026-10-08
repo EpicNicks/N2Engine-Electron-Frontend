@@ -72,9 +72,9 @@ export function Viewport() {
       // console line rather than an error banner
       (e) => store.console.note("error", `Rendering stopped: ${e instanceof Error ? e.message : String(e)}`),
       {
-        onSized: (size) => {
-          viewport.setSize(size)
-          void viewport.verifyMatrices()
+        onFrame: (size) => {
+          viewport.setPixelRatio(window.devicePixelRatio || 1)
+          if (viewport.setSize(size)) void viewport.verifyMatrices()
         },
         onLayout: () => layoutOverlay(),
       }
@@ -145,6 +145,8 @@ export function Viewport() {
     }
 
     const onPointerDown = (e: PointerEvent): void => {
+      // The controls over the viewport (Frame, the help) are the page's, not the viewport's
+      if ((e.target as Element | null)?.closest?.(".viewport-tools")) return
       if (gesture || !store.connected.peek()) return
       const action = pointerActionFor(e.button, e)
       if (action === "none") return
@@ -209,6 +211,7 @@ export function Viewport() {
     const onWheel = (e: WheelEvent): void => {
       if (!store.connected.peek()) return
       e.preventDefault()
+      if (viewport.isDragging) return // the camera stays where the drag began
       viewport.zoom(wheelPixels(e.deltaY, e.deltaMode))
     }
 
@@ -248,7 +251,10 @@ export function Viewport() {
     host.addEventListener("keyup", onKeyUp)
     host.addEventListener("blur", onBlur)
     host.addEventListener("contextmenu", onContextMenu)
-    host.addEventListener("pointerleave", () => !gesture && viewport.hover(null))
+    const onPointerLeave = (): void => {
+      if (!gesture) viewport.hover(null)
+    }
+    host.addEventListener("pointerleave", onPointerLeave)
 
     viewport.onFrameNeeded(() => renderer.invalidate())
     const stops = [
@@ -308,6 +314,7 @@ export function Viewport() {
       host.removeEventListener("keyup", onKeyUp)
       host.removeEventListener("blur", onBlur)
       host.removeEventListener("contextmenu", onContextMenu)
+      host.removeEventListener("pointerleave", onPointerLeave)
       renderer.dispose()
     }
   }, [])
