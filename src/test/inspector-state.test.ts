@@ -2,6 +2,9 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { ComponentSchema, EntityDataResponse, FieldSchema } from "../protocol/protocol.generated"
 import type { AssetEntry, JsonObject } from "../shared/api"
+import { signal } from "@preact/signals-core"
+import { EmptyHistoryStatus, HistoryStatus } from "../protocol/edit-history"
+import { EditController } from "../renderer/edit-controller"
 import { EditGroups } from "../renderer/edit-groups"
 import { EntityKey, InspectorState } from "../renderer/inspector-state"
 import { fieldPatch } from "../renderer/inspector-fields"
@@ -810,6 +813,15 @@ describe("InspectorState: a drag is one undo step", () => {
     assert.deepEqual(names(calls), ["beginEditGroup", "setComponentFields", "setComponentFields", "endEditGroup"])
   })
 
+  test("beginGesture says whether a gesture started: the page listens for its end only then", async () => {
+    const withGroups = setup({ groups: true })
+    await withGroups.inspector.select("e1")
+    assert.equal(withGroups.inspector.beginGesture("a"), true)
+    assert.equal(withGroups.inspector.beginGesture("b"), false)
+    await withGroups.inspector.endGesture()
+    assert.equal(setup().inspector.beginGesture("a"), false, "no groups")
+  })
+
   test("ending twice, or without a begin, does nothing; a second begin while one is on does nothing", async () => {
     const { inspector, calls } = setup({ groups: true })
     await inspector.select("e1")
@@ -863,5 +875,75 @@ describe("InspectorState: a drag is one undo step", () => {
     assert.ok(inspector.known.value.size > 0, "a change of other objects keeps it")
     await inspector.applyChange({ full: true, entityIds: [] })
     assert.equal(inspector.known.value.size, 0)
+  })
+})
+
+describe("InspectorState and Undo", () => {
+  /** An EditController over the inspector, with a host that refuses Undo while a group is open (as the engine does) */
+  function withController() {
+    const t = setup({ groups: true })
+    const open = () =>
+      t.calls.filter(([n]) => n === "beginEditGroup").length - t.calls.filter(([n]) => n === "endEditGroup").length
+    const controller = new EditController({
+      engine: {
+        undo: async () => {
+          if (open() > 0) throw new Error("An edit group is open: end it before undoing")
+          t.calls.push(["undo", []])
+          return { label: "Edit Intensity", revision: 3, canUndo: false, canRedo: true, savedRevision: 3 }
+        },
+        redo: async () => {
+          throw new Error("not used")
+        },
+      },
+      groups: t.groups!,
+      history: signal<HistoryStatus>({ ...EmptyHistoryStatus, canUndo: true, label: "Edit Intensity", undoCount: 1 }),
+      enabled: () => true,
+      // As index.tsx: what the inspector holds back is sent, and a drag that is being ended is waited for
+      settle: async () => {
+        await t.inspector.flush()
+        await t.inspector.gestureEnded
+      },
+      refreshHistory: async () => undefined,
+      syncAfterEdit: async () => undefined,
+      applyResult: () => undefined,
+    })
+    return { ...t, controller }
+  }
+  const names = (calls: Array<[string, unknown[]]>) =>
+    calls.filter(([name]) => /EditGroup|setComponentFields|undo/.test(name)).map(([name]) => name)
+
+  test("Undo right after the slider is released (within the debounce) sends the value, ends the group, then undoes", async () => {
+    const { inspector, calls, controller } = withController()
+    await inspector.select("e1")
+    inspector.beginGesture("Edit Intensity")
+    inspector.edit("light", { intensity: 5 }) // debounced: not sent yet
+    const released = inspector.endGesture() // the pointer is up, and Ctrl+Z comes at once
+    await controller.undo()
+    await released
+    assert.deepEqual(names(calls), ["beginEditGroup", "setComponentFields", "endEditGroup", "undo"])
+  })
+
+  test("Undo while the pointer is still down sends the pending value, ends the group, then undoes; the release ends nothing twice", async () => {
+    const { inspector, calls, controller, groups } = withController()
+    await inspector.select("e1")
+    inspector.beginGesture("Edit Intensity")
+    inspector.edit("light", { intensity: 5 })
+    await controller.undo()
+    assert.deepEqual(names(calls), ["beginEditGroup", "setComponentFields", "endEditGroup", "undo"])
+    await inspector.endGesture() // the pointer is released later
+    assert.deepEqual(names(calls), ["beginEditGroup", "setComponentFields", "endEditGroup", "undo"])
+    assert.equal(groups?.depth, 0)
+  })
+
+  test("a release after Undo can't close a group that other work opened since", async () => {
+    const { inspector, calls, controller, groups } = withController()
+    await inspector.select("e1")
+    inspector.beginGesture("Edit Intensity")
+    await controller.undo()
+    const other = await groups!.begin("Delete 2 objects")
+    await inspector.endGesture()
+    assert.equal(groups?.depth, 1)
+    assert.equal(names(calls).filter((n) => n === "endEditGroup").length, 1)
+    await groups!.end(other)
   })
 })

@@ -22,6 +22,7 @@ import {
   UnsavedDialog,
   autosaveDialog,
   confirmDialog,
+  dismissAutosaveDialog,
   prompt,
   unsavedDialog,
   useApp,
@@ -72,7 +73,7 @@ const store = new EditorStore({
   engine: window.engine,
   host: window.host,
   project: window.project,
-  dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog, autosave: autosaveDialog },
+  dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog, autosave: autosaveDialog, dismissAutosave: dismissAutosaveDialog },
 })
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
 const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
@@ -102,15 +103,20 @@ editActions.value = new EditController({
   engine: window.engine,
   groups,
   history: store.history,
-  enabled: () => store.connected.value && store.scene.value !== null && !app.inspector.readOnly.value,
+  enabled: () => store.canEdit.value,
+  // What is on its way is sent, and what is running is waited for, before Undo ends the groups that are left
   settle: async () => {
     await app.hierarchy.renameSettled
+    await app.hierarchy.actionSettled
     await app.inspector.flush()
+    await app.inspector.gestureEnded
   },
   refreshHistory: () => store.refreshHistory(),
   syncAfterEdit: () => store.syncAfterEdit(),
   applyResult: (result) => store.applyEditResult(result),
 })
+// A play session makes the inspector read-only too (the host refuses edits then)
+effect(() => app.inspector.setReadOnly(store.playMode.value))
 // The host ends the groups of a connection that closes (and at the next Hello): none is open on another connection
 effect(() => {
   store.connected.value // what this runs on

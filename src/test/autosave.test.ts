@@ -48,3 +48,17 @@ describe("autosave recovery", () => {
     assert.notEqual(sceneKey(scene(1, 1)), sceneKey({ ...scene(1, 1), path: "" }))
   })
 })
+
+describe("autosave wording", () => {
+  test("a time of 0 is unknown: no 1970 date", () => {
+    const text = describeAutosave("Main", { exists: true, size: 10, modified: 0 }, () => "1970")
+    assert.doesNotMatch(text, /written|1970/)
+    assert.match(text, /\(10 B\)/)
+  })
+
+  test("an untitled scene's autosave may be another untitled scene's, and the question says so", () => {
+    const text = describeAutosave("", { exists: true, size: 10 }, undefined, true)
+    assert.match(text, /^The untitled scene has an autosave, which may be of another untitled scene/)
+    assert.match(text, /refused\), from a session that ended with unsaved changes \(10 B\)\./)
+  })
+})

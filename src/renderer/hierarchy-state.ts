@@ -80,6 +80,8 @@ export class HierarchyState {
   /** An action that changes objects is running: another one (a key held down, a double click) waits its turn */
   private acting = false
   private renameDone: Promise<void> = Promise.resolve()
+  /** The action that is running (a multi-delete, a move), settled whether it succeeds or fails */
+  private actionDone: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly engine: Engine,
@@ -280,6 +282,11 @@ export class HierarchyState {
     return done
   }
 
+  /** Resolves when the action that is running (several objects deleted, duplicated or moved) is done: Undo waits for it */
+  get actionSettled(): Promise<void> {
+    return this.actionDone
+  }
+
   /** Resolves when the last rename has been sent and read back (Ctrl+S waits for it) */
   get renameSettled(): Promise<void> {
     return this.renameDone
@@ -295,8 +302,13 @@ export class HierarchyState {
   private async exclusive<T>(otherwise: T, action: () => Promise<T>): Promise<T> {
     if (this.acting) return otherwise
     this.acting = true
+    const run = action()
+    this.actionDone = run.then(
+      () => undefined,
+      () => undefined
+    )
     try {
-      return await action()
+      return await run
     } finally {
       this.acting = false
     }

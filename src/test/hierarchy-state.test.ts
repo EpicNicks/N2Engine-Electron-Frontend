@@ -730,4 +730,33 @@ describe("HierarchyState and edit groups", () => {
     assert.equal(sent[sent.length - 1], "end")
     assert.equal(groups.depth, 0)
   })
+
+  test("actionSettled is the action that is running: Undo waits for a multi-delete to finish inside its group", async () => {
+    const { scene, state, groups } = grouped("A,B,C")
+    await state.refresh()
+    state.click(id("A"))
+    state.click(id("B"), { toggle: true })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const destroy = scene.engine.destroyEntity
+    scene.engine.destroyEntity = async (entityId: string) => {
+      await gate
+      return destroy(entityId)
+    }
+    const deleting = state.deleteSelected()
+    await settle()
+    let done = false
+    const settled = state.actionSettled.then(() => (done = true))
+    const closing = groups.closeAll()
+    await settle()
+    assert.equal(done, false)
+    assert.equal(groups.depth, 1, "the group is open while the action runs")
+    release()
+    await deleting
+    await settled
+    await closing
+    assert.equal(groups.depth, 0)
+    assert.equal(commands(scene).filter((c) => c === "end").length, 1, "ended once, by the action")
+    assert.equal(scene.text(), "C")
+  })
 })

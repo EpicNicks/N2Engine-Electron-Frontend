@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, screen, ipcMain, session } from "electron"
+import { app, BrowserWindow, dialog, Menu, screen, ipcMain, session } from "electron"
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
 import { Channels, HostState } from "../shared/api"
+import { buildAppMenuTemplate } from "./app-menu"
 import { EngineHost } from "./engine-ipc"
 import { TokenEnvVariable } from "./host-launcher"
 import { HostSettings } from "./host-settings"
@@ -129,6 +130,17 @@ app.whenReady().then(() => {
   // The editor needs no permission (camera, microphone, notifications, ...): refuse every request and check
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
+  // macOS: the menu bar's Edit items drive the editor's undo and redo (Windows and Linux have no menu bar)
+  if (process.platform === "darwin") {
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(
+        buildAppMenuTemplate(app.name, (command) => {
+          const editor = page.getEditor()
+          if (editor && !editor.isDestroyed()) editor.send(Channels.editCommand, command)
+        })
+      )
+    )
+  }
   createWindow()
 })
 

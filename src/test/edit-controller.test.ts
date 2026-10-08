@@ -5,7 +5,7 @@ import type { EditResultResponse } from "../protocol/protocol.generated"
 import { EmptyHistoryStatus, HistoryStatus } from "../protocol/edit-history"
 import { EditController } from "../renderer/edit-controller"
 import { EditGroups } from "../renderer/edit-groups"
-import { editMenuItems, editShortcutOf, isTextEntry, runEditAction } from "../renderer/edit-actions"
+import { editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "../renderer/edit-actions"
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
@@ -25,20 +25,33 @@ function setup(initial: HistoryStatus = status()) {
   let enabled = true
   const results: EditResultResponse[] = []
   const errors: string[] = []
+  // A host as the engine is: it refuses Undo and Redo while a group is open
+  let open = 0
   const groups = new EditGroups({
     isConnected: () => true,
-    beginEditGroup: async (label: string) => void log.push(`begin ${label}`),
-    endEditGroup: async () => void log.push("end"),
+    beginEditGroup: async (label: string) => {
+      open++
+      log.push(`begin ${label}`)
+    },
+    endEditGroup: async () => {
+      open--
+      log.push("end")
+    },
   })
+  const refuseWhileOpen = (): void => {
+    if (open > 0) throw new Error("An edit group is open: end it before undoing")
+  }
   const controller = new EditController({
     engine: {
       undo: async () => {
+        refuseWhileOpen()
         log.push("undo")
         const failure = errors.shift()
         if (failure) throw new Error(failure)
         return { label: "Create Cube", revision: 9, canUndo: false, canRedo: true, savedRevision: 9 }
       },
       redo: async () => {
+        refuseWhileOpen()
         log.push("redo")
         return { label: "Create Cube", revision: 10, canUndo: true, canRedo: false, savedRevision: 9 }
       },
@@ -75,7 +88,8 @@ describe("EditController", () => {
     await groups.begin("Edit Intensity") // a slider is being dragged
     log.length = 0
     await controller.undo()
-    assert.deepEqual(log, ["end", "settle", "refreshHistory", "undo", "apply", "sync"])
+    // What is pending is settled before the group it belongs to is ended
+    assert.deepEqual(log, ["settle", "end", "refreshHistory", "undo", "apply", "sync"])
     assert.deepEqual(results, [{ label: "Create Cube", revision: 9, canUndo: false, canRedo: true, savedRevision: 9 }])
     assert.equal(groups.depth, 0)
   })
@@ -134,17 +148,24 @@ describe("EditController", () => {
     assert.ok(log.includes("apply"))
   })
 
-  test("presses that come together run one after the other, in order", async () => {
+  test("a press while one runs waits for it; more presses meanwhile are that same one", async () => {
     const { controller, log } = setup(status({ canRedo: true, redoLabel: "Move Cube" }))
+    assert.equal(controller.busy(), false)
     const first = controller.undo()
+    assert.equal(controller.busy(), true)
     const second = controller.undo()
-    const third = controller.redo()
-    await Promise.all([first, second, third])
+    const third = controller.redo() // a key that repeats: not a third step
+    const fourth = controller.undo()
+    await Promise.all([first, second, third, fourth])
     const verbs = log.filter((c) => c === "undo" || c === "redo")
-    assert.deepEqual(verbs, ["undo", "undo", "redo"])
+    assert.deepEqual(verbs, ["undo", "undo"])
     // No step started before the one before it was done
     const sync = log.indexOf("sync")
     assert.ok(log.indexOf("settle", 1) > sync)
+    assert.equal(controller.busy(), false)
+    // And afterwards a press runs again
+    await controller.redo()
+    assert.equal(log.filter((c) => c === "redo").length, 1)
   })
 
   test("a failure doesn't stop the presses behind it", async () => {
@@ -155,6 +176,7 @@ describe("EditController", () => {
     await assert.rejects(failed, /nope/)
     await next
     assert.equal(log.filter((c) => c === "apply").length, 1)
+    assert.equal(controller.busy(), false)
   })
 })
 
@@ -206,5 +228,17 @@ describe("the Edit menu and shortcuts with the controller", () => {
     assert.equal(isTextEntry({ tagName: "INPUT", type: "text" }), true)
     assert.equal(isTextEntry({ tagName: "INPUT", type: "range" }), false)
     assert.equal(isTextEntry({ tagName: "DIV" }), false)
+  })
+})
+
+describe("the shortcuts' names", () => {
+  test("macOS shows Cmd, and is told from the user agent", () => {
+    const { controller } = setup(status({ canRedo: true, redoLabel: "Move Cube" }))
+    assert.deepEqual(
+      editMenuItems(controller, () => {}, true).map((i) => i.label),
+      ["Undo Create Cube (Cmd+Z)", "Redo Move Cube (Cmd+Shift+Z)"]
+    )
+    assert.equal(isMacPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"), true)
+    assert.equal(isMacPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"), false)
   })
 })

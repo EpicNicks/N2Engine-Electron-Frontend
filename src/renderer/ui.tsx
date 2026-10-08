@@ -324,6 +324,12 @@ interface AutosaveRequest {
 const autosaveRequest = signal<AutosaveRequest | null>(null)
 
 /** Asks what to do with the autosave a crash left: restore it, discard it, or decide later (also what Escape does) */
+export function dismissAutosaveDialog(): void {
+  const request = autosaveRequest.value
+  autosaveRequest.value = null
+  request?.resolve("later")
+}
+
 export function autosaveDialog(message: string): Promise<AutosaveChoice> {
   autosaveRequest.value?.resolve("later")
   return new Promise((resolve) => {

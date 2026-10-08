@@ -862,7 +862,6 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
   test("the history commands refuse a bad label, and a malformed answer, without trusting it", async () => {
     const { client, sockets } = connectFake()
     await client.connect()
-    await assert.rejects(client.beginEditGroup(""), /label must be a non-empty string/)
     await assert.rejects(client.beginEditGroup("a\0b"), /label/)
     await assert.rejects(client.beginEditGroup(5 as never), /label/)
     assert.equal(sockets[0].written.length, 0)

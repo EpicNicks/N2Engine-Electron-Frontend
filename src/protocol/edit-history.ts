@@ -77,11 +77,12 @@ export function parseAutosaveInfo(value: unknown): AutosaveInfo {
   return info
 }
 
-/** An edit group's label is text: not empty, and without NUL (the engine cuts it to 100 bytes and makes control characters ?) */
+/**
+ * An edit group's label is text without NUL (the engine cuts it to 100 bytes, makes control characters ? and names an
+ * empty one "Edit")
+ */
 export function checkEditGroupLabel(label: unknown): void {
-  if (typeof label !== "string" || label === "" || label.includes("\0")) {
-    throw new Error("label must be a non-empty string")
-  }
+  if (typeof label !== "string" || label.includes("\0")) throw new Error("label must be a string without NUL")
 }
 
 /** What the Edit menu needs to know: whether Undo and Redo can run now, and what they would undo and redo */

@@ -4,7 +4,7 @@ import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { effect } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
-import { editActions, editMenuItems, editShortcutOf, isTextEntry, runEditAction } from "./edit-actions"
+import { editActions, editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
 import { InspectorPanel } from "./inspector-panel"
 import { EnginePanel, FilesPanel, ScriptEditor } from "./panels"
@@ -84,23 +84,36 @@ function SceneButtons() {
   )
 }
 
+const mac = isMacPlatform(navigator.userAgent)
+
 /** The Edit menu: Undo and Redo, once something registers them (edit-actions.ts); no button before */
 function EditButton() {
   const { store } = useApp()
   const onError = (what: string, e: unknown) => store.reportError(what, e)
-  const items = editMenuItems(editActions.value, onError)
+  // An autosave the user put off, or couldn't restore, can still be recovered from here
+  const items: MenuItem[] = editMenuItems(editActions.value, onError, mac)
   if (items.length === 0) return null
+  const outstanding = store.autosaveOutstanding.value
+  const menuItems = (): MenuItem[] => [
+    ...editMenuItems(editActions.value, onError, mac),
+    ...(store.autosaveOutstanding.value
+      ? [
+          { separator: true } as MenuItem,
+          { label: "Recover autosave...", action: () => void store.recoverAutosave() },
+        ]
+      : []),
+  ]
   return (
     <button
       class="secondary"
-      title="Undo and redo"
+      title={outstanding ? "Undo and redo; an autosave is waiting for a decision" : "Undo and redo"}
       onClick={(e) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
         e.stopPropagation()
-        showContextMenu(rect.left, rect.bottom, editMenuItems(editActions.value, onError))
+        showContextMenu(rect.left, rect.bottom, menuItems())
       }}
     >
-      Edit
+      {outstanding ? "Edit •" : "Edit"}
     </button>
   )
 }
@@ -283,9 +296,21 @@ export function Editor() {
       // Only a field that takes text has its own undo; a checkbox, a slider or a select hasn't
       if (isTextEntry(e.target as HTMLElement | null)) return
       e.preventDefault()
+      // A held key repeats: one undo is running and one is waiting, which is enough
+      if (e.repeat && actions.busy?.()) return
       void runEditAction(actions, shortcut, (what, err) => store.reportError(what, err))
     }
     window.addEventListener("keydown", onKeyDown)
+    // macOS: the application menu's Undo and Redo (the menu owns Cmd+Z there); a text field keeps its own undo
+    window.editMenu.onCommand((command) => {
+      const actions = editActions.value
+      if (modalOpen()) return
+      if (isTextEntry(document.activeElement as HTMLElement | null)) {
+        document.execCommand(command)
+      } else if (actions !== null) {
+        void runEditAction(actions, command, (what, err) => store.reportError(what, err))
+      }
+    })
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [])
   useEffect(() => {

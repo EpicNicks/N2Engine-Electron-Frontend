@@ -51,7 +51,8 @@ describe("the answers of the undo commands are validated", () => {
 
   test("a group's label is text without NUL", () => {
     checkEditGroupLabel("Move 3 objects")
-    for (const bad of ["", "a\0b", 5, null, undefined]) assert.throws(() => checkEditGroupLabel(bad), /label/)
+    checkEditGroupLabel("") // the host names it "Edit"
+    for (const bad of ["a\0b", 5, null, undefined]) assert.throws(() => checkEditGroupLabel(bad), /label/)
   })
 })
 

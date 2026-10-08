@@ -235,6 +235,16 @@ class FakeApi implements StoreApi {
   promptAnswers: Array<string | null> = []
   unsavedAnswers: UnsavedChoice[] = []
   autosaveAnswers: AutosaveChoice[] = []
+  /** The autosave question waits on screen for answerAutosave */
+  autosaveHold = false
+  autosaveOnScreen: ((choice: AutosaveChoice) => void) | null = null
+  /** How many times the store closed the autosave question */
+  dismissed = 0
+  answerAutosave(choice: AutosaveChoice): void {
+    const resolve = this.autosaveOnScreen
+    this.autosaveOnScreen = null
+    resolve?.(choice)
+  }
   asked: string[] = []
   /** What GetHistory answers (it is not in calls: the store reads it often) */
   history: HistoryResponse = { cursor: 0, entries: [] }
@@ -250,9 +260,19 @@ class FakeApi implements StoreApi {
       this.asked.push(`unsaved ${discardLabel}: ${message}`)
       return this.unsavedAnswers.shift() ?? "cancel"
     },
-    autosave: async (message: string): Promise<AutosaveChoice> => {
+    autosave: (message: string): Promise<AutosaveChoice> => {
       this.asked.push(`autosave: ${message}`)
-      return this.autosaveAnswers.shift() ?? "later"
+      // Held: the question stays on screen until the test answers it (or the store dismisses it)
+      if (this.autosaveHold) {
+        return new Promise<AutosaveChoice>((resolve) => (this.autosaveOnScreen = resolve))
+      }
+      return Promise.resolve(this.autosaveAnswers.shift() ?? "later")
+    },
+    dismissAutosave: () => {
+      this.dismissed++
+      const resolve = this.autosaveOnScreen
+      this.autosaveOnScreen = null
+      resolve?.("later")
     },
     prompt: async (title: string, value: string) => {
       this.asked.push(`prompt ${title}: ${value}`)
@@ -1379,28 +1399,197 @@ describe("EditorStore: autosave recovery", () => {
     assert.match(api.asked[2], /^autosave: b has/)
   })
 
-  test("a new connection asks again; an answer for a connection that has gone is dropped", async () => {
+  test("a connection that ends closes the question on screen, which is not an answer; the next connection asks again", async () => {
+    const { api, store } = makeStore()
+    api.autosave = found
+    api.autosaveHold = true
+    api.restored = { path: a, name: "a", uuid: "u1", revision: 2, savedRevision: 1 }
+    await opened(api, store)
+    assert.equal(api.asked.length, 1)
+    const dismissedBefore = api.dismissed
+
+    api.pushConnection(false)
+    await settle()
+    assert.equal(api.dismissed, dismissedBefore + 1, "the question was about a host that is gone")
+    assert.equal(store.autosaveDeferred.value, null, "closing it is not 'decide later'")
+    assert.equal(store.autosaveOutstanding.value, false)
+
+    api.pushConnection(true)
+    await settle()
+    await settle()
+    assert.equal(api.asked.length, 2, "asked again on the new connection")
+    assert.deepEqual(api.autosaveCalls.filter((c) => c !== "getAutosave"), [], "nothing was sent for the old answer")
+    api.answerAutosave("restore")
+    await settle()
+    await settle()
+    assert.deepEqual(api.autosaveCalls.filter((c) => c !== "getAutosave"), ["restoreAutosave"])
+  })
+
+  test("an answer is for the scene that was asked about: for another it is dropped, and the loaded one is asked", async () => {
+    const { api, store, timers } = makeStore()
+    api.autosave = found
+    api.autosaveHold = true
+    await opened(api, store)
+    assert.equal(api.asked.length, 1)
+
+    // While the question is on screen another scene is loaded: its own question can't be asked yet (one at a time)
+    const b = "res://assets/scenes/b.scene"
+    api.openScene = { path: b, name: "b", uuid: "u2", revision: 1, savedRevision: 1 }
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 1, savedRevision: 1, path: b })
+    await timers.fire()
+    await settle()
+    assert.equal(api.asked.length, 1)
+
+    api.answerAutosave("restore") // meant for a
+    await settle()
+    await settle()
+    assert.deepEqual(api.autosaveCalls.filter((c) => c === "restoreAutosave" || c === "discardAutosave"), [], "not applied to b")
+    assert.equal(api.asked.length, 2)
+    assert.match(api.asked[1], /^autosave: b has an autosave/)
+    api.autosaveHold = false
+    api.answerAutosave("discard") // for b
+    await settle()
+    await settle()
+    assert.deepEqual(api.autosaveCalls.filter((c) => c === "discardAutosave"), ["discardAutosave"])
+  })
+
+  test("a failed restore asks again, saying why, so a bad file can be discarded", async () => {
+    const { api, store } = makeStore()
+    api.autosave = found
+    api.autosaveAnswers = ["restore", "discard"]
+    api.restored = null // RestoreAutosave answers an Error
+    await opened(api, store)
+    assert.equal(api.asked.length, 2)
+    assert.match(api.asked[1], /^autosave: The autosave couldn't be restored: There is no autosave\n\na has an autosave/)
+    assert.deepEqual(api.autosaveCalls, ["getAutosave", "restoreAutosave", "discardAutosave"])
+    assert.equal(store.autosaveOutstanding.value, false)
+  })
+
+  test("Decide later, or a failed restore, leaves a decision outstanding that Recover autosave asks again, even for a dirty scene", async () => {
+    const { api, store, timers } = makeStore()
+    api.autosave = found
+    api.autosaveAnswers = ["later"]
+    await opened(api, store)
+    assert.equal(store.autosaveOutstanding.value, true)
+
+    // The scene is edited meanwhile: the automatic question would skip it, the menu's doesn't
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 3, savedRevision: 1, path: a, entityIds: ["x"] })
+    await timers.fire()
+    assert.equal(store.sceneDirty.value, true)
+    api.autosaveAnswers = ["restore"]
+    api.restored = { path: a, name: "a", uuid: "u1", revision: 4, savedRevision: 1 }
+    await store.recoverAutosave()
+    assert.equal(api.asked.length, 2)
+    assert.deepEqual(api.autosaveCalls.filter((c) => c === "restoreAutosave"), ["restoreAutosave"])
+    assert.equal(store.autosaveOutstanding.value, false)
+  })
+
+  test("a decision outstanding for an autosave that is gone (saved meanwhile) is forgotten when asked", async () => {
     const { api, store } = makeStore()
     api.autosave = found
     await opened(api, store)
+    assert.equal(store.autosaveOutstanding.value, true)
+    api.autosave = { exists: false }
+    await store.recoverAutosave()
+    assert.equal(store.autosaveOutstanding.value, false)
     assert.equal(api.asked.length, 1)
-    api.pushConnection(false)
-    api.pushConnection(true)
-    await settle()
-    await settle()
-    assert.equal(api.asked.length, 2)
+  })
 
-    // The user answers Restore after the host went away: nothing is sent to the next one
-    api.autosaveCalls.length = 0
-    let answer!: (choice: AutosaveChoice) => void
-    api.dialogs.autosave = () => new Promise<AutosaveChoice>((resolve) => (answer = resolve))
+  test("the outstanding decision belongs to the scene and the connection", async () => {
+    const { api, store, timers } = makeStore()
+    api.autosave = found
+    await opened(api, store)
+    assert.equal(store.autosaveOutstanding.value, true)
+    api.autosave = { exists: false }
+    const b = "res://assets/scenes/b.scene"
+    api.openScene = { path: b, name: "b", uuid: "u2", revision: 1, savedRevision: 1 }
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 1, savedRevision: 1, path: b })
+    await timers.fire()
+    await settle()
+    assert.equal(store.autosaveOutstanding.value, false, "b has none outstanding")
+    api.openScene = { path: a, name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
     api.pushConnection(false)
     api.pushConnection(true)
     await settle()
+    assert.equal(store.autosaveDeferred.value, null)
+  })
+
+  test("a new scene and Save As ask about the autosave of the file they land on, as Open does", async () => {
+    const { api, store } = makeStore()
+    api.autosave = found
+    api.autosaveAnswers = ["discard", "discard", "discard"]
+    await opened(api, store)
+    api.asked.length = 0
+    api.autosaveCalls.length = 0
+
+    api.promptAnswers = ["res://scenes/n.scene"]
+    await store.newScene()
     await settle()
+    await settle()
+    assert.equal(api.asked.filter((m) => m.startsWith("autosave:")).length, 1)
+    assert.match(api.asked.find((m) => m.startsWith("autosave:"))!, /^autosave: n has an autosave/)
+
+    api.asked.length = 0
+    api.promptAnswers = ["res://scenes/copy.scene"]
+    await store.saveSceneAs()
+    await settle()
+    await settle()
+    assert.match(api.asked.find((m) => m.startsWith("autosave:"))!, /^autosave: copy has an autosave/)
+    assert.deepEqual(api.autosaveCalls.filter((c) => c === "discardAutosave").length, 2)
+  })
+
+  test("a GetAutosave that failed is not an answer: the scene is asked about again the next time it is fetched", async () => {
+    const { api, store } = makeStore()
+    api.autosave = null // a transient failure
+    await opened(api, store)
+    assert.deepEqual(api.asked, [])
+    api.autosave = found
+    await store.refreshScene()
+    await settle()
+    await settle()
+    assert.equal(api.asked.length, 1)
+  })
+
+  test("the question is on screen before GetAutosave of another scene can start a second one", async () => {
+    const { api, store } = makeStore()
+    api.autosave = found
+    api.autosaveHold = true
+    api.openScene = { path: a, name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
+    await store.openProject()
+    // Two checks at once (an open and a fetch): one question
+    void store.checkAutosave(api.openScene)
+    void store.checkAutosave(api.openScene)
+    await settle()
+    await settle()
+    assert.equal(api.asked.length, 1)
+  })
+
+  test("canEdit: connected, with a scene, not busy, and not a play session", async () => {
+    const { api, store } = makeStore()
+    assert.equal(store.canEdit.value, false)
+    api.openScene = { path: a, name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
+    await store.openProject()
+    await settle()
+    assert.equal(store.canEdit.value, true)
+
+    store.setPlayMode("A play session is running")
+    assert.equal(store.canEdit.value, false)
+    store.setPlayMode(null)
+    assert.equal(store.canEdit.value, true)
+
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    api.engine.saveSceneToFile = async () => {
+      await gate
+      return api.openScene!
+    }
+    const saving = store.saveScene()
+    assert.equal(store.canEdit.value, false, "busy saving")
+    release()
+    await saving
+    assert.equal(store.canEdit.value, true)
+
     api.pushConnection(false)
-    answer("restore")
-    await settle()
-    assert.deepEqual(api.autosaveCalls, ["getAutosave"])
+    assert.equal(store.canEdit.value, false)
   })
 })

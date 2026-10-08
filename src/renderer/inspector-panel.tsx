@@ -175,8 +175,8 @@ function FieldRow({ view, field }: { view: ComponentView; field: FieldSchema }) 
   const onPointerDown = (e: PointerEvent) => {
     const target = e.target as HTMLInputElement | null
     if (target?.tagName !== "INPUT" || target.type !== "range") return
-    inspector.beginGesture(`Edit ${field.displayName}`)
-    endWhenReleased(document, window, () => void inspector.endGesture())
+    // Listening for the end only when a drag started: no listeners for one that didn't
+    if (inspector.beginGesture(`Edit ${field.displayName}`)) endWhenReleased(document, window, () => void inspector.endGesture())
   }
   const tip = [field.tooltip, field.readOnly ? "Read only" : null].filter(Boolean).join(". ")
   return (

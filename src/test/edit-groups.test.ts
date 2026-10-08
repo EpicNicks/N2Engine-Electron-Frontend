@@ -79,9 +79,9 @@ describe("EditGroups", () => {
     assert.deepEqual(host.sent, [])
   })
 
-  test("nested groups end innermost first; end with none open sends nothing", async () => {
+  test("nested groups end innermost first; end with no handle sends nothing", async () => {
     const { host, groups } = setup()
-    await groups.end()
+    await groups.end(null)
     assert.deepEqual(host.sent, [])
     await groups.within("outer", () => groups.within("inner", async () => host.sent.push("work")))
     assert.deepEqual(host.sent, ["begin outer", "begin inner", "work", "end", "end"])
@@ -92,27 +92,40 @@ describe("EditGroups", () => {
     let release!: () => void
     host.gate = new Promise<void>((resolve) => (release = resolve))
     const began = groups.begin("drag")
-    const ended = groups.end() // the pointer was released before the host answered
+    const ended = began.then((handle) => groups.end(handle)) // the pointer was released before the host answered
     await settle()
     assert.deepEqual(host.sent, ["begin drag"], "the end has not overtaken the begin")
     release()
-    assert.equal(await began, true)
+    assert.notEqual(await began, null)
     await ended
     assert.deepEqual(host.sent, ["begin drag", "end"])
     assert.equal(groups.depth, 0)
   })
 
+  test("a group is ended by its handle: a late end of one closed meanwhile closes nothing else", async () => {
+    const { host, groups } = setup()
+    const drag = await groups.begin("Edit Intensity") // a slider is held
+    await groups.closeAll() // Undo closed it
+    assert.deepEqual(host.sent, ["begin Edit Intensity", "end"])
+    const other = await groups.begin("Delete 2 objects") // other work opened its own group
+    await groups.end(drag) // the slider is released at last
+    assert.equal(groups.depth, 1, "the other group is still open")
+    assert.deepEqual(host.sent, ["begin Edit Intensity", "end", "begin Delete 2 objects"])
+    await groups.end(other)
+    assert.equal(groups.depth, 0)
+  })
+
   test("an end the host refuses as 'no group is open' counts as ended; any other failure is reported and kept", async () => {
     const { host, groups, errors } = setup()
-    await groups.begin("a")
+    const a = await groups.begin("a")
     host.endErrors = ["No edit group is open"]
-    await groups.end()
+    await groups.end(a)
     assert.equal(groups.depth, 0)
     assert.deepEqual(errors, [])
 
-    await groups.begin("b")
+    const b = await groups.begin("b")
     host.endErrors = ["Something else"]
-    await groups.end()
+    await groups.end(b)
     assert.equal(groups.depth, 1, "still counted: it may be open")
     assert.deepEqual(errors, ["Failed to end the edit group: Something else"])
     // closeAll tries it again, and it goes this time
@@ -148,12 +161,43 @@ describe("EditGroups", () => {
     assert.equal(groups.depth, 0)
   })
 
+  test("closeAll lets running work finish inside its group, which it ends itself", async () => {
+    const { host, groups } = setup()
+    let finish!: () => void
+    const work = new Promise<void>((resolve) => (finish = resolve))
+    const running = groups.within("Delete 3 objects", async () => {
+      host.sent.push("destroy 1")
+      await work
+      host.sent.push("destroy 2")
+    })
+    await settle()
+    let closed = false
+    const closing = groups.closeAll().then(() => (closed = true))
+    await settle()
+    assert.equal(closed, false, "waiting for the work")
+    assert.deepEqual(host.sent, ["begin Delete 3 objects", "destroy 1"], "the group is still open")
+    finish()
+    await running
+    await closing
+    assert.deepEqual(host.sent, ["begin Delete 3 objects", "destroy 1", "destroy 2", "end"], "one group, ended once")
+  })
+
+  test("closeAll doesn't wait for work that failed, and the work's failure is still thrown to its caller", async () => {
+    const { host, groups } = setup()
+    const failing = groups.within("x", async () => {
+      throw new Error("boom")
+    })
+    await groups.closeAll()
+    await assert.rejects(failing, /boom/)
+    assert.deepEqual(host.sent, ["begin x", "end"])
+  })
+
   test("reset forgets the groups (the host ended them with the connection), and a begin still on its way is dropped", async () => {
     const { host, groups } = setup()
-    await groups.begin("a")
+    const a = await groups.begin("a")
     groups.reset()
     assert.equal(groups.depth, 0)
-    await groups.end()
+    await groups.end(a)
     assert.deepEqual(host.sent, ["begin a"], "no end for a group of the old connection")
 
     let release!: () => void
@@ -162,8 +206,14 @@ describe("EditGroups", () => {
     await settle()
     groups.reset() // the connection ended while the host was answering
     release()
-    assert.equal(await began, false)
+    assert.equal(await began, null)
     assert.equal(groups.depth, 0)
+  })
+
+  test("an empty label is the host's to name", async () => {
+    const { host, groups } = setup()
+    await groups.within("", async () => undefined)
+    assert.deepEqual(host.sent, ["begin ", "end"])
   })
 })
 

@@ -383,6 +383,15 @@ export const MaxJsonNodes = 100_000
 
 export const ProjectTextExtensions: readonly string[] = [".scene", ".lua", ".json", ".txt"]
 
+/** A command of the application menu (macOS), which the page runs: see main/app-menu.ts */
+export type EditCommand = "undo" | "redo"
+
+/** window.editMenu */
+export interface EditMenuApi {
+  /** Called when the application menu's Undo or Redo is chosen (macOS: Cmd+Z, Cmd+Shift+Z) */
+  onCommand(listener: (command: EditCommand) => void): void
+}
+
 /** What an IPC handler returns: errors are carried as data so the page sees the original message */
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
@@ -396,6 +405,8 @@ export const Channels = {
   engineAttach: "engine:attach",
   /** main → page: ConnectionState */
   engineState: "engine:state",
+  /** main → page: EditCommand, from the application menu */
+  editCommand: "edit:command",
 
   /** () → IpcResult<HostState> */
   hostGetState: "host:getState",

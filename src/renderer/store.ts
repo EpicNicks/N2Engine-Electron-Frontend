@@ -35,6 +35,8 @@ export interface Dialogs {
   unsaved(message: string, discardLabel: string): Promise<UnsavedChoice>
   /** What to do with the autosave a crash left (the message says which scene, when and how large): see autosave.ts */
   autosave(message: string): Promise<AutosaveChoice>
+  /** Closes the autosave question if one is on screen, as "decide later" (the connection it was about is gone) */
+  dismissAutosave(): void
 }
 
 export type UnsavedChoice = "save" | "discard" | "cancel"
@@ -132,6 +134,25 @@ export class EditorStore {
    * events (and GetHistory on connecting, after missed events and around an undo). Nothing to undo when not connected.
    */
   readonly history = signal<HistoryStatus>(EmptyHistoryStatus)
+  /**
+   * The scene (sceneKey) whose autosave the user put off ("Decide later") or couldn't restore: it is offered again by
+   * Edit > Recover autosave..., and in spite of the scene's unsaved changes. null when none.
+   */
+  readonly autosaveDeferred = signal<string | null>(null)
+  /** An autosave decision is outstanding for the loaded scene: the Edit menu offers to recover it */
+  readonly autosaveOutstanding = computed(() => {
+    const scene = this.scene.value
+    return scene !== null && this.autosaveDeferred.value === sceneKey(scene)
+  })
+  /**
+   * Why the scene is a play session, not an editable one (the host refuses Undo, Redo and edits then); null while it
+   * is edited. Whatever runs the play session sets it (setPlayMode); nothing does yet, since there is no play mode.
+   */
+  readonly playMode = signal<string | null>(null)
+  /** The scene can be edited now: connected, with a scene, nothing busy and not a play session (Undo and Redo need it) */
+  readonly canEdit = computed(
+    () => this.connected.value && this.scene.value !== null && this.busy.value === null && this.playMode.value === null
+  )
   /** The last assetsChanged event, and how many arrived (panels refetch their listings when it changes) */
   readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
   readonly assetsChangeCount = signal(0)
@@ -160,10 +181,10 @@ export class EditorStore {
   private historyReads = 0
   /** Counts connections, so an answer or a question for an earlier one is dropped */
   private connections = 0
-  /** The scene the user was last asked about an autosave for on this connection (sceneKey); null when none */
+  /** The scene whose autosave GetAutosave was last answered for on this connection (sceneKey); null when none */
   private autosaveAsked: string | null = null
-  /** The autosave question is on screen: no second one */
-  private autosaveAsking = false
+  /** The connection (this.connections) an autosave question is being asked on: no second one meanwhile; null when none */
+  private autosaveAsking: number | null = null
 
   constructor(
     private readonly api: StoreApi,
@@ -357,6 +378,8 @@ export class EditorStore {
     batch(() => {
       this.connections++
       this.autosaveAsked = null
+      this.autosaveDeferred.value = null
+      this.api.dialogs.dismissAutosave()
       this.historyReads++
       this.history.value = EmptyHistoryStatus // GetHistory below says what the host has (it may be a running host)
       this.connected.value = connected
@@ -410,11 +433,8 @@ export class EditorStore {
   async openScene(path: string): Promise<SceneInfoResponse | undefined> {
     if (!(await this.confirmDiscard("open the scene"))) return undefined
     const opened = await this.sceneAction("Opening scene...", () => this.api.engine.openScene(path))
-    // Opening a scene again is reverting it, which removed its own autosave: one found now is a crash's
-    if (opened) {
-      this.autosaveAsked = null
-      void this.checkAutosave(opened)
-    }
+    // The host looks for an autosave a crash left whenever a scene is opened (again too: that is reverting it)
+    if (opened) void this.checkAutosave(opened)
     return opened
   }
 
@@ -427,7 +447,9 @@ export class EditorStore {
     if (!(await this.confirmDiscard("create the scene"))) return undefined
     const path = this.checkedScenePath(await this.api.dialogs.prompt("New scene (a res:// path)", defaultPath))
     if (path === "") return undefined
-    return this.sceneAction("Creating scene...", () => this.api.engine.newScene(path, ""))
+    const made = await this.sceneAction("Creating scene...", () => this.api.engine.newScene(path, ""))
+    if (made) void this.checkAutosave(made)
+    return made
   }
 
   /** What was typed as a scene path, as the host takes it; "" when cancelled or empty, or when it can't be one (error says why) */
@@ -460,7 +482,10 @@ export class EditorStore {
     )
     const path = this.checkedScenePath(input)
     if (path === "") return undefined
-    return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(path))
+    const saved = await this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(path))
+    // The scene is another file now, which may have an autosave of its own
+    if (saved) void this.checkAutosave(saved)
+    return saved
   }
 
   /** Runs a scene command, and takes the scene info it answers as the loaded scene's (the events say the same soon) */
@@ -543,32 +568,82 @@ export class EditorStore {
    * Asks about the scene's autosave when the host has one that a crash left (GetAutosave; a host before protocol 1.6
    * has none to ask about): restore it (RestoreAutosave, one undoable step), discard it (DiscardAutosave), or decide
    * later (the host keeps it and writes no new one until the user decides or saves). Asked once per scene per
-   * connection, and never when the scene has unsaved changes (then the autosave is this host's own copy of them).
+   * connection, and never when the scene has unsaved changes (then the autosave is this host's own copy of them),
+   * unless the user already put the question off for this scene (autosaveOutstanding). A question already on screen is
+   * not asked twice; when it is answered the scene it was about may be another one, which is then asked about instead.
+   * manual: the user asked (recoverAutosave), so the scene's unsaved changes don't matter.
    */
-  async checkAutosave(scene: SceneInfoResponse): Promise<void> {
-    this.autosaveAsked = sceneKey(scene)
-    if (this.autosaveAsking) return
+  async checkAutosave(scene: SceneInfoResponse, manual = false): Promise<void> {
     const connection = this.connections
+    if (this.autosaveAsking === connection) return
+    this.autosaveAsking = connection
+    let next: SceneInfoResponse | null = null
+    try {
+      next = await this.askAutosave(scene, manual, connection)
+    } finally {
+      if (this.autosaveAsking === connection) this.autosaveAsking = null
+    }
+    if (next && connection === this.connections) await this.checkAutosave(next)
+  }
+
+  /** One round of checkAutosave; resolves the scene to ask about next when the answer turned out to be for another one */
+  private async askAutosave(
+    scene: SceneInfoResponse,
+    manual: boolean,
+    connection: number
+  ): Promise<SceneInfoResponse | null> {
+    const key = sceneKey(scene)
     let info
     try {
       info = await this.api.engine.getAutosave()
     } catch (e) {
+      // Not marked as asked: a transient failure is tried again at the next opportunity
       console.debug("GetAutosave failed:", e)
-      return
+      return null
     }
+    if (connection !== this.connections) return null // another host: its autosave is another question
+    this.autosaveAsked = key
+    if (!info.exists && this.autosaveDeferred.value === key) this.autosaveDeferred.value = null
     const current = this.scene.value
-    if (connection !== this.connections || !current || sceneKey(current) !== sceneKey(scene)) return
-    if (!shouldOfferAutosave(current, info)) return
-    this.autosaveAsking = true
-    let choice: AutosaveChoice
-    try {
-      choice = await this.api.dialogs.autosave(describeAutosave(current.name, info))
-    } finally {
-      this.autosaveAsking = false
+    if (!current) return null
+    // Another scene was loaded meanwhile: that one is the question now
+    if (sceneKey(current) !== key) return current
+    const deferred = this.autosaveDeferred.value === key
+    if (!info.exists || !(manual || deferred || shouldOfferAutosave(current, info))) return null
+    let intro = ""
+    for (;;) {
+      const choice = await this.api.dialogs.autosave(
+        intro + describeAutosave(current.name, info, undefined, current.path === "")
+      )
+      if (connection !== this.connections) return null
+      const now = this.scene.value
+      // The answer is for the scene that was asked about, and for no other
+      if (!now || sceneKey(now) !== key) return now
+      if (choice === "restore") {
+        this.error.value = null
+        if (await this.restoreAutosave()) {
+          this.autosaveDeferred.value = null
+          return null
+        }
+        // It failed (the host said why): the question stays, with Discard to get rid of a bad file
+        intro = `The autosave couldn't be restored: ${this.error.value ?? "unknown error"}\n\n`
+        this.autosaveDeferred.value = key
+        continue
+      }
+      if (choice === "discard") {
+        await this.run(null, () => this.api.engine.discardAutosave())
+        this.autosaveDeferred.value = null
+      } else {
+        this.autosaveDeferred.value = key // Edit > Recover autosave... asks again
+      }
+      return null
     }
-    if (connection !== this.connections) return // another host: its autosave is another question
-    if (choice === "restore") await this.restoreAutosave()
-    else if (choice === "discard") await this.run(null, () => this.api.engine.discardAutosave())
+  }
+
+  /** Asks about the loaded scene's autosave now (Edit > Recover autosave...), after a "Decide later" or a failed restore */
+  async recoverAutosave(): Promise<void> {
+    const scene = this.scene.value
+    if (scene) await this.checkAutosave(scene, true)
   }
 
   /** Replaces the loaded scene's content with its autosave (one undoable step), and has everything follow */
@@ -584,6 +659,11 @@ export class EditorStore {
       await this.syncAfterEdit()
     }
     return result
+  }
+
+  /** Whatever runs a play session says so (a reason to show), and ends it with null: Undo and Redo are off meanwhile */
+  setPlayMode(reason: string | null): void {
+    this.playMode.value = reason
   }
 
   /** Applies the host's state events; log events are the console's */

@@ -30,17 +30,27 @@ export function shouldOfferAutosave(scene: SceneInfoResponse, info: AutosaveInfo
   return info.exists && !hasUnsavedChanges(scene)
 }
 
-/** The question's text: which scene, when the autosave was written, how large, and what deciding later means */
+/**
+ * The question's text: which scene, when the autosave was written, how large, and what deciding later means. A time of
+ * 0 is unknown (no 1970 date). untitled: the scene has no file, and the host keeps the autosave of every such scene in
+ * one file, so it may be another untitled scene's (the host refuses to restore one of another name).
+ */
 export function describeAutosave(
   sceneName: string,
   info: AutosaveInfo,
-  formatTime: (unixMilliseconds: number) => string = (ms) => new Date(ms).toLocaleString()
+  formatTime: (unixMilliseconds: number) => string = (ms) => new Date(ms).toLocaleString(),
+  untitled = false
 ): string {
   const details: string[] = []
-  if (info.modified !== undefined && Number.isFinite(info.modified)) details.push(`written ${formatTime(info.modified)}`)
+  if (info.modified !== undefined && Number.isFinite(info.modified) && info.modified > 0) {
+    details.push(`written ${formatTime(info.modified)}`)
+  }
   if (info.size !== undefined) details.push(formatBytes(info.size))
+  const which = untitled
+    ? "The untitled scene has an autosave, which may be of another untitled scene (a restore of one with another name is refused),"
+    : `${sceneName || "Untitled"} has an autosave`
   return (
-    `${sceneName || "Untitled"} has an autosave from a session that ended with unsaved changes` +
+    `${which} from a session that ended with unsaved changes` +
     (details.length > 0 ? ` (${details.join(", ")})` : "") +
     ".\n\nRestore it (one step, which Undo takes back), or discard it? " +
     "Until you decide, or save the scene, the editor host writes no new autosave of it."

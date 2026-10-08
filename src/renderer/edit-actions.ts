@@ -17,6 +17,8 @@ export interface EditActions {
   undoLabel?(): string
   /** What Redo would redo; "" or absent for none */
   redoLabel?(): string
+  /** An undo or redo is running or waiting: a key that repeats is ignored meanwhile */
+  busy?(): boolean
 }
 
 /** The registered actions; null until the page registers them */
@@ -80,11 +82,19 @@ export interface EditMenuItem {
   disabled?: boolean
 }
 
-/** The Edit menu's items for the registered actions: none while there are none. A failure goes to onError. */
+/** Whether the page runs on macOS, where the shortcuts are Cmd+Z and Cmd+Shift+Z */
+export const isMacPlatform = (userAgent: string): boolean => /Macintosh|Mac OS X/i.test(userAgent)
+
+/**
+ * The Edit menu's items for the registered actions: none while there are none. A failure goes to onError. mac: the
+ * shortcuts are shown as Cmd (macOS), else Ctrl.
+ */
 export function editMenuItems(
   actions: EditActions | null,
-  onError: (what: string, error: unknown) => void
+  onError: (what: string, error: unknown) => void,
+  mac = false
 ): EditMenuItem[] {
+  const modifier = mac ? "Cmd" : "Ctrl"
   if (actions === null) return []
   const canUndo = actions.canUndo()
   const canRedo = actions.canRedo()
@@ -93,12 +103,12 @@ export function editMenuItems(
   const redoLabel = canRedo ? (actions.redoLabel?.() ?? "") : ""
   return [
     {
-      label: `Undo${undoLabel ? ` ${undoLabel}` : ""} (Ctrl+Z)`,
+      label: `Undo${undoLabel ? ` ${undoLabel}` : ""} (${modifier}+Z)`,
       action: () => void runEditAction(actions, "undo", onError),
       disabled: !canUndo,
     },
     {
-      label: `Redo${redoLabel ? ` ${redoLabel}` : ""} (Ctrl+Shift+Z)`,
+      label: `Redo${redoLabel ? ` ${redoLabel}` : ""} (${modifier}+Shift+Z)`,
       action: () => void runEditAction(actions, "redo", onError),
       disabled: !canRedo,
     },
