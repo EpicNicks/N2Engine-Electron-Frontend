@@ -4,6 +4,7 @@
 
 import type {
   CameraPositionResponse,
+  ComponentSchema,
   EngineHealthResponse,
   EntityDataResponse,
   EventsResponse,
@@ -88,6 +89,28 @@ export interface EngineCommands {
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
   setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void>
+
+  /**
+   * Every component type the host can create (protocol 1.5), sorted by name, each with its fields, whether an object
+   * can have only one (singleton) and its defaults. Needs no scene; the types don't change while the host runs.
+   */
+  getComponentTypes(): Promise<ComponentSchema[]>
+  /**
+   * Adds a component of a listed type, with its default values, to an object. Answers its UUID and its values (what
+   * getComponent gives). Error for an unknown type, or a singleton the object already has.
+   */
+  addComponent(entityId: string, typeName: string): Promise<{ componentId: string; values: unknown }>
+  removeComponent(entityId: string, componentId: string): Promise<void>
+  /**
+   * Sets fields of one component from a partial of what getComponent returns, all or nothing (an Error names the
+   * field that was refused). Answers the component's values as stored (a clamped number, an enum in its canonical
+   * spelling). A request that changes scriptUUID mustn't also send scriptData.
+   */
+  setComponentFields(entityId: string, componentId: string, values: JsonObject): Promise<unknown>
+  /** A component's saved values, the JSON getEntity lists under components */
+  getComponent(entityId: string, componentId: string): Promise<unknown>
+  /** A LuaComponent's fields as its script declares them (each with container "scriptData"); ask again after the script changes */
+  getLuaFields(entityId: string, componentId: string): Promise<ComponentSchema>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -132,6 +155,12 @@ export const EngineCommandArgs = {
   duplicateEntity: ["string"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
+  getComponentTypes: [],
+  addComponent: ["string", "string"],
+  removeComponent: ["string", "string"],
+  setComponentFields: ["string", "string", "jsonObject"],
+  getComponent: ["string", "string"],
+  getLuaFields: ["string", "string"],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]

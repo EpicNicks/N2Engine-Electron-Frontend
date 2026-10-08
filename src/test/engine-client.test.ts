@@ -18,22 +18,31 @@ import {
   PROTOCOL_VERSION,
   ResponseType,
   ServerInfoResponse,
+  decodeAddComponentRequest,
   decodeCreateEntityExRequest,
   decodeDuplicateEntityRequest,
+  decodeGetComponentRequest,
   decodeGetEntityRequest,
+  decodeGetLuaFieldsRequest,
   decodeHelloRequest,
   decodeNewSceneRequest,
   decodeOpenSceneRequest,
   decodeSaveSceneToFileRequest,
+  decodeRemoveComponentRequest,
+  decodeSetComponentFieldsRequest,
   decodeSetEntityParentRequest,
   decodeSetEntityPropertiesRequest,
   decodeSetLocalTransformRequest,
   decodeSetProjectSettingsRequest,
   decodeSetStartupSceneRequest,
+  encodeComponentAddedResponse,
+  encodeComponentDataResponse,
+  encodeComponentTypesResponse,
   encodeEntityCreatedResponse,
   encodeEntityDataResponse,
   encodeErrorResponse,
   encodeHierarchyResponse,
+  encodeLuaFieldsResponse,
   encodeOkResponse,
   encodeProjectInfoResponse,
   encodeSceneInfoResponse,
@@ -691,6 +700,86 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     }
     assert.equal(sockets[0].written.length, 0)
     await assert.rejects(client.setEntityProperties("a", { colour: 1 }), /unknown property colour/)
+  })
+
+  test("the component commands send their ids and payloads and decode the answers", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+    const field = { name: "volume", displayName: "Volume", kind: "Float", typeName: "float", hidden: false, readOnly: false }
+    const schema = { typeName: "AudioSource", singleton: false, fields: [{ ...field, min: 0, max: 1 }], defaults: { volume: 1 } }
+
+    const types = client.getComponentTypes()
+    answer(ResponseType.ComponentTypes, encodeComponentTypesResponse({ types: [schema] }))
+    assert.deepEqual(await types, [schema])
+    assert.equal(sentFrame(sockets[0], 0).type, 0x60)
+    assert.equal(sentFrame(sockets[0], 0).payload.length, 0)
+
+    const added = client.addComponent("e1", "AudioSource")
+    answer(ResponseType.ComponentAdded, encodeComponentAddedResponse({ componentId: "c1", values: { volume: 1 } }))
+    assert.deepEqual(await added, { componentId: "c1", values: { volume: 1 } })
+    assert.equal(sentFrame(sockets[0], 1).type, 0x61)
+    assert.deepEqual(decodeAddComponentRequest(sentFrame(sockets[0], 1).payload), {
+      entityId: "e1",
+      typeName: "AudioSource",
+    })
+
+    const removed = client.removeComponent("e1", "c1")
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await removed
+    assert.equal(sentFrame(sockets[0], 2).type, 0x62)
+    assert.deepEqual(decodeRemoveComponentRequest(sentFrame(sockets[0], 2).payload), { entityId: "e1", componentId: "c1" })
+
+    const set = client.setComponentFields("e1", "c1", { volume: 0.5 })
+    answer(ResponseType.ComponentData, encodeComponentDataResponse({ values: { volume: 0.5, isActive: true } }))
+    assert.deepEqual(await set, { volume: 0.5, isActive: true })
+    assert.equal(sentFrame(sockets[0], 3).type, 0x63)
+    assert.deepEqual(decodeSetComponentFieldsRequest(sentFrame(sockets[0], 3).payload), {
+      entityId: "e1",
+      componentId: "c1",
+      values: { volume: 0.5 },
+    })
+
+    const got = client.getComponent("e1", "c1")
+    answer(ResponseType.ComponentData, encodeComponentDataResponse({ values: { volume: 1 } }))
+    assert.deepEqual(await got, { volume: 1 })
+    assert.equal(sentFrame(sockets[0], 4).type, 0x64)
+    assert.deepEqual(decodeGetComponentRequest(sentFrame(sockets[0], 4).payload), { entityId: "e1", componentId: "c1" })
+
+    const luaSchema = {
+      typeName: "LuaComponent",
+      singleton: false,
+      fields: [{ ...field, name: "speed", container: "scriptData" }],
+    }
+    const lua = client.getLuaFields("e1", "c1")
+    answer(ResponseType.LuaFields, encodeLuaFieldsResponse({ schema: luaSchema }))
+    assert.deepEqual(await lua, luaSchema)
+    assert.equal(sentFrame(sockets[0], 5).type, 0x65)
+    assert.deepEqual(decodeGetLuaFieldsRequest(sentFrame(sockets[0], 5).payload), { entityId: "e1", componentId: "c1" })
+  })
+
+  test("the component commands refuse bad arguments, and malformed schemas, without sending anything bad", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    await assert.rejects(client.addComponent("", "Light"), /entityId must be a non-empty string/)
+    await assert.rejects(client.addComponent("e1", ""), /typeName must be a non-empty string/)
+    await assert.rejects(client.removeComponent("e1", ""), /componentId/)
+    await assert.rejects(client.setComponentFields("e1", "c1", [1]), /values must be a JSON object/)
+    await assert.rejects(client.setComponentFields("e1", "c1", null), /values must be a JSON object/)
+    await assert.rejects(client.setComponentFields("e1", "c1", "{}"), /values must be a JSON object/)
+    await assert.rejects(client.getComponent("", "c1"), /entityId/)
+    await assert.rejects(client.getLuaFields("e1", "a b"), /componentId/)
+    assert.equal(sockets[0].written.length, 0)
+
+    // A malformed schema from the host is an error for the caller, not a bad value for the inspector
+    const bad = client.getComponentTypes()
+    sockets[0].emit(
+      "data",
+      frame(ResponseType.ComponentTypes, Buffer.from(encodeComponentTypesResponse({ types: [{ typeName: "X" } as never] })))
+    )
+    await assert.rejects(bad, /singleton must be a boolean|fields must be an array/)
   })
 
   test("an Error answer rejects with the host's message", async () => {
