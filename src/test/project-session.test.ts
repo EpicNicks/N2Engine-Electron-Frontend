@@ -21,16 +21,19 @@ class FakeHost {
   get exited(): boolean {
     return this.exitInfo !== null
   }
+  get exit(): HostExit | null {
+    return this.exitInfo
+  }
   onExit(listener: (exit: HostExit) => void): void {
     if (this.exitInfo) listener(this.exitInfo)
     else this.listeners.push(listener)
   }
   kill(): void {
     this.killed++
-    if (!this.stubborn) this.exit({ code: null, signal: "SIGTERM" })
+    if (!this.stubborn) this.end({ code: null, signal: "SIGTERM" })
   }
   /** The process ends */
-  exit(exit: HostExit): void {
+  end(exit: HostExit): void {
     if (this.exitInfo) return
     this.exitInfo = exit
     this.listeners.splice(0).forEach((l) => l(exit))
@@ -43,6 +46,8 @@ class FakeEngine implements EngineConnection {
   disconnects = 0
   closes = 0
   failNext: string | null = null
+  /** Runs as connectTo fails (the host dies meanwhile, say) */
+  onFail: (() => void) | null = null
   /** Called on disconnect (Shutdown): an --exit-on-disconnect host exits */
   onDisconnect: (() => void) | null = null
 
@@ -51,6 +56,7 @@ class FakeEngine implements EngineConnection {
     if (this.failNext) {
       const message = this.failNext
       this.failNext = null
+      this.onFail?.()
       throw new Error(message)
     }
     return { connected: true, epoch: this.connections.length, serverInfo: null }
@@ -194,7 +200,7 @@ describe("ProjectSession", () => {
   test("a host that exits on its own is reported, with its last output; restart launches a new one", async () => {
     const { session, hosts, engine, launches } = setup()
     await session.openProject("A")
-    hosts[0].exit({ code: 3, signal: null })
+    hosts[0].end({ code: 3, signal: null })
     assert.equal(session.state.status, "exited")
     assert.equal(session.state.message, "N2EditorHost exited with code 3:\nsome stderr")
     assert.ok(engine.closes > 0)
@@ -209,7 +215,7 @@ describe("ProjectSession", () => {
   test("stop asks the host to shut down and doesn't kill one that exits", async () => {
     const { session, hosts, engine } = setup()
     await session.openProject("A")
-    engine.onDisconnect = () => hosts[0].exit({ code: 0, signal: null })
+    engine.onDisconnect = () => hosts[0].end({ code: 0, signal: null })
     await session.stopHost()
     assert.equal(engine.disconnects, 1)
     assert.equal(hosts[0].killed, 0)
@@ -296,6 +302,26 @@ function pendingLaunch() {
 }
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+describe("ProjectSession: a host that dies before Hello", () => {
+  test("its exit code and last output explain the failure, not the closed connection", async () => {
+    const { session, engine, hosts } = setup()
+    engine.failNext = "Disconnected"
+    engine.onFail = () => {
+      hosts[0].lastOutput = ":\n[ERROR] Fatal error: out of memory"
+      hosts[0].end({ code: 3, signal: null })
+    }
+    await assert.rejects(
+      session.openProject("A"),
+      (e: Error) =>
+        e.message ===
+        "N2EditorHost exited with code 3 before the editor could connect:\n[ERROR] Fatal error: out of memory"
+    )
+    assert.equal(session.state.status, "failed")
+    assert.match(session.state.message ?? "", /exited with code 3/)
+    assert.equal(hosts[0].killed, 0, "it was already gone")
+  })
+})
 
 describe("ProjectSession: quitting, reloading, stopping and closing", () => {
   test("shutdown while the old host is still dying: the next host is never spawned", async () => {

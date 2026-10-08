@@ -4,13 +4,26 @@
 // project-ipc.ts, and everything here is unit tested with fakes.
 import * as path from "path"
 import type { ConnectionState, HostState } from "../shared/api"
-import { CreateOptions, HostExit, HostProcess, LaunchOptions, createProjectWithHost } from "./host-launcher"
+import {
+  CreateOptions,
+  HostExit,
+  HostProcess,
+  LaunchOptions,
+  createProjectWithHost,
+  describeExit,
+} from "./host-launcher"
 import type { HostSettings } from "./host-settings"
 import type { ProjectFiles } from "./project-files"
 import type { RecentProjects } from "./recent-projects"
 
 /** After Shutdown (stop), how long the host gets to exit before it is killed */
 export const StopGraceMs = 3000
+
+/**
+ * After a failed connection, how long to wait for the host's exit before killing it: the socket's close usually
+ * arrives before the process's, and a host that died says why in its exit code and last output
+ */
+export const ConnectFailureExitWaitMs = 500
 
 /** An operation that was queued before the editor quit, the page reloaded or the project closed */
 export class CancelledError extends Error {
@@ -257,9 +270,16 @@ export class ProjectSession {
     try {
       await this.deps.engine.connectTo(host.port, host.token)
     } catch (e) {
+      // Did it die between its ready line and Hello? Then its exit says why, not the closed connection
+      const exited = host.exit ?? ((await waitForExit(host, ConnectFailureExitWaitMs)) ? host.exit : null)
       // A host nobody can talk to is no use; with a token, it would also wait forever for a Hello
-      this.killHost()
-      const message = `Couldn't connect to N2EditorHost: ${e instanceof Error ? e.message : String(e)}`
+      if (!exited) {
+        if (this.host === host) this.killHost()
+        else host.kill()
+      }
+      const message = exited
+        ? `N2EditorHost ${describeExit(exited)} before the editor could connect${host.lastOutput}`
+        : `Couldn't connect to N2EditorHost: ${e instanceof Error ? e.message : String(e)}`
       this.setState({ status: "failed", message })
       throw new Error(message)
     }

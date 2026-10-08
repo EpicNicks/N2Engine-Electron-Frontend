@@ -114,7 +114,8 @@ function quoteOutput(stderr: string[], stdout: string[]): string {
   return lines.length > 0 ? `:\n${lines.join("\n")}` : ""
 }
 
-function describeExit({ code, signal }: HostExit): string {
+/** "exited with code 1", or "was ended by SIGTERM" */
+export function describeExit({ code, signal }: HostExit): string {
   return code !== null ? `exited with code ${code}` : `was ended by ${signal ?? "an unknown signal"}`
 }
 
