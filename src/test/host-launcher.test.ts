@@ -120,7 +120,7 @@ describe("LineSplitter", () => {
 })
 
 describe("the host's command line and environment", () => {
-  test("the arguments name the project, port 0, the token's variable and --exit-on-disconnect", () => {
+  test("the arguments name the project, port 0, the token's variable, --exit-on-disconnect and --exit-on-stdin-eof", () => {
     assert.deepEqual(buildHostArgs("C:\\Games\\My Game"), [
       "--project",
       "C:\\Games\\My Game",
@@ -129,6 +129,7 @@ describe("the host's command line and environment", () => {
       "--token-env",
       "N2_EDITOR_TOKEN",
       "--exit-on-disconnect",
+      "--exit-on-stdin-eof",
     ])
   })
 
