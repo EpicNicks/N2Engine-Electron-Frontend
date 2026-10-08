@@ -69,7 +69,7 @@ export const MaxMergedEntityIds = 1024
 
 /** The two changes as one: everything if either is, else the union of their ids (past MaxMergedEntityIds: everything) */
 export function mergeSceneChange(a: SceneChange | null, b: SceneChange): SceneChange {
-  if (a === null) return b
+  if (a === null) return b.entityIds.length > MaxMergedEntityIds ? { full: true, entityIds: [] } : b
   if (a.full || b.full) return { full: true, entityIds: [] }
   const ids = [...new Set([...a.entityIds, ...b.entityIds])]
   return ids.length > MaxMergedEntityIds ? { full: true, entityIds: [] } : { full: false, entityIds: ids }

@@ -72,7 +72,16 @@ export function generateToken(): string {
 
 /** The host's arguments: the token travels in the environment, so only the variable's name is here */
 export function buildHostArgs(projectDir: string): string[] {
-  return ["--project", projectDir, "--port", "0", "--token-env", TokenEnvVariable, "--exit-on-disconnect", "--exit-on-stdin-eof"]
+  return [
+    "--project",
+    projectDir,
+    "--port",
+    "0",
+    "--token-env",
+    TokenEnvVariable,
+    "--exit-on-disconnect",
+    "--exit-on-stdin-eof",
+  ]
 }
 
 /** The child's environment: a copy of this process's with the token added. The parent's is left as it was. */

@@ -125,6 +125,10 @@ export class EditorStore {
   private sceneFetches = 0
   /** GetOpenScene calls still waiting for an answer */
   private sceneFetchesInFlight = 0
+  /** Events were missed and the poll's own events haven't been applied yet: their change is everything */
+  private sceneMissed = false
+  /** The newest scene revision any sceneChanged event named on this connection; null when none (or unreliable) */
+  private lastSeenRevision: number | null = null
 
   constructor(
     private readonly api: StoreApi,
@@ -143,6 +147,9 @@ export class EditorStore {
           // Panels refetch on these counters, and a missed assetsChanged or projectChanged can't be told apart
           this.assetsChangeCount.value++
           this.projectChangeCount.value++
+          // The events of this same poll come next and must not narrow this to their ids: onEvents sees the flag
+          this.sceneMissed = true
+          this.lastSeenRevision = null // another host's revisions can't be compared with these
           this.recordSceneChange({ full: true, entityIds: [] })
         })
         void this.refreshScene()
@@ -314,6 +321,8 @@ export class EditorStore {
         this.scene.value = null
         this.sceneFetches++ // an answer still on its way is for a connection that is gone
       }
+      this.lastSeenRevision = null
+      this.sceneMissed = false
       this.recordSceneChange({ full: true, entityIds: [] }) // another host (or none): nothing held is valid
     })
     if (connected) {
@@ -346,17 +355,18 @@ export class EditorStore {
   /** Applies the host's state events; log events are the console's */
   private onEvents(events: EditorEvent[]): void {
     let refetch = false
-    let knownRevision = this.scene.peek()?.revision ?? null
-    const pending: { change: SceneChange | null } = { change: null }
+    // After missed events everything may have changed, whatever ids this poll's events carry
+    const pending: { change: SceneChange | null } = { change: this.sceneMissed ? { full: true, entityIds: [] } : null }
+    this.sceneMissed = false
     batch(() => {
       for (const event of events) {
         const parsed = parseStateEvent(event)
         if (!parsed) continue
         if (parsed.kind === "sceneChanged") {
-          const objects = sceneChangeOf(parsed, knownRevision)
+          const objects = sceneChangeOf(parsed, this.lastSeenRevision)
           if (objects) pending.change = mergeSceneChange(pending.change, objects)
-          // Another scene's revisions start over; otherwise the newest seen
-          knownRevision = parsed.full || knownRevision === null ? parsed.revision : Math.max(knownRevision, parsed.revision)
+          // The host's scene revision never goes down while it runs (loading a scene moves it up too)
+          this.lastSeenRevision = Math.max(this.lastSeenRevision ?? 0, parsed.revision)
           const scene = this.scene.value
           if (scene && parsed.path !== "" && scene.path === parsed.path && this.sceneFetchesInFlight === 0) {
             // Same scene file, nothing being fetched: its revisions moved. (A scene with no file can't be told from
@@ -387,4 +397,3 @@ export class EditorStore {
     })
   }
 }
-

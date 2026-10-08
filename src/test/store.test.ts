@@ -1,5 +1,6 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
+import { effect } from "@preact/signals-core"
 import type { EditorEvent, EventsResponse, SceneInfoResponse } from "../protocol/protocol.generated"
 import type { CreateProjectResult, HostLocation, HostState, OpenProjectResult, ServerInfo } from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
@@ -536,25 +537,72 @@ describe("EditorStore", () => {
     assert.equal(store.sceneChangeCount.peek(), base + 3)
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
 
-    // Another scene loaded: everything, and a lower revision doesn't make the next event look like a save
+    // Another scene loaded (the host's revision only goes up): everything
     const b = "res://assets/scenes/b.scene"
-    api.openScene = { path: b, name: "b", uuid: "u2", revision: 0, savedRevision: 0 }
-    api.events.events.push({ seq: 6, kind: "sceneChanged", revision: 0, savedRevision: 0, path: b, full: true })
+    api.openScene = { path: b, name: "b", uuid: "u2", revision: 8, savedRevision: 8 }
+    api.events.events.push({ seq: 6, kind: "sceneChanged", revision: 8, savedRevision: 8, path: b, full: true })
     await timers.fire()
     assert.equal(store.sceneChangeCount.peek(), base + 4)
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
-    api.events.events.push({ seq: 7, kind: "sceneChanged", revision: 3, savedRevision: 0, path: b })
+    api.events.events.push({ seq: 7, kind: "sceneChanged", revision: 9, savedRevision: 8, path: b })
     await timers.fire()
     assert.equal(store.sceneChangeCount.peek(), base + 5)
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
 
     // A full event absorbs the ids that came with it in the same poll
     api.events.events.push(
-      { seq: 8, kind: "sceneChanged", revision: 4, savedRevision: 0, path: b, entityIds: ["u9"] },
-      { seq: 9, kind: "sceneChanged", revision: 0, savedRevision: 0, path: a, full: true }
+      { seq: 8, kind: "sceneChanged", revision: 10, savedRevision: 8, path: b, entityIds: ["u9"] },
+      { seq: 9, kind: "sceneChanged", revision: 11, savedRevision: 11, path: a, full: true }
     )
     await timers.fire()
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+  })
+
+  test("a reset and the new log's sceneChanged events in one poll are a full change, not just their ids", async () => {
+    const { api, store, timers } = makeStore()
+    api.events.add("one")
+    await store.openProject()
+    await timers.fire()
+
+    const seen: Array<{ full: boolean; entityIds: string[] } | null> = []
+    const stop = effect(() => {
+      store.sceneChangeCount.value
+      seen.push(store.lastSceneChange.peek())
+    })
+    seen.length = 0
+    // Another host's log starts with a retained sceneChanged that names objects (what every connect replays)
+    api.events.restart("another host")
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 3, savedRevision: 0, path: "", entityIds: ["u1"] })
+    await timers.fire()
+    stop()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+    assert.ok(seen.length > 0)
+    assert.ok(seen.every((change) => change?.full === true), "no observer saw the narrowed change")
+
+    // The flag is spent: the next poll's ids stand alone
+    api.events.events.push({ seq: 3, kind: "sceneChanged", revision: 4, savedRevision: 0, path: "", entityIds: ["u2"] })
+    await timers.fire()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u2"] })
+  })
+
+  test("a save while the scene is being fetched is not a change", async () => {
+    const { api, store, timers } = makeStore()
+    const a = "res://assets/scenes/a.scene"
+    api.openScene = { path: a, name: "a", uuid: "u", revision: 3, savedRevision: 3 }
+    await store.openProject()
+    await settle()
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a, entityIds: ["u1"] })
+    await timers.fire()
+    const count = store.sceneChangeCount.peek()
+    let release = (): void => undefined
+    api.sceneGate = new Promise<void>((resolve) => (release = resolve))
+    const fetching = store.refreshScene()
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 4, savedRevision: 4, path: a })
+    await timers.fire()
+    api.sceneGate = null
+    release()
+    await fetching
+    assert.equal(store.sceneChangeCount.peek(), count)
   })
 
   test("missed events and a dropped connection are a full scene change", async () => {

@@ -145,7 +145,9 @@ describe("mergeSceneChange", () => {
     })
   })
 
-  test("too many ids become everything", () => {
+  test("too many ids become everything, even from one event", () => {
+    const many = Array.from({ length: MaxMergedEntityIds + 1 }, (_, i) => "u" + i)
+    assert.deepEqual(mergeSceneChange(null, { full: false, entityIds: many }), { full: true, entityIds: [] })
     const ids = (from: number, n: number): string[] => Array.from({ length: n }, (_, i) => "u" + (from + i))
     const half = MaxMergedEntityIds / 2
     assert.equal(mergeSceneChange({ full: false, entityIds: ids(0, half) }, { full: false, entityIds: ids(half, half) }).full, false)
