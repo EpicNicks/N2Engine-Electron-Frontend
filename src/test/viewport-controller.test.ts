@@ -1,7 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { EditorCameraResponse, EntityDataResponse, Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
-import { PickBackend, ViewportController, ViewportDeps, maxMatrixDifference } from "../renderer/viewport-controller"
+import { PickBackend, ViewportController, ViewportDeps, mapLimit, maxMatrixDifference } from "../renderer/viewport-controller"
 import { Bounds, DefaultCamera, PointFrameDistance } from "../renderer/viewport-camera"
 import { IdentityQuat, mat4Compose, vec3, worldToScreen } from "../renderer/viewport-math"
 
@@ -75,7 +75,7 @@ function rig(
         return others.get(id) ?? entity
       },
       setLocalTransform: async (id, position) => {
-        if (gone.has(id)) throw new Error(`No such object ${id}`)
+        if (gone.has(id)) throw new Error(`Entity not found: ${id}`)
         log.push(`setLocalTransform ${id} ${position.x.toFixed(2)} ${position.y.toFixed(2)} ${position.z.toFixed(2)}`)
       },
     },
@@ -114,6 +114,7 @@ function rig(
     setSelected: (id: string | null) => (current = id),
     setEntity: (e: EntityDataResponse) => (entity = e),
     setOther: (id: string, e: EntityDataResponse) => others.set(id, e),
+
     gone,
     disconnect: () => (connected = false),
   }
@@ -515,14 +516,29 @@ describe("a drag and what happens around it", () => {
     assert.equal(r.log.filter((l) => l.startsWith("setLocalTransform")).length, sets)
   })
 
-  test("another scene loaded mid-drag (a full change) abandons the drag; a change naming other objects does not", async () => {
+  test("a REPLACEMENT of the scene mid-drag abandons the drag; any other change does not", async () => {
     const { r } = await dragging()
-    r.controller.objectsChanged(["other"], false)
+    r.controller.objectsChanged(["other"], false, false)
     assert.equal(r.controller.dragging.value, true)
-    r.controller.objectsChanged([], true)
+    r.controller.objectsChanged([], true, true)
     await r.controller.gestureEnded
     assert.equal(r.controller.dragging.value, false)
     assert.ok(r.log.includes("end"))
+  })
+
+  test("a 'too many objects to list' full change mid-drag is the drag's own echo: it goes on, and reloads after", async () => {
+    const { r, m } = await dragging()
+    r.controller.objectsChanged([], true, false) // full, but the host did not say another scene was loaded
+    await settle()
+    assert.equal(r.controller.dragging.value, true)
+    const reads = r.entityReads()
+    r.controller.pointerMove(worldToScreen(m.viewProjection, vec3(4.6, 2, 3), 800, 600)!, false)
+    const to = worldToScreen(m.viewProjection, vec3(4.6, 2, 3), 800, 600)!
+    await r.controller.pointerUp(to)
+    assert.ok(r.entityReads() > reads, "the targets are read again once the drag has ended")
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
+    assert.equal(sets[sets.length - 1], "setLocalTransform a 4.00 2.00 3.00")
+    assert.equal(r.log.filter((l) => l === "end").length, 1)
   })
 })
 
@@ -690,5 +706,85 @@ describe("moving the whole selection", () => {
     noTransform.setOther("b", second())
     await noTransform.controller.loadTarget("a")
     assert.equal(noTransform.controller.target.value?.id, "b")
+  })
+})
+
+describe("reading the targets", () => {
+  test("a change names some selected objects: only those are read again; a full change reads all", async () => {
+    const r = rig({ selection: { all: ["a", "b", "c"], top: ["a", "b", "c"] } })
+    r.setOther("b", entityAt(vec3(10, 0, 0), "B"))
+    r.setOther("c", entityAt(vec3(20, 0, 0), "C"))
+    await r.controller.loadTarget("a")
+    assert.equal(r.entityReads(), 3)
+    r.controller.objectsChanged(["b"], false)
+    await settle()
+    assert.equal(r.entityReads(), 4)
+    r.controller.objectsChanged(["b", "c", "zzz"], false)
+    await settle()
+    assert.equal(r.entityReads(), 6)
+    r.controller.objectsChanged([], true)
+    await settle()
+    assert.equal(r.entityReads(), 9)
+  })
+
+  test("a change of the selection reads everything for it, whatever was cached", async () => {
+    const sel = { all: ["a", "b"], top: ["a", "b"] }
+    const r = rig({ selection: sel })
+    r.setOther("b", entityAt(vec3(10, 0, 0), "B"))
+    await r.controller.loadTarget("a")
+    const reads = r.entityReads()
+    sel.all = ["a", "b", "c"]
+    sel.top = ["a", "b", "c"]
+    r.setOther("c", entityAt(vec3(20, 0, 0), "C"))
+    await r.controller.loadTarget("a", new Set(["b"]))
+    assert.equal(r.entityReads(), reads + 3)
+  })
+
+  test("mapLimit keeps at most the limit in flight and keeps the order", async () => {
+    let inFlight = 0
+    let peak = 0
+    const out = await mapLimit(Array.from({ length: 40 }, (_, i) => i), 16, async (i) => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await settle()
+      inFlight--
+      return i * 2
+    })
+    assert.equal(peak, 16)
+    assert.deepEqual(out, Array.from({ length: 40 }, (_, i) => i * 2))
+    assert.deepEqual(await mapLimit([], 16, async (x) => x), [])
+  })
+
+  test("a press while the targets are for another selection starts no drag", async () => {
+    const sel = { all: ["a", "b"], top: ["a", "b"] }
+    const r = rig({ selection: sel })
+    r.setOther("b", entityAt(vec3(10, 0, 0), "B"))
+    await r.controller.loadTarget("a")
+    const m = r.controller.matrices()!
+    const onHandle = worldToScreen(m.viewProjection, vec3(1.6, 2, 3), 800, 600)!
+    sel.top = ["a"] // the selection changed; its reload has not come yet
+    assert.equal(r.controller.pointerDown(onHandle, false), false)
+    await r.controller.pointerUp(onHandle)
+    assert.equal(r.log.length, 0)
+    await r.controller.loadTarget("a")
+    assert.equal(r.controller.pointerDown(onHandle, false), true)
+    await r.controller.cancel()
+  })
+
+  test("an object's parent is read, and a move goes through the parent's world matrix", async () => {
+    const r = rig()
+    // "a" is under "p", which is scaled (2, 1, 1) at the origin: a world move of +4 on X is +2 locally
+    const child = entityAt(vec3(1, 2, 3))
+    r.setEntity({ ...child, entity: { ...child.entity, header: { ...child.entity.header, parentId: "p" } } })
+    r.setOther("p", { ...entityAt(vec3(0, 0, 0), "P"), worldMatrix: mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(2, 1, 1)) })
+    await r.controller.loadTarget("a")
+    const m = r.controller.matrices()!
+    const from = worldToScreen(m.viewProjection, vec3(1.6, 2, 3), 800, 600)!
+    const to = worldToScreen(m.viewProjection, vec3(3.6, 2, 3), 800, 600)!
+    assert.equal(r.controller.pointerDown(from, false), true)
+    r.controller.pointerMove(to, false)
+    await r.controller.pointerUp(to)
+    const sets = r.log.filter((l) => l.startsWith("setLocalTransform"))
+    assert.equal(sets[sets.length - 1], "setLocalTransform a 2.00 2.00 3.00")
   })
 })

@@ -9,7 +9,8 @@ import { editActions } from "./edit-actions"
 import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
-import { emptySelection, topLevel } from "./hierarchy-tree"
+import { emptySelection } from "./hierarchy-tree"
+import { moveIdsOf } from "./viewport-selection"
 import { InspectorState } from "./inspector-state"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
@@ -97,7 +98,7 @@ const viewport = new ViewportController({
   canEdit: () => store.canEdit.peek(),
   selected: () => hierarchy.selection.peek().primary,
   // The gizmo moves the topmost of the selection (what is under a selected object moves with it), all in one group
-  moveIds: () => topLevel(hierarchy.tree.peek(), hierarchy.selection.peek().ids),
+  moveIds: () => moveIdsOf(hierarchy.tree.peek(), hierarchy.selection.peek()),
   selectionIds: () => [...hierarchy.selection.peek().ids],
   select: (id) => {
     if (id === null) hierarchy.setSelection(emptySelection)

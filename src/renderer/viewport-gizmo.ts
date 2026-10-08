@@ -22,6 +22,8 @@ import {
   sub,
   isFiniteVec3,
   length,
+  mat4Invert,
+  mat4TransformDirection,
   mat4Translation,
   quatRotate,
   scale,
@@ -202,17 +204,36 @@ export interface GizmoTarget {
   localRotation: Quat
   localScale: Vec3
   worldMatrix: Mat4
+  /**
+   * The object's parent's world matrix (the identity for a root), when the editor has read it. With it the move is
+   * exact whatever the signs of the scales; without it the parent is derived from the object's own world matrix, which
+   * can't tell a mirrored parent from a mirrored child.
+   */
+  parentWorld?: Mat4
 }
 
 /**
  * The local position after moving the object by deltaWorld in the world. The engine does not compose
- * world = parentWorld * local: Transform::Combine gives position = pPos + pRot * (pScale * lPos), rotation =
- * pRot * lRot and scale = pScale * lScale (per component), and the world matrix is T * R * S, so there is no skew. The
- * world matrix gives gRot (its normalised columns) and gScale (their lengths), hence pRot = gRot * lRot^-1 and
- * pScale = gScale / lScale, and the local change is S(pScale)^-1 * R(pRot)^-1 * deltaWorld, with
- * R(pRot)^-1 = R(lRot) * R(gRot)^-1. Null when a scale is zero (nothing can be divided by it).
+ * world = parentWorld * local as matrices: Transform::Combine gives position = pPos + pRot * (pScale * lPos), rotation =
+ * pRot * lRot and scale = pScale * lScale (per component), and the world matrix is T * R * S.
+ *
+ * With the parent's world matrix P = T * R * S (target.parentWorld) the position is pPos + R * S * lPos = pPos +
+ * P_linear * lPos, so the local change is P_linear^-1 * deltaWorld, whatever the signs of the scales (a mirrored parent
+ * or child, a child with a zero scale). Null when P has no inverse.
+ *
+ * Without it the parent is derived from the object's world matrix: gRot is its columns normalised, gScale their
+ * lengths, so pRot = gRot * lRot^-1 and pScale = gScale / lScale, and the local change is S(pScale)^-1 * R(pRot)^-1 *
+ * deltaWorld, with R(pRot)^-1 = R(lRot) * R(gRot)^-1. A column's sign is not in the matrix: it is taken from the
+ * object's own local scale (the parent's scale is assumed positive), which is right for a mirrored child and wrong
+ * for a mirrored parent, hence parentWorld. Null when a scale is zero (nothing can be divided by it).
  */
 export function localPositionAfterMove(target: GizmoTarget, deltaWorld: Vec3): Vec3 | null {
+  if (target.parentWorld) {
+    const inverse = mat4Invert(target.parentWorld)
+    if (!inverse) return null
+    const local = mat4TransformDirection(inverse, deltaWorld)
+    return isFiniteVec3(local) ? add(target.localPosition, local) : null
+  }
   const m = target.worldMatrix
   const c0 = vec3(m[0], m[1], m[2])
   const c1 = vec3(m[4], m[5], m[6])
@@ -220,11 +241,12 @@ export function localPositionAfterMove(target: GizmoTarget, deltaWorld: Vec3): V
   const gScale = vec3(length(c0), length(c1), length(c2))
   const l = target.localScale
   if (!(gScale.x > 1e-9 && gScale.y > 1e-9 && gScale.z > 1e-9) || l.x === 0 || l.y === 0 || l.z === 0) return null
-  // R(gRot)^-1 * delta: the columns are the rotation's axes (times the scale), so the inverse takes dot products with them
+  // R(gRot)^-1 * delta: the rotation's axes are the columns divided by their (signed) scale, and the inverse takes
+  // dot products with them
   const inGlobalFrame = vec3(
-    dot(deltaWorld, c0) / gScale.x,
-    dot(deltaWorld, c1) / gScale.y,
-    dot(deltaWorld, c2) / gScale.z
+    dot(deltaWorld, c0) / (gScale.x * Math.sign(l.x)),
+    dot(deltaWorld, c1) / (gScale.y * Math.sign(l.y)),
+    dot(deltaWorld, c2) / (gScale.z * Math.sign(l.z))
   )
   const rotated = quatRotate(target.localRotation, inGlobalFrame)
   const pScale = vec3(gScale.x / Math.abs(l.x), gScale.y / Math.abs(l.y), gScale.z / Math.abs(l.z))
@@ -392,12 +414,20 @@ interface Move {
   position: Vec3
 }
 
+/** The host's refusal for an object that is not (or no longer) in the scene: "<what> not found: <id>" */
+const NotFound = /not found/i
+
+const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
 /**
  * One translate drag of one or several objects, from the press on a handle to the release: BeginEditGroup first, then
- * at most one batch of SetLocalTransform calls in flight (the latest positions win), then EndEditGroup, so the drag is
- * one undo step however many moves it sent and however many objects it moved. Releasing without having moved changes
- * nothing. An object the host refuses (it is gone) is reported once and left out of the rest of the drag; the others
- * go on. The targets must be the topmost of the selection: an object under another that moves would be moved twice.
+ * at most one batch of SetLocalTransform calls in flight (the latest positions win; a batch's calls are sent together,
+ * since they share one ordered connection), then EndEditGroup, so the drag is one undo step however many moves it sent
+ * and however many objects it moved. Releasing without having moved changes nothing. A failure is reported once per
+ * object; an object the host says is not found is left out of the rest of the drag, one that failed otherwise is tried
+ * again with the next move. An abandoned drag (the connection went, the scene was replaced) sends nothing more, even of
+ * a batch it was in the middle of, and says nothing about what that costs. The targets must be the topmost of the
+ * selection: an object under another that moves would be moved twice.
  */
 export class GizmoDrag {
   /** Where the first object is now (local), as the drag has set it */
@@ -405,7 +435,14 @@ export class GizmoDrag {
   private readonly sender: LatestWinsSender<Move[]>
   private readonly began: Promise<GroupHandle | null>
   private finished: Promise<void> | null = null
+  private abandoned = false
+  /** Objects the host does not have (any more) */
   private readonly dead = new Set<number>()
+  /** Objects whose failure has been reported, and those whose skipping has: once per drag each */
+  private readonly reported = new Set<number>()
+  private readonly skipReported = new Set<number>()
+  /** Objects a move was ever pushed for (what Escape puts back) */
+  private readonly movedIndexes = new Set<number>()
   private readonly targets: readonly GizmoTarget[]
   /** Whether a position was ever pushed */
   moved = false
@@ -426,18 +463,25 @@ export class GizmoDrag {
     this.sender = new LatestWinsSender<Move[]>(async (moves) => {
       // The group is open before the first edit goes
       await this.began
-      for (const move of moves) {
-        if (this.dead.has(move.index)) continue
-        const t = this.targets[move.index]
-        try {
-          await deps.engine.setLocalTransform(t.id, move.position, t.localRotation, t.localScale)
-        } catch (e) {
-          this.dead.add(move.index)
-          deps.onError("Failed to move the object", e)
-        }
-      }
-      deps.onMoved?.()
+      await Promise.all(moves.map((move) => this.send(move)))
+      if (!this.abandoned) deps.onMoved?.()
     })
+  }
+
+  private async send(move: Move): Promise<void> {
+    if (this.abandoned || this.dead.has(move.index)) return
+    const t = this.targets[move.index]
+    try {
+      await this.deps.engine.setLocalTransform(t.id, move.position, t.localRotation, t.localScale)
+    } catch (e) {
+      // After an abandon the failure is the connection's or the scene's going: nothing to say about it
+      if (this.abandoned) return
+      if (NotFound.test(messageOf(e))) this.dead.add(move.index)
+      if (!this.reported.has(move.index)) {
+        this.reported.add(move.index)
+        this.deps.onError("Failed to move the object", e)
+      }
+    }
   }
 
   /**
@@ -459,7 +503,13 @@ export class GizmoDrag {
     const moves: Move[] = []
     this.targets.forEach((t, index) => {
       const position = localPositionAfterMove(t, delta!)
-      if (position) moves.push({ index, position })
+      if (position) {
+        moves.push({ index, position })
+        this.movedIndexes.add(index)
+      } else if (!this.skipReported.has(index)) {
+        this.skipReported.add(index)
+        this.deps.onError("Failed to move the object", new Error(`${t.name} can't be moved: a scale of zero`))
+      }
     })
     if (moves.length === 0) return null
     this.position = moves[0].index === 0 ? moves[0].position : this.position
@@ -477,9 +527,11 @@ export class GizmoDrag {
 
   /**
    * The connection went or the scene was replaced: what is waiting to be sent is dropped (it is for objects that are
-   * gone), and the group ends. A move already on its way can't be recalled.
+   * gone), a batch being sent stops before its next call, and the group ends. A call already on its way can't be
+   * recalled.
    */
   abandon(): Promise<void> {
+    this.abandoned = true
     if (!this.finished) {
       this.sender.discard()
       this.finished = this.finish()
@@ -488,16 +540,16 @@ export class GizmoDrag {
   }
 
   /**
-   * Escape: the objects go back to where they were, and the group ends. The group still holds the move and the move
-   * back, so the host records a "Move" step that changes nothing (its FinishGroup skips only a group with no
-   * edits): it marks the scene as changed and clears redo. Escape is kept as it is until the host skips such groups.
+   * Escape: the objects that were moved go back to where they were, and the group ends. The group still holds the move
+   * and the move back, so the host records a "Move" step that changes nothing (its FinishGroup skips only a group with
+   * no edits): it marks the scene as changed and clears redo. Escape is kept as it is until the host skips such groups.
    */
   cancel(): Promise<void> {
     if (!this.finished) {
       if (this.moved) {
         this.position = this.targets[0].localPosition
         this.worldDelta = vec3(0, 0, 0)
-        this.sender.push(this.targets.map((t, index) => ({ index, position: t.localPosition })))
+        this.sender.push([...this.movedIndexes].map((index) => ({ index, position: this.targets[index].localPosition })))
       }
       this.finished = this.finish()
     }

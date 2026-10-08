@@ -757,3 +757,168 @@ describe("GizmoDrag with a plane, and with several objects", () => {
     nearVec(calls.filter((x) => x.id === "b").pop()!.position, vec3(5, 0, 0))
   })
 })
+
+describe("negative scales", () => {
+  const mirrorX: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(-1, 1, 1) }
+
+  function assertMoves(parent: Trs, target: GizmoTarget, delta: Vec3, withParent: boolean): void {
+    const t = withParent ? { ...target, parentWorld: mat4Compose(parent.position, parent.rotation, parent.scale) } : target
+    const local = localPositionAfterMove(t, delta)!
+    assert.ok(local, "a local position")
+    const before = mat4Translation(target.worldMatrix)
+    nearVec(worldPositionWith(parent, target, local), vec3(before.x + delta.x, before.y + delta.y, before.z + delta.z), 1e-9)
+  }
+
+  test("a root mirrored on X, dragged +1 on X, moves +1 (the column's sign is the object's own scale's)", () => {
+    const target = targetUnder(rootTrs, vec3(2, 0, 0), IdentityQuat, vec3(-1, 1, 1))
+    nearVec(localPositionAfterMove(target, vec3(1, 0, 0))!, vec3(3, 0, 0))
+    assertMoves(rootTrs, target, vec3(1, 0, 0), false)
+  })
+
+  test("a rotated root with a scale of (1, -2, 1) moves by the world delta, from the matrix alone", () => {
+    const rotation = quatFromAxisAngle(vec3(1, 2, 3), 0.9)
+    const target = targetUnder(rootTrs, vec3(1, 2, 3), rotation, vec3(1, -2, 1))
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(2, -3, 4)]) assertMoves(rootTrs, target, d, false)
+  })
+
+  test("a mirrored child under a rotated, scaled parent, derived from the child's matrix", () => {
+    const parent: Trs = { position: vec3(-4, 5, 6), rotation: quatFromAxisAngle(vec3(1, 2, 3), 0.8), scale: vec3(2, 0.5, 3) }
+    const target = targetUnder(parent, vec3(3, -2, 1), quatFromAxisAngle(vec3(0, 1, 1), 1.3), vec3(-1.5, 2, -0.25))
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(-3, 2, 5)]) assertMoves(parent, target, d, false)
+  })
+
+  test("a mirrored parent with a rotated child: can be wrong from the child's matrix alone, exact with the parent's", () => {
+    const parent: Trs = { position: vec3(1, 2, 3), rotation: quatFromAxisAngle(vec3(0, 1, 0), 0.6), scale: vec3(-1, 1, 1) }
+    const target = targetUnder(parent, vec3(2, 1, 0), quatFromAxisAngle(vec3(0, 0, 1), 0.7), vec3(1, -1, 1))
+    const before = mat4Translation(target.worldMatrix)
+    let off = 0
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1)]) {
+      const guessed = localPositionAfterMove(target, d)!
+      const after = worldPositionWith(parent, target, guessed)
+      off += Math.hypot(after.x - (before.x + d.x), after.y - (before.y + d.y), after.z - (before.z + d.z))
+    }
+    assert.ok(off > 1e-3, "nothing in the child's matrix says the parent is mirrored")
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(2, -3, 4)]) assertMoves(parent, target, d, true)
+  })
+
+  test("a parent with its own scale (2, -1, 3) and a child with (1, -1, -2), through the parent's world matrix", () => {
+    const parent: Trs = { position: vec3(0, 1, 0), rotation: quatFromAxisAngle(vec3(1, 1, 0), 1.1), scale: vec3(2, -1, 3) }
+    const target = targetUnder(parent, vec3(1, 2, 3), quatFromAxisAngle(vec3(0, 0, 1), 0.4), vec3(1, -1, -2))
+    for (const d of [vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1), vec3(-2, 3, 1)]) assertMoves(parent, target, d, true)
+  })
+
+  test("with the parent's world matrix, a child with a zero scale on one axis moves; a parent with no inverse can't", () => {
+    const parent: Trs = { position: vec3(0, 0, 0), rotation: IdentityQuat, scale: vec3(2, 1, 1) }
+    const flat = { ...targetUnder(parent, vec3(1, 1, 1), IdentityQuat, vec3(1, 0, 1)), parentWorld: mat4Compose(parent.position, parent.rotation, parent.scale) }
+    nearVec(localPositionAfterMove(flat, vec3(4, 0, 0))!, vec3(3, 1, 1))
+    const singular = { ...flat, parentWorld: mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(1, 0, 1)) }
+    assert.equal(localPositionAfterMove(singular, vec3(1, 0, 0)), null)
+  })
+})
+
+describe("GizmoDrag: abandon, batches and failures", () => {
+  const c = orbitCamera(0.7, -0.6, 12)
+  const pixelOf = (p: Vec3) => worldToScreen(c.viewProjection, p, W, H)!
+  const at = (id: string, x = 0) => targetUnder(rootTrs, vec3(x, 0, 0), IdentityQuat, vec3(1, 1, 1), id)
+  const source = () => AxisDrag.begin("x", vec3(0, 0, 0), c.viewProjection, pixelOf(vec3(0.5, 0, 0)), W, H)!
+  const turn = () => new Promise((resolve) => setImmediate(resolve))
+
+  /** An engine whose calls wait on gates the test opens, and fail on demand */
+  function gated() {
+    const started: string[] = []
+    const done: string[] = []
+    const errors: string[] = []
+    const gates = new Map<string, () => void>()
+    const fail = new Map<string, string>()
+    const hold = new Set<string>()
+    const deps = {
+      engine: {
+        setLocalTransform: async (id: string) => {
+          started.push(id)
+          if (hold.has(id)) await new Promise<void>((resolve) => gates.set(id, resolve))
+          if (fail.has(id)) throw new Error(fail.get(id))
+          done.push(id)
+        },
+      },
+      groups: { begin: async () => 1, end: async () => {} },
+      onError: (what: string, e: unknown) => errors.push(`${what}: ${(e as Error).message}`),
+    }
+    return { deps, started, done, errors, gates, fail, hold }
+  }
+
+  test("a batch's calls are sent together, not one after the other", async () => {
+    const { deps, started, hold, gates } = gated()
+    hold.add("a").add("b").add("c")
+    const drag = new GizmoDrag(deps, [at("a"), at("b"), at("c")], source())
+    drag.update(pixelOf(vec3(1.5, 0, 0)))
+    for (let i = 0; i < 5; i++) await turn()
+    assert.deepEqual(started, ["a", "b", "c"], "all three are out before any answer")
+    for (const open of gates.values()) open()
+    await drag.end()
+  })
+
+  test("abandon with a batch in flight: the calls not yet sent are not, nothing waits for the host, nobody is told", async () => {
+    const { deps, started, done, errors, hold, gates, fail } = gated()
+    hold.add("a")
+    fail.set("a", "connection closed")
+    // Two batches: the first is held on "a"; abandon happens while it is
+    const drag = new GizmoDrag(deps, [at("a"), at("b")], source())
+    drag.update(pixelOf(vec3(1.5, 0, 0)))
+    for (let i = 0; i < 5; i++) await turn()
+    drag.update(pixelOf(vec3(2.5, 0, 0))) // waiting behind the first
+    const abandoned = drag.abandon()
+    gates.get("a")!() // the call that was on its way fails: the connection is gone
+    await abandoned
+    assert.deepEqual(started.filter((id) => id === "b").length, 1, "the waiting batch was dropped")
+    assert.equal(started.length, 2)
+    assert.deepEqual(done, ["b"])
+    assert.deepEqual(errors, [], "silent")
+  })
+
+  test("a batch cut short by abandon sends no more calls", async () => {
+    const { deps, started } = gated()
+    const drag = new GizmoDrag(deps, [at("a"), at("b"), at("c")], source())
+    void drag.abandon() // before anything is sent
+    drag.update(pixelOf(vec3(1.5, 0, 0)))
+    await drag.end()
+    assert.deepEqual(started, [])
+  })
+
+  test("a transient failure is reported once and the object is tried again; 'not found' leaves it out", async () => {
+    const { deps, started, errors, fail } = gated()
+    fail.set("a", "timed out")
+    fail.set("b", "Entity not found: b")
+    const drag = new GizmoDrag(deps, [at("a"), at("b")], source())
+    for (const x of [1.5, 2.5, 3.5]) {
+      drag.update(pixelOf(vec3(x, 0, 0)))
+      for (let i = 0; i < 4; i++) await turn()
+    }
+    await drag.end()
+    assert.ok(started.filter((id) => id === "a").length >= 2, "a is tried again")
+    assert.equal(started.filter((id) => id === "b").length, 1, "b is not tried again")
+    assert.equal(errors.length, 2, "one report each")
+  })
+
+  test("escape puts back an object whose move failed transiently, and one that was moved", async () => {
+    const { deps, started, fail } = gated()
+    fail.set("a", "timed out")
+    const drag = new GizmoDrag(deps, [at("a", 1), at("b", 5)], source())
+    drag.update(pixelOf(vec3(2.5, 0, 0)))
+    for (let i = 0; i < 4; i++) await turn()
+    fail.delete("a") // the host is back
+    await drag.cancel()
+    assert.ok(started.filter((id) => id === "a").length >= 2, "a was restored")
+    assert.ok(started.filter((id) => id === "b").length >= 2, "b was restored")
+  })
+
+  test("an object that can't be moved (a zero scale, with no parent matrix) is reported once, the others move", async () => {
+    const { deps, started, errors } = gated()
+    const flat = targetUnder(rootTrs, vec3(0, 0, 0), IdentityQuat, vec3(1, 0, 1), "flat")
+    const drag = new GizmoDrag(deps, [flat, at("ok")], source())
+    for (const x of [1.5, 2.5, 3.5]) drag.update(pixelOf(vec3(x, 0, 0)))
+    await drag.end()
+    assert.ok(started.every((id) => id === "ok"))
+    assert.equal(errors.length, 1)
+    assert.match(errors[0], /Cube can't be moved/)
+  })
+})

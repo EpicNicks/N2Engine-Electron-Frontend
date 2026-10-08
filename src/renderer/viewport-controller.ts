@@ -26,9 +26,10 @@ import {
   hitTestGizmo,
   projectBox,
 } from "./viewport-gizmo"
-import { Pixel, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
+import { IdentityMat4, Pixel, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
 import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
+import { selectionKeyOf } from "./viewport-selection"
 
 /**
  * The host's picking and bounds (E7b: PickEntity and GetEntityBounds; neither exists in protocol 1.7.0). Implement it
@@ -85,6 +86,23 @@ export function maxMatrixDifference(a: readonly number[], b: readonly number[]):
 /** Matrices that differ by less than this agree (the host's are float32) */
 export const MatrixTolerance = 1e-3
 
+/** How many GetEntity calls a reload of the gizmo's targets has in flight at once */
+export const MaxConcurrentReads = 16
+
+/** Runs fn over the items with at most limit in flight; the results are in the items' order */
+export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
 /** One update of a drag may move the object by at most this many handle lengths */
 export const MaxStepHandleLengths = 50
 
@@ -108,6 +126,9 @@ export class ViewportController {
   private drag: GizmoDrag | null = null
   /** The objects a drag of the gizmo moves, as the host last said (the topmost of the selection that have a transform) */
   private movers: GizmoTarget[] = []
+  /** What the targets were read for (selectionKeyOf), and each one as last read: only changed ones are read again */
+  private moversKey: string | null = null
+  private readonly read = new Map<string, GizmoTarget | null>()
   private ended: Promise<void> = Promise.resolve()
   private pressed: { pixel: Pixel; onGizmo: boolean } | null = null
   /** Counts target loads, so a slow answer can't replace a newer one */
@@ -190,6 +211,8 @@ export class ViewportController {
     this.pressed = null
     this.target.value = null
     this.movers = []
+    this.moversKey = null
+    this.read.clear()
     this.selectionBounds.value = null
     this.dragging.value = false
     this.hoverHandle.value = null
@@ -320,21 +343,38 @@ export class ViewportController {
     return this.deps.moveIds?.() ?? [id]
   }
 
-  /** One object as the gizmo needs it; null for one that is gone, can't be read or has no transform */
-  private async readTarget(id: string): Promise<GizmoTarget | null> {
+  /**
+   * One object as the gizmo needs it, with its parent's world matrix (so a move is exact whatever the signs of the
+   * scales); null for one that is gone, can't be read or has no transform. parents shares the parents read by one load.
+   */
+  private async readTarget(id: string, parents: Map<string, Promise<Mat4 | undefined>>): Promise<GizmoTarget | null> {
     try {
       const { entity, worldMatrix } = await this.deps.engine.getEntity(id)
       const t = entity.transform
-      return t
-        ? {
-            id,
-            name: entity.header.name,
-            localPosition: { ...t.position },
-            localRotation: { ...t.rotation } as Quat,
-            localScale: { ...t.scale },
-            worldMatrix,
-          }
-        : null
+      if (!t) return null
+      const parentId = entity.header.parentId
+      let parentWorld: Mat4 | undefined = IdentityMat4
+      if (parentId !== "") {
+        let parent = parents.get(parentId)
+        if (!parent) {
+          // A parent that can't be read leaves the move to be derived from the object's own world matrix
+          parent = this.deps.engine.getEntity(parentId).then(
+            (r) => r.worldMatrix,
+            () => undefined
+          )
+          parents.set(parentId, parent)
+        }
+        parentWorld = await parent
+      }
+      return {
+        id,
+        name: entity.header.name,
+        localPosition: { ...t.position },
+        localRotation: { ...t.rotation } as Quat,
+        localScale: { ...t.scale },
+        worldMatrix,
+        parentWorld,
+      }
     } catch (e) {
       // An object that is gone, or one the host can't read: no gizmo for it
       console.debug("GetEntity failed:", e)
@@ -344,39 +384,55 @@ export class ViewportController {
 
   /**
    * The selection's primary object changed, or the objects changed in the scene: read the primary and the objects a
-   * drag moves (the topmost of the selection) for the gizmo
+   * drag moves (the topmost of the selection) for the gizmo. With changed, only those of them that are in it are read
+   * again (when the selection is the one the targets were read for); a bounded number of reads at a time.
    */
-  async loadTarget(id: string | null): Promise<void> {
+  async loadTarget(id: string | null, changed: ReadonlySet<string> | null = null): Promise<void> {
     const load = ++this.loads
     if (id === null || !this.deps.engine.isConnected()) {
       this.target.value = null
       this.movers = []
+      this.moversKey = null
+      this.read.clear()
       this.selectionBounds.value = null
       this.redraw()
       return
     }
     const moveIds = this.moveIds(id)
+    const key = selectionKeyOf(id, moveIds)
     const ids = [...new Set([id, ...moveIds])]
-    const read = await Promise.all(ids.map((i) => this.readTarget(i)))
+    const partial = changed !== null && this.moversKey === key
+    if (!partial) this.read.clear()
+    const toRead = partial ? ids.filter((i) => changed.has(i) || !this.read.has(i)) : ids
+    const results = await mapLimit(toRead, MaxConcurrentReads, (i) => this.readTarget(i, new Map()))
     if (load !== this.loads || this.drag) return
-    const byId = new Map(ids.map((i, k) => [i, read[k]] as const))
-    this.movers = moveIds.map((i) => byId.get(i) ?? null).filter((t): t is GizmoTarget => t !== null)
-    this.target.value = byId.get(id) ?? this.movers[0] ?? null
+    toRead.forEach((i, k) => this.read.set(i, results[k]))
+    this.movers = moveIds.map((i) => this.read.get(i) ?? null).filter((t): t is GizmoTarget => t !== null)
+    this.target.value = this.read.get(id) ?? this.movers[0] ?? null
+    this.moversKey = key
     await this.loadBounds(id)
     if (load === this.loads) this.redraw()
   }
 
-  /** Scene objects changed: the selected one is read again, unless this client is moving it (the drag knows) */
-  objectsChanged(entityIds: readonly string[], full: boolean): void {
+  /**
+   * Scene objects changed: the selected ones named are read again (all of them when the change is full). During a drag
+   * only a REPLACEMENT of the scene (the host flagged another scene loaded) abandons it: any other change, a "too many
+   * objects to list" one included, is the echo of the drag's own edits, and the targets are read again when the drag
+   * has ended.
+   */
+  objectsChanged(entityIds: readonly string[], full: boolean, replaced: boolean = false): void {
     const id = this.deps.selected()
-    const selected = id === null ? [] : (this.deps.selectionIds?.() ?? [id])
     if (this.drag) {
-      // The scene was replaced under the drag: its object is gone. Anything else is the echo of the drag's own edits.
-      if (full) void this.finishDrag("abandon", true)
+      if (replaced) void this.finishDrag("abandon", true)
       return
     }
     if (id === null) return
-    if (full || selected.some((s) => entityIds.includes(s))) void this.loadTarget(id)
+    if (full) {
+      void this.loadTarget(id)
+      return
+    }
+    const changed = new Set(entityIds)
+    if ((this.deps.selectionIds?.() ?? [id]).some((s) => changed.has(s))) void this.loadTarget(id, changed)
   }
 
   private async loadBounds(id: string): Promise<void> {
@@ -435,6 +491,9 @@ export class ViewportController {
     const handle = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
     this.pressed = { pixel, onGizmo: false }
     if (!target || !layout || !m || !this.size || !handle || this.movers.length === 0) return false
+    // The objects the drag moves were read for another selection (a change of it is on its way): not this press
+    const id = this.deps.selected()
+    if (id === null || this.moversKey !== selectionKeyOf(id, this.moveIds(id))) return false
     const origin = mat4Translation(target.worldMatrix)
     const farPlane = this.camera.farPlane
     const maxStep = layout.worldLength * MaxStepHandleLengths

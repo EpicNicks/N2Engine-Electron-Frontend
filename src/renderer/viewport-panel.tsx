@@ -6,7 +6,7 @@ import { effect, untracked } from "@preact/signals-core"
 import { isTextEntry } from "./edit-actions"
 import { useApp } from "./ui"
 import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
-import { topLevel } from "./hierarchy-tree"
+import { followViewportSelection } from "./viewport-selection"
 import { FlyKeys, pointerActionFor, shortcutFor, wheelPixels, PointerAction } from "./viewport-input"
 import { ViewportRenderer } from "./viewport-renderer"
 
@@ -81,7 +81,6 @@ export function Viewport() {
     let boost = false
     let flyFrame: number | null = null
     let flyTime = 0
-    let loadedSelection = ""
 
     const renderer = new ViewportRenderer(
       frame,
@@ -276,12 +275,15 @@ export function Viewport() {
     host.addEventListener("pointerleave", onPointerLeave)
 
     viewport.onFrameNeeded(() => renderer.invalidate())
+    // The selection is the gizmo's (its primary object places it, the topmost selected objects move with it), and the
+    // scene's changes reach it
+    const follow = followViewportSelection({ store, hierarchy, viewport })
     const stops = [
       // The connection: frames, and the camera that starts where the host's is
       effect(() => {
         if (store.connected.value) {
           untracked(() => {
-            loadedSelection = ""
+            follow.forget()
             renderer.start()
             void viewport.connected()
           })
@@ -292,25 +294,7 @@ export function Viewport() {
           })
         }
       }),
-      // The selection is the gizmo's: its primary object places it, and the topmost selected objects move with it
-      effect(() => {
-        const selection = hierarchy.selection.value
-        hierarchy.tree.value // an object reparented under a selected one stops moving by itself
-        untracked(() => {
-          const key = `${selection.primary}|${topLevel(hierarchy.tree.peek(), selection.ids).join(",")}`
-          if (key === loadedSelection) return
-          loadedSelection = key
-          void viewport.loadTarget(store.connected.peek() ? selection.primary : null)
-        })
-      }),
-      // The scene changed (an inspector edit, an undo, a rename): the selected object is read again
-      effect(() => {
-        store.sceneChangeCount.value // what this runs on
-        const change = store.lastSceneChange.peek()
-        untracked(() => {
-          if (change && store.connected.peek()) viewport.objectsChanged(change.entityIds, change.full)
-        })
-      }),
+      follow.stop,
       // The host says the view changed (frameChanged), or a scene change may have: ask for a frame
       effect(() => {
         store.frameChangeCount.value
