@@ -35,6 +35,17 @@ function Toolbar() {
       <span class="project-name" title={store.projectPath.value ?? undefined}>
         {store.projectName.value}
       </span>
+      {store.scene.value && (
+        <span
+          class={store.sceneDirty.value ? "scene-name dirty" : "scene-name"}
+          title={
+            (store.scene.value.path || "The scene has no file yet") +
+            (store.sceneDirty.value ? " (unsaved changes)" : "")
+          }
+        >
+          {store.sceneLabel.value}
+        </span>
+      )}
       <div class="separator" />
       <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
         {running ? "Restart host" : "Start host"}

@@ -1,6 +1,6 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import type { EditorEvent, EventsResponse } from "../protocol/protocol.generated"
+import type { EditorEvent, EventsResponse, SceneInfoResponse } from "../protocol/protocol.generated"
 import type { CreateProjectResult, HostLocation, HostState, OpenProjectResult, ServerInfo } from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
 import { ConsoleStore, entryFromEvent } from "../renderer/console-store"
@@ -262,7 +262,14 @@ class FakeApi implements StoreApi {
     serverInfo: () => (this.connectedNow ? this.info : null),
     onConnectionChange: (listener: (connected: boolean) => void) => this.connectionListeners.push(listener),
     pollEvents: (epoch: number, afterSeq: number, maxEvents: number) => this.events.poll(epoch, afterSeq, maxEvents),
+    getOpenScene: async (): Promise<SceneInfoResponse> => {
+      this.calls.push("getOpenScene")
+      if (!this.openScene) throw new Error("No scene is loaded")
+      return { ...this.openScene }
+    },
   }
+  /** What GetOpenScene answers; null: an error (no scene, or a host before protocol 1.3) */
+  openScene: SceneInfoResponse | null = null
 
   host = {
     state: () => this.hostState,
@@ -373,6 +380,96 @@ describe("EditorStore", () => {
       store.console.entries.value.map((e) => e.message),
       ["Starting N2EditorHost for C:\\Games\\C", "Engine initialized"]
     )
+  })
+
+  test("the open scene is fetched on connecting, and sceneChanged events keep its revisions current", async () => {
+    const { api, store, timers } = makeStore()
+    const a = "res://assets/scenes/a.scene"
+    api.openScene = { path: a, name: "a", uuid: "u1", revision: 3, savedRevision: 3 }
+    await store.openProject()
+    await settle()
+    assert.equal(store.scene.peek()?.name, "a")
+    assert.equal(store.sceneDirty.value, false)
+    assert.equal(store.sceneLabel.value, "a")
+
+    // An edit moves the revision: dirty, without fetching again
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a })
+    await timers.fire()
+    assert.equal(store.sceneDirty.value, true)
+    assert.equal(store.sceneLabel.value, "a *")
+    assert.equal(api.calls.filter((c) => c === "getOpenScene").length, 1)
+
+    // A save: clean again
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 4, savedRevision: 4, path: a })
+    await timers.fire()
+    assert.equal(store.sceneDirty.value, false)
+
+    // Another scene was loaded: its name and uuid come from GetOpenScene
+    const b = "res://assets/scenes/b.scene"
+    api.openScene = { path: b, name: "b", uuid: "u2", revision: 9, savedRevision: 9 }
+    api.events.events.push({ seq: 3, kind: "sceneChanged", revision: 9, savedRevision: 9, path: b })
+    await timers.fire()
+    assert.equal(store.scene.peek()?.name, "b")
+    assert.equal(store.scene.peek()?.uuid, "u2")
+    assert.equal(api.calls.filter((c) => c === "getOpenScene").length, 2)
+  })
+
+  test("a scene with no file is refetched on each sceneChanged, and no scene is none", async () => {
+    const { api, store, timers } = makeStore()
+    await store.openProject() // GetOpenScene fails: no scene
+    await settle()
+    assert.equal(store.scene.peek(), null)
+    assert.equal(store.sceneLabel.value, "")
+
+    api.openScene = { path: "", name: "", uuid: "u", revision: 1, savedRevision: 0 }
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 1, savedRevision: 0, path: "" })
+    await timers.fire()
+    assert.equal(store.scene.peek()?.path, "")
+    assert.equal(store.sceneLabel.value, "Untitled *")
+
+    api.openScene = { path: "", name: "Other", uuid: "v", revision: 0, savedRevision: 0 }
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 0, savedRevision: 0, path: "" })
+    await timers.fire()
+    assert.equal(store.sceneLabel.value, "Other")
+  })
+
+  test("the scene is forgotten when the connection drops", async () => {
+    const { api, store } = makeStore()
+    api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }
+    await store.openProject()
+    await settle()
+    assert.equal(store.scene.peek()?.name, "a")
+    api.pushConnection(false)
+    assert.equal(store.scene.peek(), null)
+  })
+
+  test("assetsChanged and projectChanged events are counted for the panels", async () => {
+    const { api, store, timers } = makeStore()
+    await store.openProject()
+    api.events.events.push(
+      { seq: 1, kind: "assetsChanged", added: ["res://assets/a.lua"], removed: [], modified: ["res://assets/b.lua"] },
+      { seq: 2, kind: "projectChanged" },
+      { seq: 3, kind: "assetsChanged", added: [], removed: ["res://assets/a.lua"], modified: [] }
+    )
+    await timers.fire()
+    assert.equal(store.assetsChangeCount.value, 2)
+    assert.deepEqual(store.lastAssetsChange.value?.removed, ["res://assets/a.lua"])
+    assert.equal(store.projectChangeCount.value, 1)
+  })
+
+  test("a new host log (events the editor may have missed) refetches the scene", async () => {
+    const { api, store, timers } = makeStore()
+    api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }
+    await store.openProject()
+    await timers.fire()
+    await settle()
+    const before = api.calls.filter((c) => c === "getOpenScene").length
+    api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 5, savedRevision: 1 }
+    api.events.restart("Engine initialized")
+    await timers.fire()
+    await settle()
+    assert.equal(api.calls.filter((c) => c === "getOpenScene").length, before + 1)
+    assert.equal(store.scene.peek()?.revision, 5)
   })
 
   test("busy while an action runs", async () => {

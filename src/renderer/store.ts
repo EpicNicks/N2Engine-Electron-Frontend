@@ -11,6 +11,8 @@ import type {
   ProjectApi,
   ServerInfo,
 } from "../shared/api"
+import type { EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
+import { AssetsChangedEvent, hasUnsavedChanges, parseStateEvent } from "../protocol/editor-events"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename } from "./paths"
 
@@ -24,7 +26,7 @@ export interface Dialogs {
 
 /** The parts of the page's API the store uses */
 export interface StoreApi {
-  engine: Pick<EngineApi, "isConnected" | "serverInfo" | "onConnectionChange" | "pollEvents">
+  engine: Pick<EngineApi, "isConnected" | "serverInfo" | "onConnectionChange" | "pollEvents" | "getOpenScene">
   host: HostApi
   project: Pick<
     ProjectApi,
@@ -80,17 +82,43 @@ export class EditorStore {
   /** The last action's failure, until dismissed or the next action */
   readonly error = signal<string | null>(null)
 
+  /**
+   * The scene the host has loaded (GetOpenScene), kept current by sceneChanged events; null when not connected, with
+   * no scene, or with a host older than protocol 1.3
+   */
+  readonly scene = signal<SceneInfoResponse | null>(null)
+  /** The loaded scene has unsaved changes: its revision isn't the one it was saved at */
+  readonly sceneDirty = computed(() => {
+    const scene = this.scene.value
+    return scene !== null && hasUnsavedChanges(scene)
+  })
+  /** The loaded scene's name for the toolbar, with a * after it when it has unsaved changes; "" with none */
+  readonly sceneLabel = computed(() => {
+    const scene = this.scene.value
+    if (!scene) return ""
+    return (scene.name || "Untitled") + (this.sceneDirty.value ? " *" : "")
+  })
+  /** The last assetsChanged event, and how many arrived (panels refetch their listings when it changes) */
+  readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
+  readonly assetsChangeCount = signal(0)
+  /** How many projectChanged events arrived (project.n2proj was saved: refetch GetProjectInfo) */
+  readonly projectChangeCount = signal(0)
+
   readonly console: ConsoleStore
+  /** Counts scene fetches, so a slow answer can't replace a newer one */
+  private sceneFetches = 0
 
   constructor(
     private readonly api: StoreApi,
     consoleOptions: ConsoleStoreOptions = {}
   ) {
     this.host = signal(api.host.state())
-    this.console = new ConsoleStore(
-      (epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents),
-      consoleOptions
-    )
+    this.console = new ConsoleStore((epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents), {
+      ...consoleOptions,
+      onEvents: (events) => this.onEvents(events),
+      // Events were dropped, or another host's log began: what they carried may have been missed
+      onMissedEvents: () => void this.refreshScene(),
+    })
     api.host.onStateChange((state) => this.onHostState(state))
     api.engine.onConnectionChange((connected) => this.onConnection(connected))
     if (api.engine.isConnected()) this.onConnection(true)
@@ -252,8 +280,57 @@ export class EditorStore {
     batch(() => {
       this.connected.value = connected
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
+      if (!connected) this.scene.value = null
     })
-    if (connected) this.console.connect(this.host.value.launch)
-    else this.console.disconnect()
+    if (connected) {
+      this.console.connect(this.host.value.launch)
+      void this.refreshScene()
+    } else {
+      this.console.disconnect()
+    }
+  }
+
+  /** Fetches the loaded scene (GetOpenScene); none when the host has no scene or doesn't have the command */
+  async refreshScene(): Promise<void> {
+    const fetch = ++this.sceneFetches
+    let scene: SceneInfoResponse | null = null
+    if (this.api.engine.isConnected()) {
+      try {
+        scene = await this.api.engine.getOpenScene()
+      } catch (e) {
+        // An error answer means no scene (or a host before protocol 1.3); a dropped connection is reported elsewhere
+        console.debug("GetOpenScene failed:", e)
+      }
+    }
+    if (fetch === this.sceneFetches) this.scene.value = scene
+  }
+
+  /** Applies the host's state events; log events are the console's */
+  private onEvents(events: EditorEvent[]): void {
+    let refetch = false
+    batch(() => {
+      for (const event of events) {
+        const parsed = parseStateEvent(event)
+        if (!parsed) continue
+        if (parsed.kind === "sceneChanged") {
+          const scene = this.scene.value
+          if (scene && parsed.path !== "" && scene.path === parsed.path) {
+            // Same scene file: its revisions moved. (A scene with no file can't be told from another one without
+            // fetching.) A newer fetch in flight (sceneFetches) is superseded by this.
+            this.sceneFetches++
+            this.scene.value = { ...scene, revision: parsed.revision, savedRevision: parsed.savedRevision }
+          } else {
+            // Another scene was loaded (or none was known): its name and uuid come from GetOpenScene
+            refetch = true
+          }
+        } else if (parsed.kind === "assetsChanged") {
+          this.lastAssetsChange.value = parsed
+          this.assetsChangeCount.value++
+        } else {
+          this.projectChangeCount.value++
+        }
+      }
+    })
+    if (refetch) void this.refreshScene()
   }
 }

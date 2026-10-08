@@ -37,6 +37,13 @@ export function entryFromEvent(event: EditorEvent): Omit<ConsoleEntry, "id"> | n
 
 export interface ConsoleStoreOptions extends EventPumpOptions {
   maxEntries?: number
+  /**
+   * Called with each batch of events (log events too, in order), after the console took its entries. Also see
+   * onReset: called when the numbering changes or events were dropped, so state built from events must be refetched.
+   */
+  onEvents?: (events: EditorEvent[]) => void
+  /** The host's events may have been missed (dropped, or another host's log began): refetch state built from them */
+  onMissedEvents?: () => void
   /** The current time, for the editor's own entries */
   now?: () => number
 }
@@ -68,21 +75,30 @@ export class ConsoleStore {
   private launch: number | null = null
 
   constructor(poll: PollFunction<EditorEvent>, options: ConsoleStoreOptions = {}) {
-    this.maxEntries = options.maxEntries ?? DefaultMaxEntries
-    this.now = options.now ?? Date.now
+    const { onEvents, onMissedEvents, maxEntries, now, ...pumpOptions } = options
+    this.maxEntries = maxEntries ?? DefaultMaxEntries
+    this.now = now ?? Date.now
     this.pump = new EventPump(
       poll,
       {
-        onEvents: (events) => this.receive(events),
-        onDropped: (count) =>
+        onEvents: (events) => {
+          this.receive(events)
+          onEvents?.(events)
+        },
+        onDropped: (count) => {
           this.note(
             "warn",
             `${count} host log line${count === 1 ? " was" : "s were"} dropped before the editor read them`
-          ),
-        onReset: () => this.note("info", "The host started a new log"),
+          )
+          onMissedEvents?.()
+        },
+        onReset: () => {
+          this.note("info", "The host started a new log")
+          onMissedEvents?.()
+        },
         onError: (e) => console.warn("PollEvents failed:", e),
       },
-      options
+      pumpOptions
     )
   }
 

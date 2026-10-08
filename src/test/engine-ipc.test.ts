@@ -1,7 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost, EngineHostOptions, MaxUnusedViewBytes, ownedViews } from "../main/engine-ipc"
+import { EngineHost, EngineHostOptions, MaxJsonDepth, MaxUnusedViewBytes, ownedViews } from "../main/engine-ipc"
 import { Commands } from "../protocol/codec"
 import { FrameReader } from "../protocol/framing"
 import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
@@ -102,8 +102,26 @@ class FakeClient {
 
   async pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<unknown> {
     this.calls.push(["pollEvents", [epoch, afterSeq, maxEvents]])
-    return { epoch: 7, nextSeq: 1, dropped: 0, events: [{ seq: 1, kind: "log", level: "info", message: "hi", time: 0 }] }
+    return {
+      epoch: 7,
+      nextSeq: 1,
+      dropped: 0,
+      events: [{ seq: 1, kind: "log", level: "info", message: "hi", time: 0 }],
+    }
   }
+
+  /** Records the call and answers with the command's name */
+  private record(name: string, args: unknown[]): Promise<unknown> {
+    this.calls.push([name, args])
+    return Promise.resolve({ name })
+  }
+  openScene = (...args: unknown[]) => this.record("openScene", args)
+  saveSceneToFile = (...args: unknown[]) => this.record("saveSceneToFile", args)
+  newScene = (...args: unknown[]) => this.record("newScene", args)
+  getOpenScene = (...args: unknown[]) => this.record("getOpenScene", args)
+  getProjectInfo = (...args: unknown[]) => this.record("getProjectInfo", args)
+  setProjectSettings = (...args: unknown[]) => this.record("setProjectSettings", args)
+  setStartupScene = (...args: unknown[]) => this.record("setStartupScene", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -209,6 +227,73 @@ describe("EngineHost (the main process's engine IPC)", () => {
     assert.equal(result.ok, true)
     assert.deepEqual(client.calls, [["pollEvents", [0xffffffff, 0, 256]]])
     assert.equal((result as { value: { events: unknown[] } }).value.events.length, 1)
+  })
+
+  test("the scene and project commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const scenePath = "res://assets/scenes/main.scene"
+    const calls: Array<[string, unknown[]]> = [
+      ["openScene", [scenePath]],
+      ["saveSceneToFile", [""]],
+      ["newScene", [scenePath, "Main"]],
+      ["getOpenScene", []],
+      ["getProjectInfo", []],
+      ["setProjectSettings", [{ physics: { gravity: -9.8, layers: [1, 2, null] }, input: null }]],
+      ["setStartupScene", [scenePath]],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["openScene", []],
+      ["openScene", [42]],
+      ["openScene", [["a"]]],
+      ["openScene", [scenePath, scenePath]],
+      ["saveSceneToFile", [null]],
+      ["newScene", [scenePath]],
+      ["newScene", [scenePath, 7]],
+      ["getOpenScene", [1]],
+      ["getProjectInfo", ["x"]],
+      ["setStartupScene", [{}]],
+      ["setProjectSettings", []],
+      ["setProjectSettings", [null]],
+      ["setProjectSettings", [[1, 2]]], // a merge patch is an object
+      ["setProjectSettings", ["{}"]],
+      ["setProjectSettings", [{ a: NaN }]],
+      ["setProjectSettings", [{ a: Infinity }]],
+      ["setProjectSettings", [{ a: undefined }]],
+      ["setProjectSettings", [{ a: () => 1 }]],
+      ["setProjectSettings", [{ a: new Date(0) }]],
+      ["setProjectSettings", [{ a: { b: new Map() } }]],
+      ["setProjectSettings", [{ a: BigInt(1) }]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${String(args.length)} args) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+  })
+
+  test("a settings patch is passed on as a fresh plain copy, and too deep a one is refused", async () => {
+    const { ipc, client, editor } = setup()
+    const patch = JSON.parse('{"__proto__": {"polluted": true}, "a": {"b": [1, {"c": "d"}]}}')
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "setProjectSettings", [patch])).ok, true)
+    const passed = client.calls[0][1][0] as Record<string, unknown>
+    assert.notEqual(passed, patch)
+    assert.deepEqual(JSON.parse(JSON.stringify(passed)), JSON.parse(JSON.stringify(patch)))
+    assert.equal(Object.getPrototypeOf(passed), Object.prototype)
+    assert.equal(Object.prototype.hasOwnProperty.call(passed, "__proto__"), true)
+    assert.equal(({} as Record<string, unknown>).polluted, undefined)
+
+    let deep: Record<string, unknown> = {}
+    for (let i = 0; i < MaxJsonDepth + 1; i++) deep = { n: deep }
+    client.calls.length = 0
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "setProjectSettings", [deep])).ok, false)
+    assert.equal(client.calls.length, 0)
   })
 
   test("refuses calls from anything but the editor page (its window, main frame and URL)", async () => {

@@ -19,7 +19,14 @@ import {
   ResponseType,
   ServerInfoResponse,
   decodeHelloRequest,
+  decodeNewSceneRequest,
+  decodeOpenSceneRequest,
+  decodeSaveSceneToFileRequest,
+  decodeSetProjectSettingsRequest,
+  decodeSetStartupSceneRequest,
   encodeErrorResponse,
+  encodeProjectInfoResponse,
+  encodeSceneInfoResponse,
   encodeFrame,
   encodeServerInfoResponse,
 } from "../protocol/protocol.generated"
@@ -116,8 +123,10 @@ async function until(done: () => boolean, maxTurns: number = 100): Promise<void>
 }
 
 /** Until the client has said Hello on its socket'th connection */
-const saidHello = (sockets: FakeSocket[], socket: number = 0) => () =>
-  sockets.length > socket && sockets[socket].hellos.length > 0
+const saidHello =
+  (sockets: FakeSocket[], socket: number = 0) =>
+  () =>
+    sockets.length > socket && sockets[socket].hellos.length > 0
 
 describe("EngineClient reconnects", () => {
   test("a partial response from a dropped connection doesn't corrupt the next one", async () => {
@@ -478,5 +487,98 @@ describe("EngineClient Hello", () => {
     await assert.rejects(connecting, /Disconnected/)
     assert.equal(sockets[0].written.length, 0)
     assert.equal(sockets[0].destroyed, true)
+  })
+})
+
+describe("EngineClient scene and project commands (protocol 1.3)", () => {
+  const scene = {
+    path: "res://assets/scenes/main.scene",
+    name: "main",
+    uuid: "11111111-2222-3333-4444-555555555555",
+    revision: 7,
+    savedRevision: 5,
+  }
+  const project = {
+    rootPath: "C:\Games\A",
+    userDataPath: "C:\Users\me\AppData\N2\A",
+    project: {
+      formatVersion: 1,
+      name: "A",
+      projectId: "aaaa",
+      engineVersion: "1.0.0",
+      startupScene: "res://assets/scenes/main.scene",
+      scenes: ["res://assets/scenes/main.scene"],
+      settings: { physics: { gravity: -9.8 } },
+    },
+  }
+  const sceneInfo = (): Buffer => frame(ResponseType.SceneInfo, Buffer.from(encodeSceneInfoResponse(scene)))
+  const projectInfo = (): Buffer => frame(ResponseType.ProjectInfo, Buffer.from(encodeProjectInfoResponse(project)))
+  const sentFrame = (socket: FakeSocket, i: number): { type: number; payload: Buffer } => ({
+    type: socket.written[i][0],
+    payload: socket.written[i].subarray(5),
+  })
+
+  test("the scene commands send their ids and payloads and answer SceneInfo", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+
+    const opened = client.openScene(scene.path)
+    sockets[0].emit("data", sceneInfo())
+    assert.deepEqual(await opened, scene)
+    assert.equal(sentFrame(sockets[0], 0).type, 0x25)
+    assert.deepEqual(decodeOpenSceneRequest(sentFrame(sockets[0], 0).payload), { path: scene.path })
+
+    const saved = client.saveSceneToFile("")
+    sockets[0].emit("data", sceneInfo())
+    assert.deepEqual(await saved, scene)
+    assert.equal(sentFrame(sockets[0], 1).type, 0x26)
+    assert.deepEqual(decodeSaveSceneToFileRequest(sentFrame(sockets[0], 1).payload), { path: "" })
+
+    const created = client.newScene("res://assets/scenes/new.scene", "New")
+    sockets[0].emit("data", sceneInfo())
+    assert.deepEqual(await created, scene)
+    assert.equal(sentFrame(sockets[0], 2).type, 0x27)
+    assert.deepEqual(decodeNewSceneRequest(sentFrame(sockets[0], 2).payload), {
+      path: "res://assets/scenes/new.scene",
+      name: "New",
+    })
+
+    const current = client.getOpenScene()
+    sockets[0].emit("data", sceneInfo())
+    assert.deepEqual(await current, scene)
+    assert.equal(sentFrame(sockets[0], 3).type, 0x29)
+    assert.equal(sentFrame(sockets[0], 3).payload.length, 0)
+  })
+
+  test("the project commands send their ids and payloads and answer ProjectInfo", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+
+    const info = client.getProjectInfo()
+    sockets[0].emit("data", projectInfo())
+    assert.deepEqual(await info, project)
+    assert.equal(sentFrame(sockets[0], 0).type, 0x70)
+    assert.equal(sentFrame(sockets[0], 0).payload.length, 0)
+
+    const patch = { physics: { gravity: -1 }, input: null }
+    const changed = client.setProjectSettings(patch)
+    sockets[0].emit("data", projectInfo())
+    assert.deepEqual(await changed, project)
+    assert.equal(sentFrame(sockets[0], 1).type, 0x71)
+    assert.deepEqual(decodeSetProjectSettingsRequest(sentFrame(sockets[0], 1).payload), { settings: patch })
+
+    const startup = client.setStartupScene("")
+    sockets[0].emit("data", projectInfo())
+    await startup
+    assert.equal(sentFrame(sockets[0], 2).type, 0x72)
+    assert.deepEqual(decodeSetStartupSceneRequest(sentFrame(sockets[0], 2).payload), { path: "" })
+  })
+
+  test("an Error answer rejects with the host's message", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const pending = client.openScene("res://nope.txt")
+    sockets[0].emit("data", frame(ResponseType.Error, Buffer.from("not a scene path")))
+    await assert.rejects(pending, /not a scene path/)
   })
 })
