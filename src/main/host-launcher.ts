@@ -106,9 +106,11 @@ export interface LaunchOptions {
   onSpawned?: (kill: () => void) => void
 }
 
-/** What a host's failure message quotes: its last stderr lines, else its last stdout lines */
+/** What a host's failure message quotes: its last stderr lines, else its last stdout lines (not the ready line) */
 function quoteOutput(stderr: string[], stdout: string[]): string {
-  const lines = (stderr.length > 0 ? stderr : stdout).map((line) => line.replace(/\r$/, "")).filter((l) => l !== "")
+  const lines = (stderr.length > 0 ? stderr : stdout)
+    .map((line) => line.replace(/\r$/, ""))
+    .filter((line) => line !== "" && parseReadyLine(line) === null)
   return lines.length > 0 ? `:\n${lines.join("\n")}` : ""
 }
 

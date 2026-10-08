@@ -243,6 +243,19 @@ describe("HostProcess.launch", () => {
     assert.match(host.lastOutput, /oh no/)
   })
 
+  test("a host that exits after the ready line quotes its stdout, without the ready line", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const launching = HostProcess.launch({ hostPath: "h", projectDir: "p", spawn })
+    const { child } = calls[0]
+    child.stdout.write("[INFO] Engine initialized\r\nN2EditorHost ready port=7\r\n")
+    const host = await launching
+    child.stdout.write("[ERROR] Fatal error: boom\r\n")
+    child.exit(1)
+    await settle()
+    await settle()
+    assert.equal(host.lastOutput, ":\n[INFO] Engine initialized\n[ERROR] Fatal error: boom")
+  })
+
   test("kill ends the process, once", async () => {
     const { calls, spawn } = fakeSpawn()
     const launching = HostProcess.launch({ hostPath: "h", projectDir: "p", spawn })
