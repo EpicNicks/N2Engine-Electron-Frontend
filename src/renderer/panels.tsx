@@ -1,9 +1,9 @@
-// The editor's existing panels on today's commands: the project's files, the hierarchy (a flat entity list), the
-// inspector (world transform), the engine's health and the script editor. F3-F6 rebuild them on the #6 protocol.
+// The editor's panels other than the hierarchy (hierarchy-panel.tsx) and the console: the project's files, the
+// inspector (world transform), the engine's health and the script editor. F4-F6 rebuild them on the #6 protocol.
 import { useEffect, useState } from "preact/hooks"
 import type { EngineHealthResponse, Vec3 } from "../protocol/protocol.generated"
 import type { FileInfo } from "../shared/api"
-import { basename, extname } from "./paths"
+import { basename, extname, toResPath } from "./paths"
 import { Empty, Panel, prompt, showContextMenu, useApp } from "./ui"
 
 // ==================== Files ====================
@@ -36,8 +36,10 @@ function FileNode({ node, depth }: { node: FileInfo; depth: number }) {
           label: "New Scene",
           action: async () => {
             if (!store.connected.value) return store.reportError("New scene", "Not connected to the editor host")
-            const name = await prompt("New scene", "Untitled Scene")
-            if (name) scene.createScene(node.path, name).catch(fail("Failed to create the scene"))
+            // In the folder it was asked on, when that is inside assets
+            const folder = toResPath(store.projectPath.value ?? "", node.path)
+            const made = await store.newScene(folder ? `${folder.replace(/\/$/, "")}/Untitled.scene` : undefined)
+            if (made) scene.refreshFiles().catch(fail("Failed to list files"))
           },
         },
         {
@@ -71,8 +73,11 @@ function FileNode({ node, depth }: { node: FileInfo; depth: number }) {
   const ext = extname(node.name)
   const open = () => {
     if (ext === ".scene") {
-      if (!store.connected.value) return store.reportError("Load scene", "Not connected to the editor host")
-      scene.loadSceneFile(node.path).catch(fail("Failed to load the scene"))
+      if (!store.connected.value) return store.reportError("Open scene", "Not connected to the editor host")
+      const path = toResPath(store.projectPath.value ?? "", node.path)
+      if (path === null)
+        return store.reportError("Open scene", "Only scenes inside the project's assets folder can be opened")
+      void store.openScene(path)
     } else if (ext === ".lua" || ext === ".json" || ext === ".txt") {
       scene.openScript(node.path).catch(fail("Failed to open the file"))
     }
@@ -110,51 +115,6 @@ export function FilesPanel() {
   )
 }
 
-// ==================== Hierarchy ====================
-
-export function HierarchyPanel() {
-  const { store, scene } = useApp()
-  const connected = store.connected.value
-  const sceneName = scene.sceneName.value
-  const entities = scene.entities.value
-  const selected = scene.selectedId.value
-
-  const add = async () => {
-    const name = await prompt("Entity name", "New Entity")
-    if (name) scene.createEntity(name).catch((e) => store.reportError("Failed to create the entity", e))
-  }
-
-  let content
-  if (!connected) content = <Empty>Not connected</Empty>
-  else if (!sceneName) content = <Empty>No scene loaded</Empty>
-  else if (entities.length === 0) content = <Empty>No entities in {sceneName}</Empty>
-  else
-    content = entities.map((entity) => (
-      <div
-        class={entity.id === selected ? "hierarchy-item selected" : "hierarchy-item"}
-        key={entity.id}
-        onClick={() => scene.select(entity.id).catch((e) => store.reportError("Failed to read the transform", e))}
-      >
-        🎮 {entity.name}
-      </div>
-    ))
-
-  return (
-    <Panel
-      title={sceneName ? `Hierarchy: ${sceneName}` : "Hierarchy"}
-      icon="🎬"
-      class="hierarchy-panel"
-      actions={
-        <button onClick={add} disabled={!connected || !sceneName}>
-          + Add
-        </button>
-      }
-    >
-      {content}
-    </Panel>
-  )
-}
-
 // ==================== Inspector ====================
 
 function VectorRow(props: { label: string; value: Vec3; step: number; onChange: (value: Vec3) => void }) {
@@ -181,10 +141,10 @@ function VectorRow(props: { label: string; value: Vec3; step: number; onChange: 
 }
 
 export function InspectorPanel() {
-  const { store, scene } = useApp()
+  const { store, scene, hierarchy } = useApp()
   const selected = scene.selectedId.value
   const transform = scene.transform.value
-  const entity = scene.entities.value.find((e) => e.id === selected)
+  const entity = selected ? hierarchy.tree.value.nodes.get(selected) : undefined
 
   let content
   if (!selected || !store.connected.value) content = <Empty>Select an entity to inspect</Empty>
@@ -214,7 +174,7 @@ export function InspectorPanel() {
         </div>
         <button
           class="danger"
-          onClick={() => scene.destroySelected().catch((e) => store.reportError("Failed to delete the entity", e))}
+          onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
         >
           Delete Entity
         </button>

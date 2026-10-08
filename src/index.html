@@ -213,9 +213,21 @@
       .recent-remove:hover { background: #444; color: #fff; }
 
       /* Hierarchy */
-      .hierarchy-item { padding: 4px 8px; cursor: pointer; user-select: none; white-space: nowrap; }
+      .hierarchy-list { min-height: 100%; outline: none; }
+      .hierarchy-list.drop-end { box-shadow: inset 0 -2px 0 #3794ff; }
+      .hierarchy-item { display: flex; align-items: center; gap: 4px; padding: 2px 8px 2px 4px; cursor: pointer; user-select: none; white-space: nowrap; }
       .hierarchy-item:hover { background: #2a2d2e; }
       .hierarchy-item.selected { background: #094771; }
+      .hierarchy-list:focus-within .hierarchy-item.selected { background: #0b5a8f; }
+      .hierarchy-item.inactive .hierarchy-name { color: #777; }
+      .hierarchy-item.dragging { opacity: 0.5; }
+      .hierarchy-item.drop-before { box-shadow: inset 0 2px 0 #3794ff; }
+      .hierarchy-item.drop-after { box-shadow: inset 0 -2px 0 #3794ff; }
+      .hierarchy-item.drop-inside { background: rgba(55, 148, 255, 0.3); outline: 1px solid #3794ff; outline-offset: -1px; }
+      .hierarchy-item .arrow { width: 14px; flex-shrink: 0; text-align: center; color: #aaa; }
+      .hierarchy-item .hierarchy-active { margin: 0; flex-shrink: 0; cursor: pointer; }
+      .hierarchy-name { overflow: hidden; text-overflow: ellipsis; }
+      .hierarchy-rename { flex: 1; min-width: 0; padding: 0 4px; font-size: inherit; }
 
       /* Inspector */
       .inspector-section { margin-bottom: 12px; }
@@ -276,6 +288,7 @@
       .modal label { display: flex; flex-direction: column; gap: 8px; color: #ccc; font-size: 13px; }
       .modal input { width: 100%; padding: 8px; font-size: 13px; }
       .modal-buttons { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+      .modal-buttons button.danger { width: auto; margin-top: 0; }
       .modal-message { white-space: pre-wrap; word-break: break-word; max-width: 520px; color: #ccc; }
 
       /* Context menu */
@@ -291,6 +304,9 @@
       }
       .context-menu-item { padding: 6px 12px; cursor: pointer; font-size: 13px; color: #ccc; }
       .context-menu-item:hover { background: #094771; }
+      .context-menu-item.disabled { color: #777; cursor: default; }
+      .context-menu-item.disabled:hover { background: none; }
+      .context-menu-separator { height: 1px; background: #444; margin: 4px 0; }
 
       /* Scrollbars */
       ::-webkit-scrollbar { width: 10px; height: 10px; }

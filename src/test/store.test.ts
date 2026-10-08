@@ -5,7 +5,7 @@ import type { EditorEvent, EventsResponse, SceneInfoResponse } from "../protocol
 import type { CreateProjectResult, HostLocation, HostState, OpenProjectResult, ServerInfo } from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
 import { ConsoleStore, entryFromEvent } from "../renderer/console-store"
-import { EditorStore, StoreApi, createUnavailableReason, describeHost } from "../renderer/store"
+import { EditorStore, StoreApi, UnsavedChoice, createUnavailableReason, describeHost } from "../renderer/store"
 
 /** Timers that fire only when the test says so */
 class FakeTimers implements Timers {
@@ -29,6 +29,9 @@ class FakeTimers implements Timers {
 }
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+/** A scene path's file name without ".scene" */
+const basenameOf = (path: string): string => path.slice(path.lastIndexOf("/") + 1).replace(/\.scene$/i, "")
 
 const log = (seq: number, message: string, level = "info"): EditorEvent => ({
   seq,
@@ -223,9 +226,14 @@ class FakeApi implements StoreApi {
   /** The answers the user gives, in order */
   confirmAnswers: boolean[] = []
   promptAnswers: Array<string | null> = []
+  unsavedAnswers: UnsavedChoice[] = []
   asked: string[] = []
 
   dialogs = {
+    unsaved: async (message: string, discardLabel: string): Promise<UnsavedChoice> => {
+      this.asked.push(`unsaved ${discardLabel}: ${message}`)
+      return this.unsavedAnswers.shift() ?? "cancel"
+    },
     prompt: async (title: string, value: string) => {
       this.asked.push(`prompt ${title}: ${value}`)
       return this.promptAnswers.length > 0 ? this.promptAnswers.shift()! : value
@@ -269,7 +277,30 @@ class FakeApi implements StoreApi {
       if (!this.openScene) throw new Error("No scene is loaded")
       return { ...this.openScene }
     },
+    openScene: async (path: string): Promise<SceneInfoResponse> => {
+      this.calls.push(`openScene ${path}`)
+      if (this.sceneError) throw new Error(this.sceneError)
+      return (this.openScene = { path, name: basenameOf(path), uuid: "u-" + path, revision: 1, savedRevision: 1 })
+    },
+    newScene: async (path: string, name: string): Promise<SceneInfoResponse> => {
+      this.calls.push(`newScene ${path} name=${name}`)
+      if (this.sceneError) throw new Error(this.sceneError)
+      return (this.openScene = { path, name: basenameOf(path), uuid: "u-" + path, revision: 1, savedRevision: 1 })
+    },
+    saveSceneToFile: async (path: string): Promise<SceneInfoResponse> => {
+      this.calls.push(`saveSceneToFile ${path}`)
+      if (this.sceneError) throw new Error(this.sceneError)
+      const scene = this.openScene!
+      return (this.openScene = {
+        ...scene,
+        path: path || scene.path,
+        name: path ? basenameOf(path) : scene.name,
+        savedRevision: scene.revision,
+      })
+    },
   }
+  /** Fails openScene, newScene and saveSceneToFile with this message */
+  sceneError: string | null = null
   /** What GetOpenScene answers; null: an error (no scene, or a host before protocol 1.3) */
   openScene: SceneInfoResponse | null = null
   /** While set, GetOpenScene waits for it */
@@ -510,7 +541,14 @@ describe("EditorStore", () => {
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
 
     // An edit that names its objects: only those
-    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a, entityIds: ["u1", "u2"] })
+    api.events.events.push({
+      seq: 1,
+      kind: "sceneChanged",
+      revision: 4,
+      savedRevision: 3,
+      path: a,
+      entityIds: ["u1", "u2"],
+    })
     await timers.fire()
     assert.equal(store.sceneChangeCount.peek(), base + 1)
     assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u1", "u2"] })
@@ -577,7 +615,10 @@ describe("EditorStore", () => {
     stop()
     assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
     assert.ok(seen.length > 0)
-    assert.ok(seen.every((change) => change?.full === true), "no observer saw the narrowed change")
+    assert.ok(
+      seen.every((change) => change?.full === true),
+      "no observer saw the narrowed change"
+    )
 
     // The flag is spent: the next poll's ids stand alone
     api.events.events.push({ seq: 3, kind: "sceneChanged", revision: 4, savedRevision: 0, path: "", entityIds: ["u2"] })
@@ -842,6 +883,137 @@ describe("EditorStore", () => {
     assert.match(createUnavailableReason(at(false)) ?? "", /older than engine #90/)
     assert.match(createUnavailableReason(at(true, "Not found: h")) ?? "", /isn't set/)
     assert.match(createUnavailableReason(null) ?? "", /isn't set/)
+  })
+
+  describe("scene actions", () => {
+    const a = "res://scenes/a.scene"
+    /** A project with scene a open: clean, or dirty (revision 4, saved at 3) */
+    async function withScene(dirty: boolean) {
+      const made = makeStore()
+      made.api.openScene = { path: a, name: "a", uuid: "u1", revision: dirty ? 4 : 3, savedRevision: 3 }
+      await made.store.openProject()
+      await settle()
+      assert.equal(made.store.sceneDirty.value, dirty)
+      return made
+    }
+    const engineCalls = (api: FakeApi) => api.calls.filter((c) => /^(openScene|newScene|saveSceneToFile)/.test(c))
+
+    test("opening a scene opens it, and the loaded scene is the one answered", async () => {
+      const { api, store } = await withScene(false)
+      const result = await store.openScene("res://scenes/b.scene")
+      assert.equal(result?.name, "b")
+      assert.equal(store.scene.value?.path, "res://scenes/b.scene")
+      assert.equal(store.sceneLabel.value, "b")
+      assert.deepEqual(engineCalls(api), ["openScene res://scenes/b.scene"])
+      assert.deepEqual(api.asked, [])
+      assert.equal(store.busy.value, null)
+    })
+
+    test("unsaved changes: save then open, discard then open, or cancel", async () => {
+      const { api, store } = await withScene(true)
+      api.unsavedAnswers.push("cancel")
+      assert.equal(await store.openScene("res://scenes/b.scene"), undefined)
+      assert.deepEqual(engineCalls(api), [])
+      assert.match(api.asked[0], /^unsaved Discard and open the scene: a has unsaved changes\.$/)
+
+      api.unsavedAnswers.push("discard")
+      assert.equal((await store.openScene("res://scenes/b.scene"))?.name, "b")
+      assert.deepEqual(engineCalls(api), ["openScene res://scenes/b.scene"])
+
+      // Dirty again, this time saved first (the scene has its file: no path is asked for)
+      api.openScene = { path: a, name: "a", uuid: "u1", revision: 6, savedRevision: 5 }
+      await store.refreshScene()
+      assert.equal(store.sceneDirty.value, true)
+      api.calls.length = 0
+      api.unsavedAnswers.push("save")
+      await store.openScene("res://scenes/c.scene")
+      assert.deepEqual(engineCalls(api), ["saveSceneToFile ", "openScene res://scenes/c.scene"])
+      assert.equal(store.scene.value?.name, "c")
+    })
+
+    test("a failed save stops the open that asked for it", async () => {
+      const { api, store } = await withScene(true)
+      api.unsavedAnswers.push("save")
+      api.sceneError = "disk full"
+      assert.equal(await store.openScene("res://scenes/b.scene"), undefined)
+      assert.equal(store.error.value, "disk full")
+      assert.equal(store.scene.value?.path, a)
+      assert.deepEqual(engineCalls(api), ["saveSceneToFile "])
+    })
+
+    test("saving writes the scene's own file and shows it saved", async () => {
+      const { api, store } = await withScene(true)
+      const result = await store.saveScene()
+      assert.deepEqual(engineCalls(api), ["saveSceneToFile "])
+      assert.equal(result?.savedRevision, 4)
+      assert.equal(store.sceneDirty.value, false)
+      assert.equal(store.sceneLabel.value, "a")
+    })
+
+    test("a scene with no file asks for a path, and adds res:// and .scene to what is typed", async () => {
+      const { api, store } = makeStore()
+      api.openScene = { path: "", name: "Untitled", uuid: "u0", revision: 2, savedRevision: 0 }
+      await store.openProject()
+      await settle()
+      api.promptAnswers.push("levels/First")
+      await store.saveScene()
+      assert.deepEqual(api.asked, ["prompt Save scene as (a res:// path): res://scenes/Untitled.scene"])
+      assert.deepEqual(engineCalls(api), ["saveSceneToFile res://levels/First.scene"])
+      assert.equal(store.scene.value?.path, "res://levels/First.scene")
+      assert.equal(store.sceneDirty.value, false)
+
+      // Cancelled: nothing is sent
+      api.calls.length = 0
+      api.promptAnswers.push(null)
+      assert.equal(await store.saveSceneAs(), undefined)
+      assert.deepEqual(engineCalls(api), [])
+    })
+
+    test("a new scene asks for its path, and unsaved changes first", async () => {
+      const { api, store } = await withScene(true)
+      api.promptAnswers.push("res://scenes/New.scene")
+      api.unsavedAnswers.push("discard")
+      const result = await store.newScene()
+      assert.equal(result?.name, "New")
+      assert.deepEqual(engineCalls(api), ["newScene res://scenes/New.scene name="])
+      assert.equal(store.sceneDirty.value, false)
+
+      // Cancelling the path asks nothing more
+      api.calls.length = 0
+      api.asked.length = 0
+      api.promptAnswers.push(null)
+      assert.equal(await store.newScene(), undefined)
+      assert.deepEqual(api.asked, ["prompt New scene (a res:// path): res://scenes/Untitled.scene"])
+      assert.deepEqual(engineCalls(api), [])
+    })
+
+    test("the host's refusal (a file that exists, say) is shown and the scene stays", async () => {
+      const { api, store } = await withScene(false)
+      api.promptAnswers.push("res://scenes/a.scene")
+      api.sceneError = "A file already exists at res://scenes/a.scene (open it with OpenScene)"
+      assert.equal(await store.newScene(), undefined)
+      assert.match(store.error.value ?? "", /already exists/)
+      assert.equal(store.scene.value?.path, a)
+    })
+
+    test("closing the project asks about unsaved changes too", async () => {
+      const { api, store } = await withScene(true)
+      api.unsavedAnswers.push("cancel")
+      await store.closeProject()
+      assert.equal(store.view.value, "editor")
+      assert.ok(!api.calls.includes("close"))
+      api.unsavedAnswers.push("discard")
+      await store.closeProject()
+      assert.equal(store.view.value, "welcome")
+    })
+
+    test("newestSceneRevision is the newest revision an event named, and unknown after missed events", async () => {
+      const { api, store, timers } = await withScene(false)
+      assert.equal(store.newestSceneRevision, null)
+      api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a, entityIds: ["x"] })
+      await timers.fire()
+      assert.equal(store.newestSceneRevision, 4)
+    })
   })
 
   test("describeHost", () => {

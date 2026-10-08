@@ -4,9 +4,11 @@ import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { effect } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
-import { EnginePanel, FilesPanel, HierarchyPanel, InspectorPanel, ScriptEditor } from "./panels"
-import { basename } from "./paths"
-import { Splitter, useApp } from "./ui"
+import { HierarchyPanel } from "./hierarchy-panel"
+import { EnginePanel, FilesPanel, InspectorPanel, ScriptEditor } from "./panels"
+import { basename, toResPath } from "./paths"
+import { MenuItem, Splitter, showContextMenu, useApp } from "./ui"
+import type { FileInfo } from "../shared/api"
 import { ViewportRenderer } from "./viewport-renderer"
 
 // Panel sizes, in CSS pixels, kept for the session
@@ -17,6 +19,67 @@ const bottomHeight = signal(220)
 const bottomTab = signal<string>("console")
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+
+/** The scene files in a file tree, as res:// paths */
+function sceneFiles(projectPath: string, files: readonly FileInfo[]): string[] {
+  const found: string[] = []
+  for (const file of files) {
+    if (file.isDirectory) found.push(...sceneFiles(projectPath, file.children ?? []))
+    else if (file.name.toLowerCase().endsWith(".scene")) {
+      const path = toResPath(projectPath, file.path)
+      if (path !== null) found.push(path)
+    }
+  }
+  return found
+}
+
+/** New, Open, Save and Save As for the loaded scene */
+function SceneButtons() {
+  const { store, scene } = useApp()
+  const busy = store.busy.value !== null
+  const connected = store.connected.value
+  const loaded = store.scene.value
+  // A scene command may have made a file
+  const done = (result: unknown) => {
+    if (result) scene.refreshFiles().catch((e) => store.reportError("Failed to list files", e))
+  }
+
+  const open = (e: MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    e.stopPropagation()
+    const scenes = sceneFiles(store.projectPath.value ?? "", scene.files.value)
+    const items: MenuItem[] =
+      scenes.length === 0
+        ? [{ label: "No scenes in the project", action: () => {}, disabled: true }]
+        : scenes.map((path) => ({
+            label: path === loaded?.path ? `${path} (open)` : path,
+            action: () => void store.openScene(path),
+          }))
+    showContextMenu(rect.left, rect.bottom, items)
+  }
+
+  return (
+    <>
+      <button onClick={() => store.newScene().then(done)} disabled={busy || !connected} title="Make a new empty scene">
+        New scene
+      </button>
+      <button onClick={open} disabled={busy || !connected} title="Open a scene of the project">
+        Open scene
+      </button>
+      <button onClick={() => store.saveScene().then(done)} disabled={busy || !loaded} title="Save the scene (Ctrl+S)">
+        Save scene
+      </button>
+      <button
+        class="secondary"
+        onClick={() => store.saveSceneAs().then(done)}
+        disabled={busy || !loaded}
+        title="Save the scene to another file"
+      >
+        Save as...
+      </button>
+    </>
+  )
+}
 
 function Toolbar() {
   const { store, audio } = useApp()
@@ -47,6 +110,8 @@ function Toolbar() {
         </span>
       )}
       <div class="separator" />
+      <SceneButtons />
+      <div class="separator" />
       <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
         {running ? "Restart host" : "Start host"}
       </button>
@@ -71,7 +136,7 @@ function Toolbar() {
 }
 
 function Viewport() {
-  const { store, scene } = useApp()
+  const { store } = useApp()
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
 
@@ -95,8 +160,8 @@ function Viewport() {
     <div class="viewport-container" ref={container}>
       <canvas class="viewport" ref={canvas} width={800} height={600} />
       {!store.connected.value && <div class="viewport-overlay">{store.busy.value ?? store.hostSummary.value}</div>}
-      {store.connected.value && !scene.sceneName.value && (
-        <div class="viewport-hint">No scene loaded: open a .scene file from Files</div>
+      {store.connected.value && !store.scene.value && (
+        <div class="viewport-hint">No scene loaded: open one with Open scene, or make one with New scene</div>
       )}
     </div>
   )
@@ -159,20 +224,49 @@ function BottomPanel() {
 }
 
 export function Editor() {
-  const { store, scene } = useApp()
+  const { store, scene, hierarchy } = useApp()
 
   // The panels follow the connection: a new connection is a new host, with nothing loaded yet
   useEffect(
     () =>
       effect(() => {
-        if (store.connected.value) {
-          scene.refreshScene().catch((e) => store.reportError("Failed to read the scene", e))
-        } else {
+        if (!store.connected.value) {
           scene.reset()
+          hierarchy.reset()
         }
       }),
     []
   )
+  // The hierarchy follows the scene's changes (a connection is one too, so it is read on connecting)
+  useEffect(
+    () =>
+      effect(() => {
+        store.sceneChangeCount.value // what this runs on
+        const change = store.lastSceneChange.peek()
+        if (!change || !store.connected.peek()) return
+        hierarchy
+          .applyChange(change, store.newestSceneRevision)
+          .then(() => {
+            // The inspector's object may have changed (a transform, say): read it again
+            const id = scene.selectedId.peek()
+            if (id !== null && (change.full || change.entityIds.includes(id))) return scene.refreshTransform()
+          })
+          .catch((e) => store.reportError("Failed to read the scene", e))
+      }),
+    []
+  )
+  // Ctrl+S saves the scene (the script editor handles the key first, for its file)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return
+      e.preventDefault()
+      if (store.scene.value && store.busy.value === null) {
+        void store.saveScene().then((saved) => saved && scene.refreshFiles().catch(() => {}))
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
   useEffect(() => {
     scene.refreshFiles().catch((e) => store.reportError("Failed to list files", e))
     return () => scene.resetProject()

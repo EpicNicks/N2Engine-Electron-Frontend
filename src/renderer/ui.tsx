@@ -6,11 +6,14 @@ import { signal } from "@preact/signals"
 import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
 import type { AudioController } from "./audio-controller"
+import type { HierarchyState } from "./hierarchy-state"
+import type { UnsavedChoice } from "./store"
 
 /** What every component can reach: the editor's store and the page's other state */
 export interface AppState {
   store: EditorStore
   scene: SceneState
+  hierarchy: HierarchyState
   audio: AudioController
 }
 
@@ -192,10 +195,10 @@ export function ConfirmDialog() {
 
 // ==================== Context menu ====================
 
-export interface MenuItem {
-  label: string
-  action: () => void
-}
+export type MenuItem =
+  | { label: string; action: () => void; disabled?: boolean }
+  /** A line between groups of items */
+  | { separator: true }
 
 const menu = signal<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
@@ -217,21 +220,83 @@ export function ContextMenu() {
   }, [])
   const current = menu.value
   if (!current) return null
+  // Kept inside the window (an item is about 28px high and the menu about 260px wide)
+  const left = Math.max(0, Math.min(current.x, window.innerWidth - 260))
+  const top = Math.max(0, Math.min(current.y, window.innerHeight - current.items.length * 28 - 12))
   return (
-    <div class="context-menu" style={{ left: `${current.x}px`, top: `${current.y}px` }} role="menu">
-      {current.items.map((item) => (
-        <div
-          class="context-menu-item"
-          role="menuitem"
-          key={item.label}
-          onClick={() => {
-            menu.value = null
-            item.action()
-          }}
-        >
-          {item.label}
+    <div class="context-menu" style={{ left: `${left}px`, top: `${top}px` }} role="menu">
+      {current.items.map((item, i) =>
+        "separator" in item ? (
+          <div class="context-menu-separator" role="separator" key={i} />
+        ) : (
+          <div
+            class={item.disabled ? "context-menu-item disabled" : "context-menu-item"}
+            role="menuitem"
+            aria-disabled={item.disabled === true}
+            key={item.label}
+            onClick={(e) => {
+              if (item.disabled) return e.stopPropagation() // the menu stays
+              menu.value = null
+              item.action()
+            }}
+          >
+            {item.label}
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
+// ==================== Unsaved changes ====================
+
+interface UnsavedRequest {
+  message: string
+  discardLabel: string
+  resolve: (choice: UnsavedChoice) => void
+}
+
+const unsavedRequest = signal<UnsavedRequest | null>(null)
+
+/** Asks what to do with a scene's unsaved changes: save them, discard them (discardLabel) or cancel */
+export function unsavedDialog(message: string, discardLabel: string): Promise<UnsavedChoice> {
+  unsavedRequest.value?.resolve("cancel")
+  return new Promise((resolve) => {
+    unsavedRequest.value = { message, discardLabel, resolve }
+  })
+}
+
+export function UnsavedDialog() {
+  const request = unsavedRequest.value
+  const save = useRef<HTMLButtonElement>(null)
+  useEffect(() => save.current?.focus(), [request])
+  if (!request) return null
+
+  const close = (choice: UnsavedChoice) => {
+    unsavedRequest.value = null
+    request.resolve(choice)
+  }
+  return (
+    <div class="modal-overlay" onClick={(e) => e.target === e.currentTarget && close("cancel")}>
+      <div
+        class="modal"
+        role="alertdialog"
+        aria-label="Unsaved changes"
+        onKeyDown={(e) => e.key === "Escape" && close("cancel")}
+      >
+        <p class="modal-message">{request.message}</p>
+        <div class="modal-buttons">
+          <button class="secondary" onClick={() => close("cancel")}>
+            Cancel
+          </button>
+          <button class="danger" onClick={() => close("discard")}>
+            {request.discardLabel}
+          </button>
+          <button ref={save} onClick={() => close("save")}>
+            Save
+          </button>
         </div>
-      ))}
+      </div>
     </div>
   )
 }

@@ -1,10 +1,10 @@
-// What the editor's existing panels show, as signals: the loaded scene and its entities, the selection and its
-// transform, the project's file tree and the open script tabs. These are today's commands (flat entity list, world
-// transforms, scene JSON through the page); the hierarchy, inspector and asset panels are rebuilt on the #6
-// protocol in F3, F4 and F6.
+// What the inspector and the file and script panels show, as signals: the selected object and its transform (the
+// hierarchy panel's selection drives it: see HierarchyState), the project's file tree and the open script tabs. The
+// scene and its objects are the store's (store.scene) and the hierarchy's (hierarchy-state.ts); the inspector is rebuilt
+// on the #6 protocol in F4, and the asset panel in F6.
 import { batch, signal } from "@preact/signals-core"
 import type { EngineApi, FileInfo, ProjectApi } from "../shared/api"
-import type { EntityInfo, Vec3 } from "../protocol/protocol.generated"
+import type { Vec3 } from "../protocol/protocol.generated"
 import { basename, join } from "./paths"
 
 export interface Transform {
@@ -20,26 +20,11 @@ export interface ScriptTab {
   dirty: boolean
 }
 
-type Engine = Pick<
-  EngineApi,
-  | "isConnected"
-  | "getCurrentScene"
-  | "loadScene"
-  | "createScene"
-  | "getAllEntities"
-  | "createEntity"
-  | "destroyEntity"
-  | "getEntityTransform"
-  | "setEntityTransform"
-  | "createScript"
-  | "rescanAssets"
->
+type Engine = Pick<EngineApi, "getEntityTransform" | "setEntityTransform" | "createScript" | "rescanAssets">
 type Project = Pick<ProjectApi, "listFiles" | "readTextFile" | "writeTextFile" | "createDirectory" | "deleteFile">
 
 export class SceneState {
-  /** The engine's current scene's name; null when none is loaded (or not connected) */
-  readonly sceneName = signal<string | null>(null)
-  readonly entities = signal<readonly EntityInfo[]>([])
+  /** The selected object's id (the hierarchy's primary selection); null with none */
   readonly selectedId = signal<string | null>(null)
   /** The selected entity's world transform; null while loading or with nothing selected */
   readonly transform = signal<Transform | null>(null)
@@ -58,8 +43,6 @@ export class SceneState {
   /** Everything the engine holds is gone (disconnected, or another host) */
   reset(): void {
     batch(() => {
-      this.sceneName.value = null
-      this.entities.value = []
       this.selectedId.value = null
       this.transform.value = null
     })
@@ -76,34 +59,7 @@ export class SceneState {
     })
   }
 
-  // ==================== Scene and entities ====================
-
-  async refreshScene(): Promise<void> {
-    if (!this.engine.isConnected()) {
-      this.reset()
-      return
-    }
-    const sceneData = await this.engine.getCurrentScene()
-    let name: string | null = null
-    if (sceneData) {
-      try {
-        name = (JSON.parse(sceneData.sceneJson) as { name?: unknown }).name as string
-      } catch {
-        // not JSON: still a scene
-      }
-      name = typeof name === "string" && name !== "" ? name : "Untitled"
-    }
-    this.sceneName.value = name
-    if (name) await this.refreshEntities()
-    else this.entities.value = []
-  }
-
-  async refreshEntities(): Promise<void> {
-    this.entities.value = await this.engine.getAllEntities()
-    if (this.selectedId.value && !this.entities.value.some((e) => e.id === this.selectedId.value)) {
-      this.select(null)
-    }
-  }
+  // ==================== Selection ====================
 
   async select(entityId: string | null): Promise<void> {
     batch(() => {
@@ -115,19 +71,12 @@ export class SceneState {
     if (this.selectedId.value === entityId) this.transform.value = transform
   }
 
-  async createEntity(name: string): Promise<void> {
-    const id = await this.engine.createEntity(name)
-    if (!id) throw new Error("The engine created no entity (is a scene loaded?)")
-    await this.refreshEntities()
-    await this.select(id)
-  }
-
-  async destroySelected(): Promise<void> {
+  /** Reads the selected object's transform again (it changed), keeping the old one shown meanwhile */
+  async refreshTransform(): Promise<void> {
     const id = this.selectedId.value
     if (!id) return
-    await this.engine.destroyEntity(id)
-    this.select(null)
-    await this.refreshEntities()
+    const transform = await this.engine.getEntityTransform(id)
+    if (this.selectedId.value === id) this.transform.value = transform
   }
 
   /** Shows the new transform at once; if the engine refuses it, the inspector goes back to the one before */
@@ -143,31 +92,6 @@ export class SceneState {
       if (this.selectedId.value === id && this.transform.value === transform) this.transform.value = previous
       throw e
     }
-  }
-
-  /** Reads a .scene file and loads it into the engine */
-  async loadSceneFile(scenePath: string): Promise<void> {
-    const sceneJson = await this.project.readTextFile(scenePath)
-    await this.engine.loadScene(sceneJson)
-    this.select(null)
-    await this.refreshScene()
-  }
-
-  /** Creates a scene in the engine and writes it to <dir>/scenes/<name>.scene (or <dir> if it is scenes) */
-  async createScene(dirPath: string, name: string): Promise<void> {
-    const targetDir = basename(dirPath) === "scenes" ? dirPath : join(dirPath, "scenes")
-    const sceneData = await this.engine.createScene(name)
-    let sceneName = name
-    try {
-      const parsed = JSON.parse(sceneData.sceneJson) as { name?: unknown }
-      if (typeof parsed.name === "string" && parsed.name !== "") sceneName = parsed.name
-    } catch {
-      // keep the name asked for
-    }
-    await this.project.createDirectory(targetDir)
-    await this.project.writeTextFile(join(targetDir, sceneName + ".scene"), sceneData.sceneJson)
-    await this.refreshFiles()
-    await this.refreshScene()
   }
 
   // ==================== Files and scripts ====================
