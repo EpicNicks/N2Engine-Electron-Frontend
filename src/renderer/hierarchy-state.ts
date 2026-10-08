@@ -183,6 +183,22 @@ export class HierarchyState {
     )
   }
 
+  /**
+   * A click in the viewport picked this object (null: empty space), with the modifier keys held. As in Unity's scene
+   * view, Ctrl/Cmd and Shift both toggle the one picked object in the selection (there is no range in a 3D view: a
+   * Shift range between the anchor and the object would select whatever lies between them in the hierarchy); without
+   * either it selects just that object. Its ancestors are expanded so its row is shown. Empty space clears the
+   * selection, unless Ctrl or Shift is held (a missed click doesn't lose it).
+   */
+  pick(id: string | null, modifiers: ClickModifiers = {}): void {
+    if (id === null) {
+      if (!modifiers.toggle && !modifiers.range) this.setSelection(emptySelection)
+      return
+    }
+    this.expandAncestors(id)
+    this.click(id, modifiers.toggle || modifiers.range ? { toggle: true } : {})
+  }
+
   /** A right-click: keeps the selection when it holds the object, else selects just it */
   contextClick(id: string): void {
     this.setSelection(contextSelect(this.selection.value, id))

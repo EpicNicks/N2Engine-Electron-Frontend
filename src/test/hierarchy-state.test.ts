@@ -760,3 +760,63 @@ describe("HierarchyState and edit groups", () => {
     assert.equal(scene.text(), "C")
   })
 })
+
+describe("selecting what the viewport picked", () => {
+  test("a plain pick selects just that object and shows it (its ancestors are expanded)", async () => {
+    const { state } = setup("A(A1(A1a)),B")
+    await state.refresh()
+    state.click(id("B"))
+    state.pick(id("A1a"))
+    assert.deepEqual([...state.selection.value.ids], [id("A1a")])
+    assert.equal(state.selection.value.primary, id("A1a"))
+    assert.ok(state.rows.value.some((row) => row.id === id("A1a")), "its row is shown")
+  })
+
+  test("Ctrl toggles it, as a click on its row does", async () => {
+    const { state } = setup("A,B,C")
+    await state.refresh()
+    state.pick(id("A"))
+    state.pick(id("C"), { toggle: true })
+    assert.deepEqual([...state.selection.value.ids].sort(), [id("A"), id("C")])
+    assert.equal(state.selection.value.primary, id("C"))
+    state.pick(id("A"), { toggle: true })
+    assert.deepEqual([...state.selection.value.ids], [id("C")])
+  })
+
+  test("Shift is a toggle too (no hierarchy range between the anchor and the picked object), as in Unity's scene view", async () => {
+    const { state } = setup("A,B,C,D")
+    await state.refresh()
+    state.pick(id("A"))
+    state.pick(id("C"), { range: true })
+    assert.deepEqual([...state.selection.value.ids].sort(), [id("A"), id("C")], "B is not between them")
+    assert.equal(state.selection.value.primary, id("C"))
+    state.pick(id("A"), { range: true })
+    assert.deepEqual([...state.selection.value.ids], [id("C")])
+  })
+
+  test("it gives the same selection as the equivalent click on the row (for what a viewport click can do)", async () => {
+    const a = setup("A,B,C,D")
+    const b = setup("A,B,C,D")
+    await a.state.refresh()
+    await b.state.refresh()
+    for (const [name, modifiers] of [["B", {}], ["D", { toggle: true }], ["A", { toggle: true }], ["C", { toggle: true }], ["C", {}]] as const) {
+      a.state.pick(id(name), modifiers)
+      b.state.click(id(name), modifiers)
+      assert.deepEqual([...a.state.selection.value.ids].sort(), [...b.state.selection.value.ids].sort())
+      assert.equal(a.state.selection.value.primary, b.state.selection.value.primary)
+    }
+  })
+
+  test("empty space clears the selection; with Ctrl or Shift held it keeps it", async () => {
+    const { state, primaries } = setup("A,B")
+    await state.refresh()
+    state.pick(id("A"))
+    state.pick(null, { toggle: true })
+    state.pick(null, { range: true })
+    assert.deepEqual([...state.selection.value.ids], [id("A")])
+    state.pick(null)
+    assert.equal(state.selection.value.ids.size, 0)
+    assert.equal(state.selection.value.primary, null)
+    assert.deepEqual(primaries, [id("A"), null])
+  })
+})

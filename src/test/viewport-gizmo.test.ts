@@ -397,11 +397,45 @@ describe("the selection box", () => {
     assert.equal(projectBox(c.viewProjection, vec3(-1, -1, -1), vec3(1, 1, 1), W, H).length, 12)
   })
 
-  test("an edge with an end behind the camera is dropped", () => {
+  const finite = (edges: ReturnType<typeof projectBox>): boolean =>
+    edges.every(([a, b]) => [a.x, a.y, b.x, b.y].every(Number.isFinite))
+
+  test("a box the camera is inside is drawn where it is in front: the edges along the view are clipped at the near plane", () => {
     const c = camera(vec3(0, 0, 10))
     const edges = projectBox(c.viewProjection, vec3(-1, -1, 5), vec3(1, 1, 15), W, H)
-    assert.ok(edges.length < 12)
-    assert.ok(edges.length > 0)
+    // The four edges of the far face (z = 15) are behind the eye; the near face and the four edges to the eye's plane stay
+    assert.equal(edges.length, 8)
+    assert.ok(finite(edges))
+    // A clipped edge ends where the edge crosses the near plane (z = 9.9): the box's x = 1 edge at depth 0.1 is
+    // x = 1 / (0.1 * tan(30 degrees) * (4/3)) of the half width off the centre
+    const halfWidth = 0.1 * Math.tan(Math.PI / 6) * (W / H)
+    const edgeX = (W / 2) * (1 + 1 / halfWidth)
+    assert.ok(edges.some(([a, b]) => Math.abs(a.x - edgeX) < 1e-3 || Math.abs(b.x - edgeX) < 1e-3), "an edge ends on the near plane")
+  })
+
+  test("a box with one corner behind the eye keeps all 12 edges, the three that meet at that corner clipped", () => {
+    // The camera is at (0.9, 0.9, 0.9) looking toward (-1, -1, -1): only the corner (1, 1, 1) is behind it
+    const forward = vec3(-1, -1, -1)
+    const rotation = quatFromAxisAngle(vec3(-1, 1, 0), Math.acos(1 / Math.sqrt(3)))
+    const f = quatRotate(rotation, vec3(0, 0, -1))
+    near(f.x, forward.x / Math.sqrt(3), 1e-6)
+    near(f.y, forward.y / Math.sqrt(3), 1e-6)
+    near(f.z, forward.z / Math.sqrt(3), 1e-6)
+    const view = viewMatrix(vec3(0.9, 0.9, 0.9), rotation)
+    const viewProjection = mat4Multiply(projectionMatrix(settings, W / H), view)
+    const edges = projectBox(viewProjection, vec3(-1, -1, -1), vec3(1, 1, 1), W, H)
+    assert.equal(edges.length, 12)
+    assert.ok(finite(edges))
+  })
+
+  test("a box wholly behind the camera draws nothing", () => {
+    const c = camera(vec3(0, 0, 10))
+    assert.deepEqual(projectBox(c.viewProjection, vec3(-1, -1, 15), vec3(1, 1, 20), W, H), [])
+    // and one wholly in front is unchanged by clipping
+    const front = projectBox(c.viewProjection, vec3(-1, -1, -1), vec3(1, 1, 1), W, H)
+    assert.equal(front.length, 12)
+    const a = worldToScreen(c.viewProjection, vec3(-1, -1, -1), W, H)!
+    assert.ok(front.some(([p, q]) => (Math.abs(p.x - a.x) < 1e-9 && Math.abs(p.y - a.y) < 1e-9) || (Math.abs(q.x - a.x) < 1e-9 && Math.abs(q.y - a.y) < 1e-9)))
   })
 })
 

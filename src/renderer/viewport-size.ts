@@ -41,3 +41,23 @@ export function cssSizeForPixels(pixels: PixelSize, devicePixelRatio: number): P
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
+
+/**
+ * A pointer position as a pixel of the engine's frame (top-left origin, y down): the position inside the canvas's
+ * on-screen rectangle (CSS pixels), scaled to the frame's pixels (so the device pixel ratio is whatever the frame was
+ * sized with). Fractions are kept: the host takes float pixels.
+ */
+export function framePixelOf(
+  client: { x: number; y: number },
+  rect: { left: number; top: number; width: number; height: number },
+  frame: PixelSize
+): { x: number; y: number } {
+  return {
+    x: ((client.x - rect.left) * frame.width) / Math.max(1, rect.width),
+    y: ((client.y - rect.top) * frame.height) / Math.max(1, rect.height),
+  }
+}
+
+/** Whether a frame pixel is inside the viewport (0 up to, not including, its size): outside is a miss */
+export const insideFrame = (pixel: { x: number; y: number }, frame: PixelSize): boolean =>
+  pixel.x >= 0 && pixel.y >= 0 && pixel.x < frame.width && pixel.y < frame.height

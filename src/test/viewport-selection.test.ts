@@ -54,11 +54,13 @@ describe("followViewportSelection", () => {
     const hierarchyTree = signal<HierarchyTree>(tree())
     const loads: Array<string | null> = []
     const changes: Array<{ ids: readonly string[]; full: boolean; replaced: boolean }> = []
+    let boundsReloads = 0
     const follow = followViewportSelection({
       store: { connected, sceneChangeCount, lastSceneChange, sceneReplacedCount },
       hierarchy: { selection, tree: hierarchyTree },
       viewport: {
         loadTarget: async (id) => void loads.push(id),
+        reloadBounds: () => void boundsReloads++,
         objectsChanged: (ids, full, replaced) => changes.push({ ids, full, replaced }),
       },
     })
@@ -67,7 +69,7 @@ describe("followViewportSelection", () => {
       if (replaced) sceneReplacedCount.value++
       sceneChangeCount.value++
     }
-    return { connected, selection, hierarchyTree, loads, changes, follow, sceneChanged }
+    return { connected, selection, hierarchyTree, loads, changes, follow, sceneChanged, boundsReloads: () => boundsReloads }
   }
 
   test("reads the selection once, then again only when its primary object or its movers change", () => {
@@ -84,6 +86,21 @@ describe("followViewportSelection", () => {
     assert.deepEqual(s.loads, ["a", "e"])
     s.selection.value = select("e", "e", "d")
     assert.deepEqual(s.loads, ["a", "e", "e"])
+    s.follow.stop()
+  })
+
+  test("the selection's boxes are read again when WHICH objects are selected changes, even for the same primary and movers", () => {
+    const s = setup()
+    assert.equal(s.boundsReloads(), 1)
+    s.selection.value = select("a") // the same
+    s.hierarchyTree.value = tree() // the tree refreshed
+    assert.equal(s.boundsReloads(), 1)
+    // b is selected under a selected a: the primary and the movers are the same, the boxes are not
+    s.selection.value = { ids: new Set(["a", "b"]), anchor: "a", primary: "a" }
+    assert.equal(s.boundsReloads(), 2)
+    assert.deepEqual(s.loads, ["a"])
+    s.selection.value = { ids: new Set(["b", "a"]), anchor: "a", primary: "a" } // the same objects, another order
+    assert.equal(s.boundsReloads(), 2)
     s.follow.stop()
   })
 

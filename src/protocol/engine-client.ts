@@ -10,6 +10,8 @@ import {
   EntityInfo,
   EventsResponse,
   EditorCameraResponse,
+  PickResultResponse,
+  BoundsResponse,
   FrameDataResponse,
   FrameUpdateResponse,
   HierarchyResponse,
@@ -307,6 +309,22 @@ export class EngineClient {
 
   getEditorCamera(): Promise<EditorCameraResponse> {
     return this.send(Commands.GetEditorCamera, {})
+  }
+
+  /**
+   * Protocol 1.8.0: the object under the pixel (x, y) of the editor view (frame pixels, top-left origin; fractions are
+   * kept). entityId is "" for a miss, and a point outside the viewport is one.
+   */
+  pickEntity(x: number, y: number, includeInactive: boolean): Promise<PickResultResponse> {
+    return this.send(Commands.PickEntity, { x, y, includeInactive })
+  }
+
+  /**
+   * Protocol 1.8.0: the world-space boxes of the objects (a group's is the union over it and its active descendants), at
+   * most 4096 ids. An id the host can't measure (unknown, no transform, an overlay UI element) has no entry.
+   */
+  getEntityBounds(entityIds: string[]): Promise<BoundsResponse> {
+    return this.send(Commands.GetEntityBounds, { entityIds })
   }
 
   // ==================== Audio ====================

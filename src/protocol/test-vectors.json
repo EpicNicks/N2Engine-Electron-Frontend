@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.7.0",
+  "protocolVersion": "1.8.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -71,6 +71,27 @@
         "farPlane": 2.75
       },
       "payload": "0000a03f0000c0bf0000e03f0000c0bf0000e03f000000c0000010400000e03f0000001040000020c000003040"
+    },
+    {
+      "command": "PickEntity",
+      "id": "0x15",
+      "fields": {
+        "x": 1.25,
+        "y": -1.5,
+        "includeInactive": true
+      },
+      "payload": "0000a03f0000c0bf01"
+    },
+    {
+      "command": "GetEntityBounds",
+      "id": "0x16",
+      "fields": {
+        "entityIds": [
+          "entityIds 0 ✓",
+          "entityIds 1 ✓"
+        ]
+      },
+      "payload": "250000005b22656e74697479496473203020e29c93222c22656e74697479496473203120e29c93225d"
     },
     {
       "command": "CreateScene",
@@ -558,6 +579,55 @@
         ]
       },
       "payload": "0000a03f0000c0bf0000e03f0000c0bf0000e03f000000c0000010400000e03f0000001040000020c000003040000000bf0000803f0000c03f000000c00000204000004040000060c000008040000090400000a0c00000b0400000c0400000d0c00000e0400000f040000000c1000000bf0000803f0000c03f000000c00000204000004040000060c000008040000090400000a0c00000b0400000c0400000d0c00000e0400000f040000000c1"
+    },
+    {
+      "response": "PickResult",
+      "id": "0x1A",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "point": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0
+        },
+        "distance": 1.75
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f"
+    },
+    {
+      "response": "Bounds",
+      "id": "0x1B",
+      "fields": {
+        "bounds": [
+          {
+            "id": "id 0 ✓",
+            "max": {
+              "x": 4.5,
+              "y": 5.5,
+              "z": 6.5
+            },
+            "min": {
+              "x": 3.5,
+              "y": 4.5,
+              "z": 5.5
+            }
+          },
+          {
+            "id": "id 1 ✓",
+            "max": {
+              "x": 5.5,
+              "y": 6.5,
+              "z": 7.5
+            },
+            "min": {
+              "x": 4.5,
+              "y": 5.5,
+              "z": 6.5
+            }
+          }
+        ]
+      },
+      "payload": "a50000005b7b226964223a226964203020e29c93222c226d6178223a7b2278223a342e352c2279223a352e352c227a223a362e357d2c226d696e223a7b2278223a332e352c2279223a342e352c227a223a352e357d7d2c7b226964223a226964203120e29c93222c226d6178223a7b2278223a352e352c2279223a362e352c227a223a372e357d2c226d696e223a7b2278223a342e352c2279223a352e352c227a223a362e357d7d5d"
     },
     {
       "response": "SceneData",

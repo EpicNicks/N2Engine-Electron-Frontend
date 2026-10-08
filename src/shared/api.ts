@@ -7,6 +7,8 @@ import type {
   CameraPositionResponse,
   EditResultResponse,
   EditorCameraResponse,
+  PickResultResponse,
+  BoundsResponse,
   ComponentSchema,
   EngineHealthResponse,
   EntityDataResponse,
@@ -44,6 +46,10 @@ export interface EngineCommands {
   ): Promise<void>
   /** The editor camera as stored, with the view and projection matrices frames are rendered with */
   getEditorCamera(): Promise<EditorCameraResponse>
+  /** The object under a pixel of the editor view (protocol 1.8.0; frame pixels, top-left origin); entityId "" is a miss */
+  pickEntity(x: number, y: number, includeInactive: boolean): Promise<PickResultResponse>
+  /** World boxes of objects (protocol 1.8.0; at most MaxEntityBoundsIds ids); an object that can't be measured has no entry */
+  getEntityBounds(entityIds: string[]): Promise<BoundsResponse>
   /**
    * Drains the server's audio stream: only the page's AudioPlayer should call it, or the player loses audio.
    * Null when the server has no audio stream (not on a loopback device).
@@ -164,7 +170,10 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject"
+export type ArgKind = "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray"
+
+/** GetEntityBounds takes at most this many ids (the host refuses more) */
+export const MaxEntityBoundsIds = 4096
 
 /** A plain JSON object (not an array): what a merge patch is */
 export type JsonObject = { [key: string]: unknown }
@@ -176,6 +185,8 @@ export const EngineCommandArgs = {
   renderFrameIfChanged: ["uint32"],
   setEditorCamera: ["vec3", "quat", "number", "bool", "number", "number", "number"],
   getEditorCamera: [],
+  pickEntity: ["number", "number", "bool"],
+  getEntityBounds: ["stringArray"],
   getAudio: [],
   setCameraPosition: ["number", "number", "number"],
   getCameraPosition: [],
@@ -232,6 +243,7 @@ interface ArgKindTypes {
   vec3: Vec3
   quat: Quat
   jsonObject: JsonObject
+  stringArray: string[]
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
 type ArgsMatch = {
