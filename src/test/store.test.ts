@@ -1,10 +1,10 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { EditorEvent, EventsResponse } from "../protocol/protocol.generated"
-import type { HostLocation, HostState, ServerInfo } from "../shared/api"
+import type { CreateProjectResult, HostLocation, HostState, OpenProjectResult, ServerInfo } from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
 import { ConsoleStore, entryFromEvent } from "../renderer/console-store"
-import { EditorStore, StoreApi, describeHost } from "../renderer/store"
+import { EditorStore, StoreApi, createUnavailableReason, describeHost } from "../renderer/store"
 
 /** Timers that fire only when the test says so */
 class FakeTimers implements Timers {
@@ -211,7 +211,41 @@ class FakeApi implements StoreApi {
   connectionListeners: Array<(connected: boolean) => void> = []
   /** What openDialog resolves with, or a failure */
   dialogResult: string | null | Error = "C:\\Games\\C"
+  /** Folders without a project.n2proj: opening one is notAProject */
+  plainFolders = new Set<string>()
+  /** Folders that already are projects: creating in one is alreadyAProject */
+  projectFolders = new Set<string>()
+  /** What pickNewFolder resolves with */
+  newFolder: string | null = "C:\\Games\\New"
+  canCreate: boolean | null = true
   calls: string[] = []
+  /** The answers the user gives, in order */
+  confirmAnswers: boolean[] = []
+  promptAnswers: Array<string | null> = []
+  asked: string[] = []
+
+  dialogs = {
+    prompt: async (title: string, value: string) => {
+      this.asked.push(`prompt ${title}: ${value}`)
+      return this.promptAnswers.length > 0 ? this.promptAnswers.shift()! : value
+    },
+    confirm: async (message: string, okLabel: string) => {
+      this.asked.push(`confirm ${okLabel}: ${message}`)
+      return this.confirmAnswers.shift() ?? false
+    },
+  }
+
+  private opened(projectPath: string): OpenProjectResult {
+    if (this.plainFolders.has(projectPath)) {
+      return {
+        kind: "notAProject",
+        path: projectPath,
+        message: `${projectPath} isn't a project: it has no project.n2proj`,
+      }
+    }
+    this.launchAndConnect(projectPath)
+    return { kind: "opened", path: projectPath }
+  }
 
   /** The main process pushes a host state */
   pushHost(change: Partial<HostState>): void {
@@ -239,11 +273,17 @@ class FakeApi implements StoreApi {
     stop: async () => {
       this.calls.push("stop")
     },
-    location: async (): Promise<HostLocation> => ({ path: "C:\\N2EditorHost.exe", source: "setting", problem: null }),
+    location: async (): Promise<HostLocation> => ({
+      path: "C:\\N2EditorHost.exe",
+      source: "setting",
+      problem: null,
+      canCreate: this.canCreate,
+    }),
     locate: async (): Promise<HostLocation | null> => ({
       path: "D:\\N2EditorHost.exe",
       source: "setting",
       problem: null,
+      canCreate: this.canCreate,
     }),
   }
 
@@ -252,17 +292,33 @@ class FakeApi implements StoreApi {
       this.calls.push("openDialog")
       const result = this.dialogResult
       if (result instanceof Error) throw result
-      if (result) this.launchAndConnect(result)
-      return result
-    },
-    createDialog: async () => {
-      this.calls.push("createDialog")
-      throw new Error("This N2EditorHost doesn't support --create: it started an editor host instead.")
+      return result ? this.opened(result) : null
     },
     openRecent: async (projectPath: string) => {
       this.calls.push(`openRecent ${projectPath}`)
-      this.launchAndConnect(projectPath)
-      return projectPath
+      return this.opened(projectPath)
+    },
+    openFolder: async (folder: string) => {
+      this.calls.push(`openFolder ${folder}`)
+      return this.opened(folder)
+    },
+    pickNewFolder: async () => {
+      this.calls.push("pickNewFolder")
+      return this.newFolder
+    },
+    create: async (folder: string, name: string, adopt: boolean): Promise<CreateProjectResult> => {
+      this.calls.push(`create ${folder} name=${name} adopt=${adopt}`)
+      if (this.projectFolders.has(folder)) {
+        return {
+          kind: "alreadyAProject",
+          path: folder,
+          message: `${folder} already has a project.n2proj; nothing was changed`,
+        }
+      }
+      this.plainFolders.delete(folder)
+      this.projectFolders.add(folder)
+      this.launchAndConnect(folder)
+      return { kind: "opened", path: folder }
     },
     getRecent: async () => [...this.recentList],
     removeRecent: async (projectPath: string) => {
@@ -322,7 +378,8 @@ describe("EditorStore", () => {
   test("busy while an action runs", async () => {
     const { api, store } = makeStore()
     let release: () => void = () => {}
-    api.project.openRecent = (projectPath: string) => new Promise((resolve) => (release = () => resolve(projectPath)))
+    api.project.openRecent = (projectPath: string) =>
+      new Promise((resolve) => (release = () => resolve({ kind: "opened", path: projectPath })))
     const opening = store.openRecent("C:\\Games\\A")
     assert.equal(store.busy.value, "Opening A...")
     release()
@@ -346,9 +403,6 @@ describe("EditorStore", () => {
     assert.equal(store.error.value, "N2EditorHost exited with code 1 before it was ready")
     store.dismissError()
     assert.equal(store.error.value, null)
-
-    await store.createProject()
-    assert.match(store.error.value ?? "", /--create/)
   })
 
   test("a host that exits is noted in the console, and the console stops polling", async () => {
@@ -408,6 +462,85 @@ describe("EditorStore", () => {
     assert.deepEqual(store.recent.value, ["C:\\Games\\B"])
     await store.locateHost()
     assert.equal(store.hostLocation.value?.path, "D:\\N2EditorHost.exe")
+  })
+
+  test("Create New Project picks a folder, asks for a name (the folder's by default) and creates it", async () => {
+    const { api, store } = makeStore()
+    await store.load()
+    api.promptAnswers = ["My Game"]
+    await store.createProject()
+    assert.deepEqual(api.asked, ["prompt Project name: New"])
+    assert.ok(api.calls.includes("create C:\\Games\\New name=My Game adopt=false"))
+    assert.equal(store.projectPath.value, "C:\\Games\\New")
+  })
+
+  test("a cancelled folder or name creates nothing", async () => {
+    const { api, store } = makeStore()
+    api.newFolder = null
+    await store.createProject()
+    api.newFolder = "C:\\Games\\New"
+    api.promptAnswers = [null]
+    await store.createProject()
+    assert.ok(!api.calls.some((c) => c.startsWith("create ")))
+    assert.equal(store.view.value, "welcome")
+  })
+
+  test("creating in a folder that already is a project offers to open it", async () => {
+    const { api, store } = makeStore()
+    api.projectFolders.add("C:\\Games\\New")
+    api.confirmAnswers = [true]
+    await store.createProject()
+    assert.match(
+      api.asked[1],
+      /^confirm Open project: C:\\Games\\New already has a project.n2proj; nothing was changed/
+    )
+    assert.ok(api.calls.includes("openFolder C:\\Games\\New"))
+    assert.equal(store.projectPath.value, "C:\\Games\\New")
+  })
+
+  test("opening a folder that isn't a project offers to make it one, adopting it (its UUIDs kept)", async () => {
+    const { api, store } = makeStore()
+    await store.load()
+    api.plainFolders.add("C:\\Games\\C")
+    api.confirmAnswers = [true]
+    await store.openProject()
+    assert.match(api.asked[0], /^confirm Create project here: C:\\Games\\C isn't a project/)
+    assert.equal(api.asked[1], "prompt Project name: C")
+    assert.ok(api.calls.includes("create C:\\Games\\C name=C adopt=true"))
+    assert.equal(store.projectPath.value, "C:\\Games\\C")
+  })
+
+  test("declining stays on the welcome screen", async () => {
+    const { api, store } = makeStore()
+    await store.load()
+    api.plainFolders.add("C:\\Games\\C")
+    await store.openProject()
+    assert.equal(store.view.value, "welcome")
+    assert.ok(!api.calls.some((c) => c.startsWith("create ")))
+  })
+
+  test("with a host that can't create, a folder that isn't a project is an error, not an offer", async () => {
+    const { api, store } = makeStore()
+    api.canCreate = false
+    await store.load()
+    api.plainFolders.add("C:\\Games\\C")
+    await store.openProject()
+    assert.deepEqual(api.asked, [])
+    assert.match(store.error.value ?? "", /older than engine #90/)
+  })
+
+  test("Create is unavailable without a usable host, or with one older than engine #90", () => {
+    const at = (canCreate: boolean | null, problem: string | null = null): HostLocation => ({
+      path: "h",
+      source: "setting",
+      problem,
+      canCreate,
+    })
+    assert.equal(createUnavailableReason(at(true)), null)
+    assert.equal(createUnavailableReason(at(null)), null, "unknown: let --create itself say")
+    assert.match(createUnavailableReason(at(false)) ?? "", /older than engine #90/)
+    assert.match(createUnavailableReason(at(true, "Not found: h")) ?? "", /isn't set/)
+    assert.match(createUnavailableReason(null) ?? "", /isn't set/)
   })
 
   test("describeHost", () => {

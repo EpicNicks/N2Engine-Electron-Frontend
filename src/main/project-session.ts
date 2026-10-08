@@ -2,19 +2,36 @@
 // N2EditorHost for it (HostProcess), waits for the ready line and connects with the host's token; opening another,
 // closing it, a page reload and quitting the editor stop the host. Node only (no Electron): the dialogs are in
 // project-ipc.ts, and everything here is unit tested with fakes.
+import * as fs from "fs"
 import * as path from "path"
-import type { ConnectionState, HostState } from "../shared/api"
+import type { ConnectionState, CreateProjectResult, HostState, OpenProjectResult } from "../shared/api"
 import {
   CreateOptions,
+  CreateProjectError,
+  CreatedProject,
+  HostCapabilities,
   HostExit,
   HostProcess,
   LaunchOptions,
+  ProbeOptions,
   createProjectWithHost,
   describeExit,
+  probeHostCapabilities,
 } from "./host-launcher"
 import type { HostSettings } from "./host-settings"
 import type { ProjectFiles } from "./project-files"
 import type { RecentProjects } from "./recent-projects"
+
+/** The project file a folder needs to be a project (engine #90) */
+export const ProjectFileName = "project.n2proj"
+
+function notAProject(folder: string, detail?: string): OpenProjectResult {
+  return {
+    kind: "notAProject",
+    path: folder,
+    message: detail ?? `${folder} isn't a project: it has no ${ProjectFileName}`,
+  }
+}
 
 /** After Shutdown (stop), how long the host gets to exit before it is killed */
 export const StopGraceMs = 3000
@@ -48,7 +65,11 @@ export interface ProjectSessionDeps {
   /** Tells the page the host's state changed */
   publish(state: HostState): void
   launch?: (options: LaunchOptions) => Promise<HostProcess>
-  create?: (options: CreateOptions) => Promise<void>
+  create?: (options: CreateOptions) => Promise<CreatedProject>
+  /** N2EditorHost --help: what the host can do */
+  probe?: (options: ProbeOptions) => Promise<HostCapabilities>
+  /** Whether a folder holds a project.n2proj */
+  isProject?: (dir: string) => boolean
   /** Logs for the developer (never with the token) */
   log?: (message: string) => void
   /** How long a stopped host gets to exit (default StopGraceMs) */
@@ -85,14 +106,49 @@ export class ProjectSession {
   private queue: Promise<unknown> = Promise.resolve()
 
   private readonly launch: (options: LaunchOptions) => Promise<HostProcess>
-  private readonly create: (options: CreateOptions) => Promise<void>
+  private readonly create: (options: CreateOptions) => Promise<CreatedProject>
+  private readonly probe: (options: ProbeOptions) => Promise<HostCapabilities>
+  private readonly isProject: (dir: string) => boolean
+  /** Each host path's capabilities, asked once */
+  private readonly capabilityCache = new Map<string, Promise<HostCapabilities>>()
+  /** Kills the --help probes still running */
+  private readonly probeKills = new Set<() => void>()
 
   private readonly stopGraceMs: number
 
   constructor(private readonly deps: ProjectSessionDeps) {
     this.launch = deps.launch ?? HostProcess.launch
     this.create = deps.create ?? createProjectWithHost
+    this.probe = deps.probe ?? probeHostCapabilities
+    this.isProject = deps.isProject ?? ((dir) => fs.existsSync(path.join(dir, ProjectFileName)))
     this.stopGraceMs = deps.stopGraceMs ?? StopGraceMs
+  }
+
+  /**
+   * What the host at hostPath can do, from N2EditorHost --help (asked once per path; a failed probe is asked again
+   * next time). Never starts the engine.
+   */
+  capabilities(hostPath: string): Promise<HostCapabilities> {
+    const cached = this.capabilityCache.get(hostPath)
+    if (cached) return cached
+    if (this.disposed) return Promise.reject(new CancelledError("Cancelled: the editor is closing"))
+    let kill: (() => void) | null = null
+    const probing = this.probe({ hostPath, onSpawned: (k) => this.probeKills.add((kill = k)) }).finally(() => {
+      if (kill) this.probeKills.delete(kill)
+    })
+    this.capabilityCache.set(hostPath, probing)
+    probing.catch(() => this.capabilityCache.delete(hostPath))
+    return probing
+  }
+
+  /** Whether the host can create projects; false when asking it failed */
+  private async canCreate(hostPath: string): Promise<boolean> {
+    try {
+      return (await this.capabilities(hostPath)).create
+    } catch (e) {
+      this.deps.log?.(`Couldn't ask N2EditorHost what it can do: ${e instanceof Error ? e.message : String(e)}`)
+      return false
+    }
   }
 
   get state(): HostState {
@@ -104,34 +160,46 @@ export class ProjectSession {
     return this.deps.files.rootPath
   }
 
-  /** Opens a project: stops any host, launches one for it and connects. Resolves with its real path. */
-  openProject(dir: string): Promise<string> {
+  /**
+   * Opens a project: stops any host, launches one for it and connects. A folder without project.n2proj, with a host
+   * that has projects (engine #90), isn't opened: the result says so, and no host is started.
+   */
+  openProject(dir: string): Promise<OpenProjectResult> {
     return this.serial(() => this.open(dir))
   }
 
   /**
-   * Creates a project with N2EditorHost --create (engine #75), then opens it. projectId adopts an id (--project-id),
-   * so an existing folder keeps its asset UUIDs.
+   * Makes a folder a project with N2EditorHost --create (engine #90), then opens it. name: the project's name
+   * (empty: the folder's name). adopt: keep the asset UUIDs an existing folder's assets had
+   * (--project-id from-path). A folder that already is a project is left alone, and the result says so.
    */
-  createProject(dir: string, projectId?: string): Promise<string> {
-    return this.serial(async () => {
+  createProject(dir: string, options: { name?: string; adopt?: boolean } = {}): Promise<CreateProjectResult> {
+    return this.serial(async (): Promise<CreateProjectResult> => {
       const hostPath = this.deps.settings.require()
+      const projectDir = path.resolve(dir)
       this.assertCanSpawn()
       this.launchCancelled = false
       try {
-        await this.create({
+        const created = await this.create({
           hostPath,
-          projectDir: path.resolve(dir),
-          projectId,
+          projectDir,
+          name: options.name || undefined,
+          projectId: options.adopt ? "from-path" : undefined,
           onSpawned: (kill) => (this.killLaunching = kill),
         })
+        this.deps.log?.(`Created a project in ${projectDir} (projectId ${created.projectId})`)
       } catch (e) {
         if (this.launchCancelled) throw new CancelledError("Cancelled: creating the project was stopped")
+        if (e instanceof CreateProjectError && e.kind === "alreadyAProject") {
+          return { kind: "alreadyAProject", path: projectDir, message: e.message }
+        }
         throw e
       } finally {
         this.killLaunching = null
       }
-      return this.open(dir)
+      const opened = await this.open(projectDir)
+      if (opened.kind !== "opened") throw new Error(opened.message)
+      return opened
     })
   }
 
@@ -206,6 +274,7 @@ export class ProjectSession {
     this.disposed = true
     this.generation++
     this.killHost()
+    this.probeKills.forEach((kill) => kill())
   }
 
   /** Throws when the editor quit, or the project closed (or the page reloaded) after this operation was queued */
@@ -214,8 +283,13 @@ export class ProjectSession {
     if (this.running !== this.generation) throw new CancelledError()
   }
 
-  private async open(dir: string): Promise<string> {
+  private async open(dir: string): Promise<OpenProjectResult> {
     const hostPath = this.deps.settings.require()
+    // A host with projects (engine #90) refuses a folder without project.n2proj: say so before stopping anything
+    const resolved = path.resolve(dir)
+    if ((await this.canCreate(hostPath)) && !this.isProject(resolved)) {
+      return notAProject(resolved)
+    }
     await this.stopCurrent(false)
     let projectPath: string
     try {
@@ -229,10 +303,15 @@ export class ProjectSession {
       await this.start(projectPath, hostPath)
     } catch (e) {
       this.deps.files.close()
+      // The host checks too, before its engine starts (exit code 1, "project.n2proj not found: ...")
+      if (e instanceof Error && e.message.includes(`${ProjectFileName} not found`)) {
+        this.setState({ status: "stopped", projectPath: null, message: null })
+        return notAProject(projectPath, e.message)
+      }
       throw e
     }
     this.deps.recent.add(projectPath)
-    return projectPath
+    return { kind: "opened", path: projectPath }
   }
 
   /** Launches a host for the project and connects to it; any current host is stopped first */

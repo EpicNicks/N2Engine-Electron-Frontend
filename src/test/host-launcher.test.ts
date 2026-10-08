@@ -8,6 +8,7 @@ import * as path from "node:path"
 import { ChildProcess, SpawnOptions, spawn } from "node:child_process"
 import {
   CreateNeedsEngine,
+  CreateProjectError,
   HostExit,
   HostProcess,
   LineSplitter,
@@ -18,7 +19,9 @@ import {
   buildHostArgs,
   createProjectWithHost,
   generateToken,
+  parseCreatedLine,
   parseReadyLine,
+  probeHostCapabilities,
 } from "../main/host-launcher"
 
 /** A child process whose output, exit and kill the test controls */
@@ -319,41 +322,119 @@ describe("HostProcess.launch with a real process", () => {
   })
 })
 
-describe("createProjectWithHost (the intended contract of engine #75)", () => {
-  test("runs --create <dir> and resolves when the host exits with 0", async () => {
+describe("parseCreatedLine", () => {
+  const uuid = "8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10"
+
+  test("reads projectId and startupScene, with or without \\r, in any order, skipping unknown keys", () => {
+    const expected = { projectId: uuid, startupScene: "res://scenes/Main.scene" }
+    assert.deepEqual(
+      parseCreatedLine(`N2EditorHost created projectId=${uuid} startupScene=res://scenes/Main.scene`),
+      expected
+    )
+    assert.deepEqual(
+      parseCreatedLine(`N2EditorHost created projectId=${uuid} startupScene=res://scenes/Main.scene\r`),
+      expected
+    )
+    assert.deepEqual(
+      parseCreatedLine(`N2EditorHost created future=1 startupScene=res://scenes/Main.scene projectId=${uuid}`),
+      expected
+    )
+    assert.deepEqual(parseCreatedLine(`N2EditorHost created projectId=${uuid.toUpperCase()}`), {
+      projectId: uuid,
+      startupScene: null,
+    })
+  })
+
+  test("anything else is not a created line", () => {
+    for (const line of [
+      "",
+      "N2EditorHost ready port=1234",
+      "N2EditorHost created",
+      "N2EditorHost createdprojectId=" + uuid,
+      "N2EditorHost created startupScene=res://scenes/Main.scene",
+      "N2EditorHost created projectId=not-a-uuid",
+      "[INFO] N2EditorHost created projectId=" + uuid,
+    ]) {
+      assert.equal(parseCreatedLine(line), null, JSON.stringify(line))
+    }
+  })
+})
+
+describe("createProjectWithHost (engine #90's --create)", () => {
+  const uuid = "8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10"
+  const createdLine = `N2EditorHost created projectId=${uuid} startupScene=res://scenes/Main.scene\r\n`
+
+  test("runs --create <folder> --name <name>, and resolves with the created line's fields on exit 0", async () => {
     const { calls, spawn } = fakeSpawn()
-    const creating = createProjectWithHost({ hostPath: "h", projectDir: "C:\\New Game", spawn })
-    assert.deepEqual(calls[0].args, ["--create", "C:\\New Game"])
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "C:\\Games\\New Game", name: "My Game", spawn })
+    assert.deepEqual(calls[0].args, ["--create", "C:\\Games\\New Game", "--name", "My Game"])
     assert.equal(calls[0].options.env, undefined, "no token: nothing connects to it")
+    calls[0].child.stdout.write(createdLine)
     calls[0].child.exit(0)
-    await creating
+    assert.deepEqual(await creating, { projectId: uuid, startupScene: "res://scenes/Main.scene" })
   })
 
-  test("passes --project-id when given", async () => {
+  test("passes --project-id, from-path to adopt a folder", async () => {
     const { calls, spawn } = fakeSpawn()
-    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", projectId: "8e0c3a8e", spawn })
-    assert.deepEqual(calls[0].args, ["--create", "d", "--project-id", "8e0c3a8e"])
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", projectId: "from-path", spawn })
+    assert.deepEqual(calls[0].args, ["--create", "d", "--project-id", "from-path"])
+    calls[0].child.stdout.write(createdLine)
     calls[0].child.exit(0)
     await creating
   })
 
-  test("a non-zero exit rejects with stderr, and says what it needs", async () => {
+  test("exit 0 without a created line is a failure", async () => {
     const { calls, spawn } = fakeSpawn()
     const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn })
-    calls[0].child.stderr.write("Folder is not empty: d\n")
-    calls[0].child.exit(1)
-    await assert.rejects(creating, (e: Error) => {
-      assert.match(e.message, /--create exited with code 1:\nFolder is not empty: d/)
-      assert.ok(e.message.includes(CreateNeedsEngine))
+    calls[0].child.exit(0)
+    await assert.rejects(
+      creating,
+      (e: CreateProjectError) => e.kind === "failed" && /no created project/.test(e.message)
+    )
+  })
+
+  test("exit 2 means the folder already is a project: nothing was changed", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "C:\\Games\\Old", spawn })
+    calls[0].child.stderr.write(
+      "N2EditorHost --create: C:\\Games\\Old already has a project.n2proj; nothing was changed\r\n"
+    )
+    calls[0].child.exit(2)
+    await assert.rejects(creating, (e: CreateProjectError) => {
+      assert.equal(e.kind, "alreadyAProject")
+      assert.equal(e.message, "C:\\Games\\Old already has a project.n2proj; nothing was changed")
       return true
     })
   })
 
-  test("a host without --create starts serving instead: its ready line rejects, and it is killed", async () => {
+  test("exit 1 is a failure with the host's reason", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn })
+    calls[0].child.stderr.write("N2EditorHost --create: can't create d/assets: Access is denied\n")
+    calls[0].child.exit(1)
+    await assert.rejects(creating, (e: CreateProjectError) => {
+      assert.equal(e.kind, "failed")
+      assert.equal(e.message, "Couldn't create the project: can't create d/assets: Access is denied")
+      return true
+    })
+  })
+
+  test("an argument error (exit 1) is shown as the host wrote it", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", projectId: "nope", spawn })
+    calls[0].child.stderr.write("Invalid --project-id: nope (expected a non-zero UUID, or from-path)\n")
+    calls[0].child.exit(1)
+    await assert.rejects(creating, /Couldn't create the project: Invalid --project-id: nope/)
+  })
+
+  test("a host without --create starts serving instead: its ready line rejects as unsupported, and it is killed", async () => {
     const { calls, spawn } = fakeSpawn()
     const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn })
     calls[0].child.stdout.write("N2EditorHost ready port=9999\r\n")
-    await assert.rejects(creating, /doesn't support --create/)
+    await assert.rejects(
+      creating,
+      (e: CreateProjectError) => e.kind === "unsupported" && e.message.includes(CreateNeedsEngine)
+    )
     assert.equal(calls[0].child.killed, true)
   })
 
@@ -362,5 +443,58 @@ describe("createProjectWithHost (the intended contract of engine #75)", () => {
     const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn, timeoutMs: 20 })
     await assert.rejects(creating, /didn't finish/)
     assert.equal(calls[0].child.killed, true)
+  })
+
+  test("onSpawned gets a kill for the child", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const got: { kill?: () => void } = {}
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn, onSpawned: (k) => (got.kill = k) })
+    assert.ok(got.kill)
+    got.kill()
+    assert.equal(calls[0].child.killed, true)
+    await assert.rejects(creating)
+  })
+})
+
+describe("probeHostCapabilities (N2EditorHost --help)", () => {
+  const usage = (withCreate: boolean) =>
+    "N2Engine Editor Host\r\nUsage: N2EditorHost [options]\r\nOptions:\r\n" +
+    "  -p, --port <port>         Server port\r\n" +
+    (withCreate ? "  --create <path>           Make <path> a project\r\n" : "") +
+    "  -h, --help                Show this help\r\n"
+
+  test("runs only --help, and finds --create in the usage", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const probing = probeHostCapabilities({ hostPath: "h", spawn })
+    assert.deepEqual(calls[0].args, ["--help"])
+    calls[0].child.stdout.write(usage(true))
+    calls[0].child.exit(0)
+    assert.deepEqual(await probing, { create: true })
+  })
+
+  test("a host older than engine #90 has no --create", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const probing = probeHostCapabilities({ hostPath: "h", spawn })
+    calls[0].child.stdout.write(usage(false))
+    calls[0].child.exit(0)
+    assert.deepEqual(await probing, { create: false })
+  })
+
+  test("a failure, a non-zero exit, or a host that starts serving rejects (and is killed)", async () => {
+    const failing = fakeSpawn()
+    const a = probeHostCapabilities({ hostPath: "h", spawn: failing.spawn })
+    failing.calls[0].child.exit(1)
+    await assert.rejects(a, /exited with code 1/)
+
+    const serving = fakeSpawn()
+    const b = probeHostCapabilities({ hostPath: "h", spawn: serving.spawn })
+    serving.calls[0].child.stdout.write("N2EditorHost ready port=9999\n")
+    await assert.rejects(b, /started serving/)
+    assert.equal(serving.calls[0].child.killed, true)
+
+    const missing = fakeSpawn()
+    const c = probeHostCapabilities({ hostPath: "nope", spawn: missing.spawn })
+    missing.calls[0].child.emit("error", new Error("spawn nope ENOENT"))
+    await assert.rejects(c, /Couldn't start nope/)
   })
 })

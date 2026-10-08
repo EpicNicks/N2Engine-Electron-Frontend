@@ -1,4 +1,4 @@
-// The welcome screen: open a project, create one (N2EditorHost --create, engine #75), reopen a recent one, and
+// The welcome screen: open a project, create one (N2EditorHost --create, engine #90), reopen a recent one, and
 // say where N2EditorHost is.
 import { basename } from "./paths"
 import { useApp } from "./ui"
@@ -32,6 +32,7 @@ export function Welcome() {
   const recent = store.recent.value
   const busy = store.busy.value !== null
   const hostUsable = store.hostLocation.value?.path != null && store.hostLocation.value.problem === null
+  const createUnavailable = store.createUnavailable.value
 
   return (
     <div class="welcome-screen">
@@ -42,13 +43,13 @@ export function Welcome() {
         </button>
         <button
           onClick={() => store.createProject()}
-          disabled={busy || !hostUsable}
-          title="Runs N2EditorHost --create, which needs engine #75 (E3)"
+          disabled={busy || createUnavailable !== null}
+          title={createUnavailable ?? "Makes a folder a project with N2EditorHost --create"}
         >
           Create New Project
         </button>
       </div>
-      <p class="note">Creating a project needs an N2EditorHost with --create (engine #75, not merged yet).</p>
+      {hostUsable && createUnavailable && <p class="note">{createUnavailable}.</p>}
       <HostLocationLine />
 
       <div class="recent">

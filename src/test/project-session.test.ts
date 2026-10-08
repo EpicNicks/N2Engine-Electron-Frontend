@@ -1,7 +1,15 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { ConnectionState, HostState } from "../shared/api"
-import type { CreateOptions, HostExit, HostProcess, LaunchOptions } from "../main/host-launcher"
+import * as path from "node:path"
+import {
+  CreateOptions,
+  CreateProjectError,
+  HostExit,
+  HostProcess,
+  LaunchOptions,
+  ProbeOptions,
+} from "../main/host-launcher"
 import { CancelledError, EngineConnection, ProjectSession, ProjectSessionDeps } from "../main/project-session"
 
 /** The HostProcess surface ProjectSession uses */
@@ -80,6 +88,12 @@ function setup(overrides: Partial<ProjectSessionDeps> = {}) {
   let hostPath: string | null = "C:\\engine\\N2EditorHost.exe"
   const engine = new FakeEngine()
   let failLaunch: string | null = null
+  /** What the host's --help says it can do: by default a host older than engine #90 (no --create, no projects) */
+  const capabilities = { create: false }
+  const probes: ProbeOptions[] = []
+  /** Folders holding a project.n2proj */
+  const projects = new Set<string>()
+  const uuid = "8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10"
 
   const session = new ProjectSession({
     files: {
@@ -114,7 +128,14 @@ function setup(overrides: Partial<ProjectSessionDeps> = {}) {
     },
     create: async (options) => {
       creates.push(options)
+      projects.add(options.projectDir)
+      return { projectId: uuid, startupScene: "res://scenes/Main.scene" }
     },
+    probe: async (options) => {
+      probes.push(options)
+      return { ...capabilities }
+    },
+    isProject: (dir) => projects.has(dir),
     ...overrides,
   })
 
@@ -127,6 +148,9 @@ function setup(overrides: Partial<ProjectSessionDeps> = {}) {
     creates,
     recent,
     getRoot: () => root,
+    capabilities,
+    probes,
+    projects,
     setHostPath: (p: string | null) => (hostPath = p),
     failLaunch: (message: string | null) => (failLaunch = message),
   }
@@ -138,7 +162,7 @@ describe("ProjectSession", () => {
   test("opening a project launches a host for it, connects with its port and token, and remembers it", async () => {
     const { session, engine, states, launches, recent } = setup()
     const opened = await session.openProject("C:\\Games\\A")
-    assert.equal(opened, "real:C:\\Games\\A")
+    assert.deepEqual(opened, { kind: "opened", path: "real:C:\\Games\\A" })
     assert.equal(launches[0].hostPath, "C:\\engine\\N2EditorHost.exe")
     assert.equal(launches[0].projectDir, "real:C:\\Games\\A")
     assert.equal(launches[0].readyTimeoutMs, 1234, "the ready timeout from settings.json")
@@ -263,14 +287,89 @@ describe("ProjectSession", () => {
     await assert.rejects(opening, CancelledError)
   })
 
-  test("creating runs --create with the host, then opens the new project", async () => {
-    const { session, creates, launches } = setup()
-    const opened = await session.createProject("C:\\Games\\New")
+  test("creating runs --create with the host and the name, then opens the new project", async () => {
+    const { session, creates, launches, capabilities } = setup()
+    capabilities.create = true
+    const folder = path.resolve("Games", "New")
+    const opened = await session.createProject(folder, { name: "My Game" })
     assert.equal(creates.length, 1)
     assert.equal(creates[0].hostPath, "C:\\engine\\N2EditorHost.exe")
-    assert.match(creates[0].projectDir, /New$/)
+    assert.equal(creates[0].projectDir, folder)
+    assert.equal(creates[0].name, "My Game")
+    assert.equal(creates[0].projectId, undefined, "a new project gets a new id")
     assert.equal(launches.length, 1)
-    assert.equal(opened, "real:C:\\Games\\New")
+    assert.deepEqual(opened, { kind: "opened", path: `real:${folder}` })
+  })
+
+  test("adopting a folder passes --project-id from-path, so its assets keep their UUIDs", async () => {
+    const { session, creates } = setup()
+    await session.createProject(path.resolve("Old"), { name: "", adopt: true })
+    assert.equal(creates[0].projectId, "from-path")
+    assert.equal(creates[0].name, undefined, "an empty name: the host uses the folder's")
+  })
+
+  test("a folder that already is a project (exit 2) is reported, not opened", async () => {
+    const message = "C:\\Old already has a project.n2proj; nothing was changed"
+    const { session, launches } = setup({
+      create: async () => {
+        throw new CreateProjectError("alreadyAProject", message)
+      },
+    })
+    const result = await session.createProject(path.resolve("Old"))
+    assert.deepEqual(result, { kind: "alreadyAProject", path: path.resolve("Old"), message })
+    assert.equal(launches.length, 0)
+  })
+
+  test("other --create failures reject with the host's reason", async () => {
+    const { session } = setup({
+      create: async () => {
+        throw new CreateProjectError("failed", "Couldn't create the project: Access is denied")
+      },
+    })
+    await assert.rejects(session.createProject(path.resolve("New")), /Access is denied/)
+  })
+
+  test("with a host that has projects, a folder without project.n2proj isn't opened: no host starts", async () => {
+    const { session, capabilities, launches, getRoot, projects } = setup()
+    capabilities.create = true
+    const folder = path.resolve("Plain")
+    assert.deepEqual(await session.openProject(folder), {
+      kind: "notAProject",
+      path: folder,
+      message: `${folder} isn't a project: it has no project.n2proj`,
+    })
+    assert.equal(launches.length, 0)
+    assert.equal(getRoot(), null)
+
+    projects.add(folder)
+    assert.equal((await session.openProject(folder)).kind, "opened")
+  })
+
+  test("a host older than engine #90 opens any folder, as before", async () => {
+    const { session, launches } = setup()
+    assert.equal((await session.openProject(path.resolve("Plain"))).kind, "opened")
+    assert.equal(launches.length, 1)
+  })
+
+  test("the host's own refusal (project.n2proj not found, exit 1) is reported as not a project", async () => {
+    const { session, failLaunch, getRoot } = setup()
+    failLaunch(
+      "N2EditorHost exited with code 1 before it was ready:\nproject.n2proj not found: C:\\Plain is not a project"
+    )
+    const result = await session.openProject("C:\\Plain")
+    assert.equal(result.kind, "notAProject")
+    assert.match((result as { message: string }).message, /project.n2proj not found/)
+    assert.equal(getRoot(), null)
+    assert.equal(session.state.status, "stopped")
+  })
+
+  test("the host is asked what it can do once, with --help only", async () => {
+    const { session, probes } = setup()
+    await session.capabilities("C:\\engine\\N2EditorHost.exe")
+    await session.openProject("A")
+    await session.openProject("B")
+    assert.equal(probes.length, 1)
+    assert.equal(probes[0].hostPath, "C:\\engine\\N2EditorHost.exe")
   })
 
   test("operations run one at a time", async () => {
@@ -355,8 +454,8 @@ describe("ProjectSession: quitting, reloading, stopping and closing", () => {
     let finish: () => void = () => {}
     const { session, launches } = setup({
       create: (options) =>
-        new Promise<void>((resolve, reject) => {
-          finish = resolve
+        new Promise((resolve, reject) => {
+          finish = () => resolve({ projectId: "8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10", startupScene: null })
           options.onSpawned?.(() => {
             kills++
             reject(new Error("N2EditorHost --create was ended by SIGTERM"))

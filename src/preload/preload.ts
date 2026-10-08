@@ -110,7 +110,9 @@ const hostApi: HostApi = {
 
 const project: ProjectApi = {
   openDialog: () => invoke(Channels.projectOpenDialog),
-  createDialog: () => invoke(Channels.projectCreateDialog),
+  openFolder: (folder) => invoke(Channels.projectOpenFolder, folder),
+  pickNewFolder: () => invoke(Channels.projectPickNewFolder),
+  create: (folder, name, adopt) => invoke(Channels.projectCreate, folder, name, adopt),
   openRecent: (projectPath) => invoke(Channels.projectOpenRecent, projectPath),
   getRecent: () => invoke(Channels.projectGetRecent),
   removeRecent: (projectPath) => invoke(Channels.projectRemoveRecent, projectPath),

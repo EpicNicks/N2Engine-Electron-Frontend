@@ -1,15 +1,45 @@
 // The editor's state, as signals the panels read, and the actions that change it. No DOM: it is given the page's
 // API (window.engine, window.host, window.project) or a fake, so it is unit tested in Node.
 import { Signal, batch, computed, signal } from "@preact/signals-core"
-import type { EngineApi, HostApi, HostLocation, HostState, ProjectApi, ServerInfo } from "../shared/api"
+import type {
+  CreateProjectResult,
+  EngineApi,
+  HostApi,
+  HostLocation,
+  HostState,
+  OpenProjectResult,
+  ProjectApi,
+  ServerInfo,
+} from "../shared/api"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename } from "./paths"
+
+/** Questions the store asks the user (the page's dialogs; a fake in tests) */
+export interface Dialogs {
+  /** A line of text; null when cancelled */
+  prompt(title: string, value: string): Promise<string | null>
+  /** Whether the user agreed */
+  confirm(message: string, okLabel: string): Promise<boolean>
+}
 
 /** The parts of the page's API the store uses */
 export interface StoreApi {
   engine: Pick<EngineApi, "isConnected" | "serverInfo" | "onConnectionChange" | "pollEvents">
   host: HostApi
-  project: Pick<ProjectApi, "openDialog" | "createDialog" | "openRecent" | "getRecent" | "removeRecent" | "close">
+  project: Pick<
+    ProjectApi,
+    "openDialog" | "openRecent" | "openFolder" | "pickNewFolder" | "create" | "getRecent" | "removeRecent" | "close"
+  >
+  dialogs: Dialogs
+}
+
+/** Why Create New Project is unavailable, or null when it is available */
+export function createUnavailableReason(location: HostLocation | null): string | null {
+  if (!location || location.path === null || location.problem !== null) return "N2EditorHost isn't set"
+  if (location.canCreate === false) {
+    return "This N2EditorHost can't create projects: it is older than engine #90 (it has no --create)"
+  }
+  return null
 }
 
 export type View = "welcome" | "editor"
@@ -42,6 +72,8 @@ export class EditorStore {
   readonly connected = signal(false)
   readonly serverInfo = signal<ServerInfo | null>(null)
   readonly hostSummary = computed(() => describeHost(this.host.value, this.connected.value))
+  /** Why Create New Project is unavailable, or null */
+  readonly createUnavailable = computed(() => createUnavailableReason(this.hostLocation.value))
 
   /** What the editor is doing right now ("Opening project..."), or null */
   readonly busy = signal<string | null>(null)
@@ -86,17 +118,26 @@ export class EditorStore {
   }
 
   /** Picks a folder and opens it */
-  openProject(): Promise<void> {
-    return this.opening("Opening project...", () => this.api.project.openDialog())
+  async openProject(): Promise<void> {
+    await this.afterOpen(await this.run("Opening project...", () => this.api.project.openDialog()))
   }
 
-  /** Picks a new folder and creates a project there with N2EditorHost --create (engine #75) */
-  createProject(): Promise<void> {
-    return this.opening("Creating project...", () => this.api.project.createDialog())
+  /**
+   * Picks a folder for a new project, asks for its name (the folder's name by default) and creates it with
+   * N2EditorHost --create (engine #90)
+   */
+  async createProject(): Promise<void> {
+    const folder = await this.run(null, () => this.api.project.pickNewFolder())
+    if (!folder) return
+    const name = await this.api.dialogs.prompt("Project name", basename(folder))
+    if (name === null) return
+    await this.creating(folder, name, false)
   }
 
-  openRecent(projectPath: string): Promise<void> {
-    return this.opening(`Opening ${basename(projectPath)}...`, () => this.api.project.openRecent(projectPath))
+  async openRecent(projectPath: string): Promise<void> {
+    await this.afterOpen(
+      await this.run(`Opening ${basename(projectPath)}...`, () => this.api.project.openRecent(projectPath))
+    )
   }
 
   async removeRecent(projectPath: string): Promise<void> {
@@ -134,10 +175,45 @@ export class EditorStore {
     this.error.value = `${what}: ${e instanceof Error ? e.message : String(e)}`
   }
 
-  private async opening(label: string, open: () => Promise<string | null>): Promise<void> {
-    const projectPath = await this.run(label, open)
-    if (projectPath) this.projectPath.value = projectPath
+  /**
+   * Shows an opened project. A folder that isn't a project yet (no project.n2proj) can be made one where it is:
+   * --create adopts it, keeping its files and (with --project-id from-path) its assets' UUIDs.
+   */
+  private async afterOpen(result: OpenProjectResult | null | undefined): Promise<void> {
+    if (result?.kind === "opened") {
+      this.projectPath.value = result.path
+    } else if (result?.kind === "notAProject") {
+      const unavailable = this.createUnavailable.value
+      if (unavailable) {
+        this.error.value = `${result.message}. ${unavailable}.`
+      } else if (
+        await this.api.dialogs.confirm(
+          `${result.message}.\n\nMake it a project? Its files are kept, and its assets keep their UUIDs.`,
+          "Create project here"
+        )
+      ) {
+        const name = await this.api.dialogs.prompt("Project name", basename(result.path))
+        if (name !== null) await this.creating(result.path, name, true)
+      }
+    }
     await this.refreshRecent()
+  }
+
+  /** Creates a project in a folder the editor offered; one that already is a project can be opened instead */
+  private async creating(folder: string, name: string, adopt: boolean): Promise<void> {
+    const result: CreateProjectResult | undefined = await this.run(`Creating ${name || basename(folder)}...`, () =>
+      this.api.project.create(folder, name, adopt)
+    )
+    if (result?.kind === "opened") {
+      this.projectPath.value = result.path
+      await this.refreshRecent()
+    } else if (result?.kind === "alreadyAProject") {
+      if (await this.api.dialogs.confirm(`${result.message}.\n\nOpen it?`, "Open project")) {
+        await this.afterOpen(
+          await this.run(`Opening ${basename(result.path)}...`, () => this.api.project.openFolder(result.path))
+        )
+      }
+    }
   }
 
   /** Runs an action: busy while it runs, its failure in error (it resolves with undefined then) */

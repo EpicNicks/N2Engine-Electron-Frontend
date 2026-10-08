@@ -140,6 +140,56 @@ export function PromptDialog() {
   )
 }
 
+// ==================== Confirm ====================
+
+interface ConfirmRequest {
+  message: string
+  okLabel: string
+  resolve: (ok: boolean) => void
+}
+
+const confirmRequest = signal<ConfirmRequest | null>(null)
+
+/** Asks a yes or no question; the message can have several lines */
+export function confirmDialog(message: string, okLabel: string): Promise<boolean> {
+  confirmRequest.value?.resolve(false)
+  return new Promise((resolve) => {
+    confirmRequest.value = { message, okLabel, resolve }
+  })
+}
+
+export function ConfirmDialog() {
+  const request = confirmRequest.value
+  const ok = useRef<HTMLButtonElement>(null)
+  useEffect(() => ok.current?.focus(), [request])
+  if (!request) return null
+
+  const close = (answer: boolean) => {
+    confirmRequest.value = null
+    request.resolve(answer)
+  }
+  return (
+    <div class="modal-overlay" onClick={(e) => e.target === e.currentTarget && close(false)}>
+      <div
+        class="modal"
+        role="alertdialog"
+        aria-label={request.okLabel}
+        onKeyDown={(e) => e.key === "Escape" && close(false)}
+      >
+        <p class="modal-message">{request.message}</p>
+        <div class="modal-buttons">
+          <button class="secondary" onClick={() => close(false)}>
+            Cancel
+          </button>
+          <button ref={ok} onClick={() => close(true)}>
+            {request.okLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ==================== Context menu ====================
 
 export interface MenuItem {

@@ -7,7 +7,7 @@ import { AudioController } from "./audio-controller"
 import { Editor } from "./editor"
 import { SceneState } from "./scene-state"
 import { EditorStore } from "./store"
-import { AppContext, AppState, ContextMenu, PromptDialog, useApp } from "./ui"
+import { AppContext, AppState, ConfirmDialog, ContextMenu, PromptDialog, confirmDialog, prompt, useApp } from "./ui"
 import { Welcome } from "./welcome"
 
 function ErrorBanner() {
@@ -42,12 +42,18 @@ function App({ app }: { app: AppState }) {
       <ErrorBanner />
       <BusyOverlay />
       <PromptDialog />
+      <ConfirmDialog />
       <ContextMenu />
     </AppContext.Provider>
   )
 }
 
-const store = new EditorStore({ engine: window.engine, host: window.host, project: window.project })
+const store = new EditorStore({
+  engine: window.engine,
+  host: window.host,
+  project: window.project,
+  dialogs: { prompt, confirm: confirmDialog },
+})
 const app: AppState = {
   store,
   scene: new SceneState(window.engine, window.project),

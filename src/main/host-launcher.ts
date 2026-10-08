@@ -275,10 +275,67 @@ export class HostProcess {
 /** How long `--create` may take: no engine starts, so it should be quick */
 export const DefaultCreateTimeoutMs = 30000
 
+/** Starts the line `N2EditorHost --create` prints to stdout when it created the project, then a space */
+export const CreatedLinePrefix = "N2EditorHost created"
+
+/** `N2EditorHost --create`'s exit code when the folder already has a project.n2proj (nothing was changed) */
+export const CreateExitAlreadyAProject = 2
+
+/** What `N2EditorHost --create` reports */
+export interface CreatedProject {
+  /** The new project's id, lower-case */
+  projectId: string
+  /** Its startup scene, a res:// path (res://scenes/Main.scene) */
+  startupScene: string | null
+}
+
+/**
+ * The fields of a created line, `N2EditorHost created projectId=<uuid> startupScene=<res path>` (engine #90), or
+ * null if the line isn't one. A trailing \r is ignored, the fields are space-separated key=value in any order, and
+ * keys this editor doesn't know are skipped. projectId must be there.
+ */
+export function parseCreatedLine(line: string): CreatedProject | null {
+  const text = line.endsWith("\r") ? line.slice(0, -1) : line
+  if (!text.startsWith(CreatedLinePrefix + " ")) return null
+  const fields = new Map<string, string>()
+  for (const field of text.slice(CreatedLinePrefix.length + 1).split(" ")) {
+    const equals = field.indexOf("=")
+    if (equals > 0) fields.set(field.slice(0, equals), field.slice(equals + 1))
+  }
+  const projectId = fields.get("projectId")
+  if (!projectId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) return null
+  return { projectId: projectId.toLowerCase(), startupScene: fields.get("startupScene") || null }
+}
+
+/** Why `N2EditorHost --create` didn't create a project */
+export type CreateFailure =
+  /** Exit code 2: the folder already has a project.n2proj, and nothing was changed */
+  | "alreadyAProject"
+  /** The host has no --create (it is older than engine #90): it started serving instead */
+  | "unsupported"
+  /** Anything else: the message is the host's reason */
+  | "failed"
+
+export class CreateProjectError extends Error {
+  constructor(
+    readonly kind: CreateFailure,
+    message: string
+  ) {
+    super(message)
+    this.name = "CreateProjectError"
+  }
+}
+
 export interface CreateOptions {
   hostPath: string
+  /** The project's folder: created if missing; an existing one is adopted, its files kept */
   projectDir: string
-  /** --project-id: adopt this id, so an existing folder keeps its asset UUIDs */
+  /** --name: the project's name (the host's default is the folder's name) */
+  name?: string
+  /**
+   * --project-id: a UUID, or "from-path" to keep the asset UUIDs the folder's assets had before projects had ids
+   * (adopting an existing folder). The host's default is a new random id.
+   */
   projectId?: string
   timeoutMs?: number
   spawn?: SpawnFunction
@@ -286,22 +343,34 @@ export interface CreateOptions {
   onSpawned?: (kill: () => void) => void
 }
 
-/** What creating needs from the engine, said in every failure message until it lands */
-export const CreateNeedsEngine = "Creating a project needs N2EditorHost --create (engine #75, phase E3)"
+/** What creating needs from the engine */
+export const CreateNeedsEngine = "Creating a project needs an N2EditorHost with --create (engine #90)"
+
+/** The host's own error line(s), without the "N2EditorHost --create: " it starts them with */
+function createReason(stderr: string[], stdout: string[]): string {
+  const lines = (stderr.length > 0 ? stderr : stdout).map((line) => line.replace(/\r$/, "")).filter((l) => l !== "")
+  return lines.map((line) => line.replace(/^N2EditorHost --create: /, "")).join("\n")
+}
 
 /**
- * Creates a project with the host's `--create`: `N2EditorHost --create <dir> [--project-id <uuid>]`, which writes
- * the project (project.n2proj and its layout) and exits with code 0, without starting the engine. The editor never
- * writes the project file itself.
+ * Creates a project with the host (engine #90): `N2EditorHost --create <folder> [--name <name>]
+ * [--project-id <uuid> | --project-id from-path]`, which writes project.n2proj and the project's layout, without
+ * starting the engine. The editor never writes the project file itself.
  *
- * This is the intended contract of engine #75 (E3), which hasn't merged yet; this function is the one place to
- * adjust when it lands. A host without --create ignores the unknown argument and starts serving instead, so its
- * ready line (or a timeout) means --create isn't supported, and that host is killed.
+ * - Exit code 0: created; stdout has one line, `N2EditorHost created projectId=<uuid> startupScene=<res path>`,
+ *   which this resolves with.
+ * - Exit code 2: the folder already has a project.n2proj (nothing was changed): a CreateProjectError
+ *   "alreadyAProject", with the host's message.
+ * - Exit code 1 (or anything else): a CreateProjectError "failed", with the host's reason from stderr.
+ * - A host without --create (older than engine #90) ignores the flag and starts serving: its ready line is a
+ *   CreateProjectError "unsupported", and it is killed. Editors check first (probeHostCapabilities), so this is a
+ *   fallback.
  */
-export function createProjectWithHost(options: CreateOptions): Promise<void> {
+export function createProjectWithHost(options: CreateOptions): Promise<CreatedProject> {
   const spawn = options.spawn ?? nodeSpawn
   const timeoutMs = options.timeoutMs ?? DefaultCreateTimeoutMs
   const args = ["--create", options.projectDir]
+  if (options.name !== undefined) args.push("--name", options.name)
   if (options.projectId !== undefined) args.push("--project-id", options.projectId)
 
   return new Promise((resolve, reject) => {
@@ -322,6 +391,7 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
 
     const stderrLines: string[] = []
     const stdoutLines: string[] = []
+    let created: CreatedProject | null = null
     let settled = false
     const finish = (error: Error | null): void => {
       if (settled) return
@@ -335,25 +405,29 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
         }
         reject(error)
       } else {
-        resolve()
+        resolve(created!)
       }
     }
 
     const timer = setTimeout(
       () =>
-        finish(new Error(`N2EditorHost --create didn't finish within ${timeoutMs / 1000} s. ${CreateNeedsEngine}.`)),
+        finish(new CreateProjectError("failed", `N2EditorHost --create didn't finish within ${timeoutMs / 1000} s`)),
       timeoutMs
     )
 
     const stdout = new LineSplitter()
     const onStdoutLines = (lines: string[]): void => {
       pushLast(stdoutLines, lines)
-      if (lines.some((line) => parseReadyLine(line) !== null)) {
-        finish(
-          new Error(
-            `This N2EditorHost doesn't support --create: it started an editor host instead. ${CreateNeedsEngine}.`
+      for (const line of lines) {
+        created ??= parseCreatedLine(line)
+        if (parseReadyLine(line) !== null) {
+          finish(
+            new CreateProjectError(
+              "unsupported",
+              `This N2EditorHost has no --create (it started an editor host instead). ${CreateNeedsEngine}.`
+            )
           )
-        )
+        }
       }
     }
     child.stdout?.on("data", (chunk: Buffer) => onStdoutLines(stdout.push(chunk)))
@@ -364,16 +438,103 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
 
     child.on("error", (e) => finish(new Error(`Couldn't start ${options.hostPath}: ${e.message}`)))
     child.on("close", (code, signal) => {
+      const reason = createReason(stderrLines, stdoutLines)
       if (code === 0) {
-        finish(null)
+        finish(created ? null : new CreateProjectError("failed", "N2EditorHost --create reported no created project"))
+      } else if (code === CreateExitAlreadyAProject) {
+        finish(
+          new CreateProjectError("alreadyAProject", reason || `${options.projectDir} already has a project.n2proj`)
+        )
       } else {
         finish(
-          new Error(
-            `N2EditorHost --create ${describeExit({ code, signal })}${quoteOutput(stderrLines, stdoutLines)}\n` +
-              `(${CreateNeedsEngine}.)`
+          new CreateProjectError(
+            "failed",
+            reason
+              ? `Couldn't create the project: ${reason}`
+              : `N2EditorHost --create ${describeExit({ code, signal })}`
           )
         )
       }
+    })
+  })
+}
+
+/** What a host can do, from its --help text */
+export interface HostCapabilities {
+  /** It has --create (engine #90) */
+  create: boolean
+}
+
+/** How long `N2EditorHost --help` may take: it only prints the usage */
+export const DefaultProbeTimeoutMs = 10000
+
+export interface ProbeOptions {
+  hostPath: string
+  timeoutMs?: number
+  spawn?: SpawnFunction
+  onSpawned?: (kill: () => void) => void
+}
+
+/**
+ * Asks the host what it can do: `N2EditorHost --help` prints the usage and exits 0 without starting the engine
+ * (--help wins over every other argument). The usage names --create when the host has it (engine #90). A failure
+ * to start, a non-zero exit or a timeout rejects. The editor never boots a full host just to find out.
+ */
+export function probeHostCapabilities(options: ProbeOptions): Promise<HostCapabilities> {
+  const spawn = options.spawn ?? nodeSpawn
+  const timeoutMs = options.timeoutMs ?? DefaultProbeTimeoutMs
+
+  return new Promise((resolve, reject) => {
+    let child: ChildProcess
+    try {
+      child = spawn(options.hostPath, ["--help"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true })
+    } catch (e) {
+      reject(new Error(`Couldn't start ${options.hostPath}: ${e instanceof Error ? e.message : String(e)}`))
+      return
+    }
+    const kill = (): void => {
+      try {
+        child.kill()
+      } catch {
+        // already gone
+      }
+    }
+    options.onSpawned?.(kill)
+
+    let usage = ""
+    let settled = false
+    const finish = (result: HostCapabilities | Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (result instanceof Error) {
+        kill()
+        reject(result)
+      } else {
+        resolve(result)
+      }
+    }
+    const timer = setTimeout(
+      () => finish(new Error(`N2EditorHost --help didn't finish within ${timeoutMs / 1000} s`)),
+      timeoutMs
+    )
+
+    const decoder = new TextDecoder("utf-8")
+    child.stdout?.on("data", (chunk: Buffer) => {
+      usage += decoder.decode(chunk, { stream: true })
+      // A host that ignores --help would start serving: never let it run
+      if (usage.split("\n").some((line) => parseReadyLine(line) !== null)) {
+        finish(new Error("N2EditorHost started serving instead of printing its usage for --help"))
+      }
+    })
+    child.stderr?.resume()
+    child.on("error", (e) => finish(new Error(`Couldn't start ${options.hostPath}: ${e.message}`)))
+    child.on("close", (code, signal) => {
+      if (code !== 0) {
+        finish(new Error(`N2EditorHost --help ${describeExit({ code, signal })}`))
+        return
+      }
+      finish({ create: /(^|\s)--create\b/m.test(usage) })
     })
   })
 }

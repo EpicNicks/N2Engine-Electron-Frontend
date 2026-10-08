@@ -136,7 +136,29 @@ export interface HostLocation {
   source: "env" | "setting" | null
   /** Why the path can't be used (missing, not a file); null when it can, or when there is no path */
   problem: string | null
+  /**
+   * Whether this host can create projects: its --help lists --create (engine #90). null when unknown: no usable
+   * path, or asking it failed.
+   */
+  canCreate: boolean | null
 }
+
+/** What opening a folder did */
+export type OpenProjectResult =
+  /** It is open, its host running and connected */
+  | { kind: "opened"; path: string }
+  /**
+   * The folder has no project.n2proj (engine #90 needs one), so no host was started: the editor can offer to make
+   * it a project, keeping its files and its assets' UUIDs (create with adopt)
+   */
+  | { kind: "notAProject"; path: string; message: string }
+
+/** What creating a project did */
+export type CreateProjectResult =
+  /** Created and opened */
+  | { kind: "opened"; path: string }
+  /** The folder already has a project.n2proj, and nothing was changed: the editor can offer to open it */
+  | { kind: "alreadyAProject"; path: string; message: string }
 
 /**
  * The project's editor host process, which the main process launches for the open project:
@@ -187,17 +209,22 @@ export interface FileInfo {
  */
 export interface ProjectApi {
   /**
-   * Picks a folder and opens it: launches its editor host and connects to it. Resolves with the project's path
-   * once connected, null when cancelled; rejects when the host can't be launched (window.host says why too).
+   * Picks a folder and opens it: launches its editor host and connects to it. Null when cancelled; rejects when the
+   * host can't be launched (window.host says why too).
    */
-  openDialog(): Promise<string | null>
-  /**
-   * Picks a new folder, creates a project there with N2EditorHost --create (needs engine #75) and opens it; null
-   * when cancelled
-   */
-  createDialog(): Promise<string | null>
+  openDialog(): Promise<OpenProjectResult | null>
   /** Reopens one of getRecent's projects */
-  openRecent(projectPath: string): Promise<string>
+  openRecent(projectPath: string): Promise<OpenProjectResult>
+  /** Opens a folder the editor offered: a result's path (notAProject, alreadyAProject) or a picked new folder */
+  openFolder(folder: string): Promise<OpenProjectResult>
+  /** Picks a folder for a new project (it needn't exist); null when cancelled */
+  pickNewFolder(): Promise<string | null>
+  /**
+   * Makes a folder the editor offered a project, with N2EditorHost --create (engine #90), and opens it. name is the
+   * project's name (empty: the folder's name). adopt keeps the asset UUIDs an existing folder's assets had
+   * (--project-id from-path).
+   */
+  create(folder: string, name: string, adopt: boolean): Promise<CreateProjectResult>
   /** Recently opened projects' folders, newest first */
   getRecent(): Promise<string[]>
   removeRecent(projectPath: string): Promise<void>
@@ -240,7 +267,9 @@ export const Channels = {
   hostLocate: "host:locate",
 
   projectOpenDialog: "project:openDialog",
-  projectCreateDialog: "project:createDialog",
+  projectOpenFolder: "project:openFolder",
+  projectPickNewFolder: "project:pickNewFolder",
+  projectCreate: "project:create",
   projectOpenRecent: "project:openRecent",
   projectGetRecent: "project:getRecent",
   projectRemoveRecent: "project:removeRecent",

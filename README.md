@@ -9,8 +9,7 @@ This is not a reflection of the final design so much as a repo of the ongoing te
 The editor launches the engine's editor host (`N2EditorHost`, from the [N2Engine](https://github.com/EpicNicks/N2Engine) repo) itself, one host per open project. Build the engine first, then:
 
 1. Tell the editor where `N2EditorHost` is, in either of two ways:
-   - on the welcome screen, press **Locate N2EditorHost...** and pick it. The path is saved in `settings.json` in the editor's user data folder (`%APPDATA%
-2enginewebfrontend` on Windows), and **Change...** picks another. A configured path wins; or
+   - on the welcome screen, press **Locate N2EditorHost...** and pick it. The path is saved in `settings.json` in the editor's user data folder (`%APPDATA%\n2enginewebfrontend` on Windows), and **Change...** picks another. A configured path wins; or
    - set `N2ENGINE_HOST` to the executable's path before starting the editor. It is used when no path is configured.
 
 2. Install and start the editor:
@@ -24,7 +23,13 @@ The editor launches the engine's editor host (`N2EditorHost`, from the [N2Engine
 
 3. Open a project folder, or reopen one from **Recent Projects**. Recent projects are kept as plain paths in `recent-projects.json` in the user data folder, and the **×** removes one from the list.
 
-**Creating a project** runs `N2EditorHost --create <dir>` (optionally with `--project-id <uuid>`), which writes the new project and exits with code 0, and then opens the folder. That flag comes with engine [#75](https://github.com/EpicNicks/N2Engine/issues/75) (phase E3 of #6), which hasn't merged yet. Until then **Create New Project** fails with a message saying so: a host without `--create` ignores the flag and starts serving, so the editor catches its ready line and kills it. The editor never writes the project file itself. The call is one function, `createProjectWithHost` in `src/main/host-launcher.ts`, which is the place to adjust when #75 lands.
+**Creating a project** (engine [#90](https://github.com/EpicNicks/N2Engine/pull/90), phase E3 of #6) runs `N2EditorHost --create <folder> --name <name>`, which writes the project (`project.n2proj` and its layout) without starting the engine. **Create New Project** asks for a folder (it needn't exist) and a name (the folder's name by default). The editor never writes the project file itself, and reads the result as engine #90 specifies:
+
+- exit code 0: stdout has one line, `N2EditorHost created projectId=<uuid> startupScene=res://scenes/Main.scene` (space-separated key=value fields after the prefix; unknown keys are ignored, in any order). The editor then opens the folder;
+- exit code 2: the folder already has a `project.n2proj`, and nothing was changed. The editor offers to open it;
+- exit code 1: the host's reason, on stderr, is shown.
+
+Whether a host can create projects is asked with `N2EditorHost --help`, which prints the usage and exits without starting the engine: a host whose usage has no `--create` is older than engine #90, and **Create New Project** is disabled with a note saying so. With a host that has projects, a folder without `project.n2proj` isn't a project (the host would refuse it with exit code 1 before its engine starts). Opening one offers to make it a project where it is: `--create` adopts the folder, keeping its files, with `--project-id from-path` so its assets keep the UUIDs they had. All of this is in `src/main/host-launcher.ts` (`createProjectWithHost`, `parseCreatedLine`, `probeHostCapabilities`) and `src/main/project-session.ts`.
 
 The **Engine** panel (bottom right) lists the engine's subsystems from `GetEngineHealth`, e.g. `Audio Running` with `Loopback 48000 Hz, 2 channels, float32 (streamed to the editor client)`. Press **Refresh** to update it.
 
