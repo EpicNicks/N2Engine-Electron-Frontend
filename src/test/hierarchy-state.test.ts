@@ -4,6 +4,8 @@ import type { HierarchyNode, HierarchyResponse } from "../protocol/protocol.gene
 import type { JsonObject } from "../shared/api"
 import { HierarchyState, CreatePresets } from "../renderer/hierarchy-state"
 
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
 interface Obj {
   id: string
   name: string
@@ -185,20 +187,30 @@ describe("HierarchyState", () => {
     assert.deepEqual(names(state), ["A", "B"])
   })
 
-  test("no scene (an error answer) or a dropped connection leaves it empty", async () => {
-    const { scene, state } = setup("A")
+  test("no scene empties it, but a read that failed otherwise keeps what is held", async () => {
+    const { scene, state } = setup("A(A1)")
     await state.refresh()
-    assert.equal(state.tree.value.order.length, 1)
+    state.toggleExpanded(id("A"))
+    state.click(id("A1"))
+    const real = scene.engine.getHierarchy
     scene.connected = false
     await state.refresh()
-    assert.equal(state.response.value, null)
-    assert.equal(state.tree.value.order.length, 0)
+    assert.equal(state.tree.value.order.length, 2, "not connected: reset() is what empties it")
     scene.connected = true
+    scene.engine.getHierarchy = async () => {
+      throw new Error("Connection closed")
+    }
+    await state.refresh()
+    assert.equal(state.tree.value.order.length, 2)
+    assert.equal(state.primaryId, id("A1"))
+    assert.equal(state.expanded.value.has(id("A")), true)
     scene.engine.getHierarchy = async () => {
       throw new Error("No scene loaded")
     }
     await state.refresh()
     assert.equal(state.response.value, null)
+    assert.equal(state.primaryId, null)
+    scene.engine.getHierarchy = real
   })
 
   test("a slow older read can't replace a newer one", async () => {
@@ -280,6 +292,125 @@ describe("HierarchyState", () => {
       assert.deepEqual([...state.selection.value.ids], [id("A")])
       assert.equal(state.selection.value.primary, id("A"))
       assert.equal(state.renaming.value, null)
+    })
+  })
+
+  describe("actions racing reads", () => {
+    /** Makes the next getHierarchy answers wait for the test */
+    function gated(scene: FakeScene) {
+      const real = scene.engine.getHierarchy
+      const releases: Array<() => void> = []
+      scene.engine.getHierarchy = async () => {
+        const answer = await real()
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return answer
+      }
+      return { releases, restore: () => (scene.engine.getHierarchy = real) }
+    }
+
+    test("a create whose read an event's read overtook still selects and renames the new object", async () => {
+      const { scene, state } = setup("A")
+      await state.refresh()
+      const gate = gated(scene)
+      const creating = state.create("Cube")
+      await settle()
+      // create's own read is waiting; the event's read starts after it and finishes first
+      const event = state.applyChange({ full: false, entityIds: ["new-1"] }, null)
+      await settle()
+      assert.equal(gate.releases.length, 2)
+      gate.releases[1]()
+      await settle()
+      gate.releases[0]()
+      const made = await creating
+      await event
+      assert.equal(state.primaryId, made)
+      assert.equal(state.renaming.value, made)
+      assert.deepEqual(names(state), ["A", "Cube"])
+    })
+
+    test("applyChange resolves only after the newest read is applied", async () => {
+      const { scene, state } = setup("A")
+      await state.refresh()
+      const gate = gated(scene)
+      let done = false
+      const first = state.applyChange({ full: true, entityIds: [] }, null).then(() => (done = true))
+      await settle()
+      const second = state.refresh()
+      await settle()
+      gate.releases[0]() // the older read answers: not the newest
+      await settle()
+      assert.equal(done, false)
+      gate.releases[1]()
+      await Promise.all([first, second])
+      assert.equal(done, true)
+    })
+
+    test("a second delete or duplicate while one runs is ignored", async () => {
+      const { scene, state } = setup("A,B")
+      await state.refresh()
+      state.click(id("A"))
+      const gate = gated(scene)
+      const first = state.duplicateSelected()
+      await settle()
+      await state.duplicateSelected()
+      assert.equal(await state.deleteSelected(), false)
+      assert.equal(await state.move([id("A")], { parentId: id("B"), index: -1 }), false)
+      gate.releases[0]()
+      await first
+      assert.equal(scene.calls.filter((c) => c.startsWith("duplicateEntity")).length, 1)
+      assert.equal(scene.calls.filter((c) => c.startsWith("destroyEntity")).length, 0)
+      assert.equal(scene.text(), "A,A',B")
+    })
+
+    test("renameSettled resolves when the rename has been sent and read back", async () => {
+      const { scene, state } = setup("A")
+      await state.refresh()
+      state.beginRename(id("A"))
+      const rename = state.commitRename(id("A"), "Hero")
+      await state.renameSettled
+      assert.equal(scene.text(), "Hero")
+      await rename
+    })
+  })
+
+  describe("collapsed objects", () => {
+    test("collapsing an object selects it when what was selected is hidden by it", async () => {
+      const { state } = setup("A(A1,A2),B")
+      await state.refresh()
+      state.toggleExpanded(id("A"))
+      state.click(id("A1"))
+      state.click(id("B"), { toggle: true })
+      state.toggleExpanded(id("A"))
+      assert.deepEqual([...state.selection.value.ids].sort(), [id("A"), id("B")])
+      assert.equal(state.primaryId, id("B"))
+    })
+
+    test("F2 and the arrows ignore a primary that has no row", async () => {
+      const { state } = setup("A(A1,A2),B")
+      await state.refresh()
+      state.toggleExpanded(id("A"))
+      state.click(id("A2"))
+      // Hidden without the selection following (a stale one)
+      state.selection.value = { ids: new Set([id("A2")]), anchor: id("A2"), primary: id("A2") }
+      state.expanded.value = new Set()
+      state.beginRename()
+      assert.equal(state.renaming.value, null)
+      state.expandPrimary()
+      state.collapsePrimary()
+      assert.equal(state.primaryId, id("A2"))
+      state.step(1)
+      assert.equal(state.primaryId, id("A"), "from a row that isn't shown: the first row")
+    })
+
+    test("a read after another client reparented the selection under a collapsed object moves it to that object", async () => {
+      const { scene, state } = setup("A,B")
+      await state.refresh()
+      state.click(id("B"))
+      const b = scene.roots.pop()!
+      scene.roots[0].children.push(b)
+      scene.revision++
+      await state.applyChange({ full: false, entityIds: [id("B")] }, scene.revision)
+      assert.equal(state.primaryId, id("A"))
     })
   })
 

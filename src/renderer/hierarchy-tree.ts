@@ -159,8 +159,33 @@ export function pruneSelection(selection: Selection, tree: HierarchyTree): Selec
   const ids = new Set([...selection.ids].filter((id) => tree.nodes.has(id)))
   const anchor = selection.anchor !== null && tree.nodes.has(selection.anchor) ? selection.anchor : null
   let primary = selection.primary !== null && ids.has(selection.primary) ? selection.primary : null
-  if (primary === null && ids.size > 0) primary = [...ids].pop()!
+  if (primary === null && ids.size > 0) primary = tree.order.filter((id) => ids.has(id)).pop()!
   if (ids.size === selection.ids.size && anchor === selection.anchor && primary === selection.primary) return selection
+  return { ids, anchor, primary }
+}
+
+/**
+ * The selection with each selected object that isn't shown (an ancestor is collapsed) replaced by its nearest ancestor
+ * that is, so keys and commands never act on a row nobody sees (the same object when everything is shown)
+ */
+export function showSelection(selection: Selection, tree: HierarchyTree, shown: ReadonlySet<string>): Selection {
+  const lift = (id: string | null): string | null => {
+    let current = id
+    for (let steps = 0; current !== null && !shown.has(current) && steps <= tree.nodes.size; steps++) {
+      const parent = tree.parents.get(current)
+      current = parent === undefined || parent === RootId ? null : parent
+    }
+    return current !== null && shown.has(current) ? current : null
+  }
+  const ids = new Set<string>()
+  for (const id of selection.ids) {
+    const lifted = lift(id)
+    if (lifted !== null) ids.add(lifted)
+  }
+  const anchor = lift(selection.anchor)
+  const primary = lift(selection.primary)
+  const same = [...selection.ids].every((id) => ids.has(id)) && ids.size === selection.ids.size
+  if (same && anchor === selection.anchor && primary === selection.primary) return selection
   return { ids, anchor, primary }
 }
 

@@ -13,6 +13,7 @@ import {
   pruneSelection,
   resolveDrop,
   selectOnly,
+  showSelection,
   stepRow,
   topLevel,
   visibleRows,
@@ -321,5 +322,34 @@ describe("drops", () => {
         assert.deepEqual(list, expected, `dragging ${dragged} to ${index}`)
       }
     }
+  })
+})
+
+describe("showSelection and pruneSelection", () => {
+  const tree2 = buildTree(sample)
+  test("a selected object under a collapsed one becomes that one", () => {
+    const shown = new Set(["A", "B", "C"])
+    const s = {
+      ids: new Set(["A2a", "C", "A1"]),
+      anchor: "A1",
+      primary: "A2a",
+    }
+    const lifted = showSelection(s, tree2, shown)
+    assert.deepEqual([...lifted.ids].sort(), ["A", "C"])
+    assert.equal(lifted.anchor, "A")
+    assert.equal(lifted.primary, "A")
+  })
+
+  test("it is the same object when every selected row is shown", () => {
+    const s = selectOnly("B")
+    assert.equal(showSelection(s, tree2, new Set(["A", "B", "C"])), s)
+    assert.equal(showSelection(emptySelection, tree2, new Set()), emptySelection)
+  })
+
+  test("pruning picks the new primary in tree order, not selection order", () => {
+    const s = { ids: new Set(["C", "A", "gone"]), anchor: null, primary: "gone" }
+    assert.equal(pruneSelection(s, tree2).primary, "C")
+    const t = { ids: new Set(["A", "C", "gone"]), anchor: null, primary: "gone" }
+    assert.equal(pruneSelection(t, tree2).primary, "C")
   })
 })

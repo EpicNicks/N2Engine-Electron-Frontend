@@ -19,6 +19,7 @@ import {
   planMoves,
   pruneSelection,
   selectOnly,
+  showSelection,
   stepRow,
   topLevel,
   visibleRows,
@@ -68,6 +69,11 @@ export class HierarchyState {
 
   /** Counts reads, so a slow answer can't replace a newer one */
   private fetches = 0
+  /** The newest read, which refresh() waits for */
+  private latest: Promise<void> = Promise.resolve()
+  /** An action that changes objects is running: another one (a key held down, a double click) waits its turn */
+  private acting = false
+  private renameDone: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly engine: Engine,
@@ -87,28 +93,49 @@ export class HierarchyState {
 
   // ==================== Reading ====================
 
-  /** Reads the hierarchy; a scene-less host or a dropped connection leaves it empty */
+  /**
+   * Reads the hierarchy, and resolves once the newest read has been applied (an action's own read may be overtaken by
+   * one an event started: the caller then still sees the objects it made). A host that says there is no scene leaves
+   * it empty; a read that failed for another reason (a dropped connection, say) keeps what is held, so the tree,
+   * the selection and the expanded objects don't vanish for a moment.
+   */
   async refresh(): Promise<void> {
-    const fetch = ++this.fetches
-    let response: HierarchyResponse | null = null
-    if (this.engine.isConnected()) {
-      try {
-        response = await this.engine.getHierarchy()
-      } catch (e) {
-        // An error answer means no scene; a dropped connection is reported elsewhere
-        console.debug("GetHierarchy failed:", e)
-      }
+    const run = this.read(++this.fetches)
+    this.latest = run
+    await run
+    // Another read started meanwhile: its answer is the one to wait for
+    for (let latest = this.latest; latest !== run; latest = this.latest) {
+      await latest
+      if (latest === this.latest) break
+    }
+  }
+
+  private async read(fetch: number): Promise<void> {
+    let response: HierarchyResponse | null
+    if (!this.engine.isConnected()) return // reset() empties it when the connection is gone
+    try {
+      response = await this.engine.getHierarchy()
+    } catch (e) {
+      console.debug("GetHierarchy failed:", e)
+      if (!/no scene/i.test(e instanceof Error ? e.message : String(e))) return
+      response = null
     }
     if (fetch !== this.fetches) return
     batch(() => {
       this.response.value = response
       // What no longer exists can't stay selected, expanded or being renamed
       const tree = this.tree.value
-      this.setSelection(pruneSelection(this.selection.value, tree))
       const expanded = [...this.expanded.value].filter((id) => tree.nodes.has(id))
       if (expanded.length !== this.expanded.value.size) this.expanded.value = new Set(expanded)
+      this.setSelection(this.visible(pruneSelection(this.selection.value, tree), new Set(expanded)))
       if (this.renaming.value !== null && !tree.nodes.has(this.renaming.value)) this.renaming.value = null
     })
+  }
+
+  /** The selection with what is hidden under a collapsed object moved to that object */
+  private visible(selection: Selection, expanded: ReadonlySet<string>): Selection {
+    const tree = this.tree.value
+    return showSelection(selection, tree, new Set(visibleRows(tree, expanded).map((row) => row.id)))
   }
 
   /**
@@ -168,8 +195,18 @@ export class HierarchyState {
 
   toggleExpanded(id: string): void {
     const expanded = new Set(this.expanded.value)
-    if (!expanded.delete(id)) expanded.add(id)
-    this.expanded.value = expanded
+    const collapsing = expanded.delete(id)
+    if (!collapsing) expanded.add(id)
+    batch(() => {
+      this.expanded.value = expanded
+      // What was selected under it is hidden now: the selection goes to it
+      if (collapsing) this.setSelection(this.visible(this.selection.value, expanded))
+    })
+  }
+
+  /** Whether the object has a row shown (the keys act on those only) */
+  private isShown(id: string | null): id is string {
+    return id !== null && this.rows.value.some((row) => row.id === id)
   }
 
   expand(id: string): void {
@@ -179,7 +216,7 @@ export class HierarchyState {
   /** Arrow right: opens the primary object, or goes to its first child when it is open */
   expandPrimary(): void {
     const id = this.primaryId
-    if (id === null || childrenOf(this.tree.value, id).length === 0) return
+    if (!this.isShown(id) || childrenOf(this.tree.value, id).length === 0) return
     if (!this.expanded.value.has(id)) this.expand(id)
     else this.click(childrenOf(this.tree.value, id)[0])
   }
@@ -187,7 +224,7 @@ export class HierarchyState {
   /** Arrow left: closes the primary object, or goes to its parent when it is closed */
   collapsePrimary(): void {
     const id = this.primaryId
-    if (id === null) return
+    if (!this.isShown(id)) return
     if (this.expanded.value.has(id) && childrenOf(this.tree.value, id).length > 0) this.toggleExpanded(id)
     else {
       const parent = this.tree.value.parents.get(id)
@@ -209,7 +246,7 @@ export class HierarchyState {
    */
   async create(preset: string, parentId: string = RootId): Promise<string> {
     const id = await this.engine.createEntityEx("", parentId, -1, preset)
-    await this.refresh()
+    await this.refresh() // the newest read: it has the new object, whichever read it was
     batch(() => {
       if (this.tree.value.nodes.has(id)) {
         this.reveal(id)
@@ -220,7 +257,7 @@ export class HierarchyState {
   }
 
   beginRename(id: string | null = this.primaryId): void {
-    if (id !== null && this.tree.value.nodes.has(id)) this.renaming.value = id
+    if (this.isShown(id)) this.renaming.value = id
   }
 
   cancelRename(): void {
@@ -228,11 +265,29 @@ export class HierarchyState {
   }
 
   /** Ends renaming: sets the name unless it is empty or the same */
-  async commitRename(id: string, name: string): Promise<void> {
+  commitRename(id: string, name: string): Promise<void> {
     if (this.renaming.value === id) this.renaming.value = null
     const trimmed = name.trim()
-    if (trimmed === "" || trimmed === this.tree.value.nodes.get(id)?.name) return
-    await this.setProperties(id, { name: trimmed })
+    if (trimmed === "" || trimmed === this.tree.value.nodes.get(id)?.name) return Promise.resolve()
+    const done = this.setProperties(id, { name: trimmed })
+    this.renameDone = done.catch(() => {})
+    return done
+  }
+
+  /** Resolves when the last rename has been sent and read back (Ctrl+S waits for it) */
+  get renameSettled(): Promise<void> {
+    return this.renameDone
+  }
+
+  /** Runs an action unless another one is running (resolves with `otherwise` then) */
+  private async exclusive<T>(otherwise: T, action: () => Promise<T>): Promise<T> {
+    if (this.acting) return otherwise
+    this.acting = true
+    try {
+      return await action()
+    } finally {
+      this.acting = false
+    }
   }
 
   async setActive(id: string, active: boolean): Promise<void> {
@@ -240,65 +295,71 @@ export class HierarchyState {
   }
 
   /** Copies the selected objects, each right after its original, and selects the copies */
-  async duplicateSelected(): Promise<void> {
-    const ids = topLevel(this.tree.value, this.selection.value.ids)
-    if (ids.length === 0) return
-    const copies: string[] = []
-    try {
-      for (const id of ids) copies.push(await this.engine.duplicateEntity(id))
-    } finally {
-      await this.refresh()
-      const tree = this.tree.value
-      const found = copies.filter((id) => tree.nodes.has(id))
-      if (found.length > 0) {
-        batch(() => {
-          for (const id of found) this.expandAncestors(id)
-          this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
-        })
+  duplicateSelected(): Promise<void> {
+    return this.exclusive<void>(undefined, async () => {
+      const ids = topLevel(this.tree.value, this.selection.value.ids)
+      if (ids.length === 0) return
+      const copies: string[] = []
+      try {
+        for (const id of ids) copies.push(await this.engine.duplicateEntity(id))
+      } finally {
+        await this.refresh()
+        const tree = this.tree.value
+        const found = copies.filter((id) => tree.nodes.has(id))
+        if (found.length > 0) {
+          batch(() => {
+            for (const id of found) this.expandAncestors(id)
+            this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
+          })
+        }
       }
-    }
+    })
   }
 
   /**
    * Destroys the selected objects with what is under them. Asks first when that is more than one object (there is no
    * undo yet); resolves false when the user said no.
    */
-  async deleteSelected(): Promise<boolean> {
-    const tree = this.tree.value
-    const ids = topLevel(tree, this.selection.value.ids)
-    if (ids.length === 0) return false
-    const count = tree.order.filter(
-      (id) => ids.includes(id) || ancestorsOf(tree, id).some((a) => ids.includes(a))
-    ).length
-    if (count > 1) {
-      const names = ids.map((id) => `'${tree.nodes.get(id)?.name ?? id}'`).join(", ")
-      const what = count === ids.length ? names : `${names} and everything under ${ids.length === 1 ? "it" : "them"}`
-      if (!(await this.options.confirm(`Delete ${what} (${count} objects)?`, "Delete"))) return false
-    }
-    try {
-      for (const id of ids) await this.engine.destroyEntity(id)
-    } finally {
-      await this.refresh()
-    }
-    return true
+  deleteSelected(): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      const tree = this.tree.value
+      const ids = topLevel(tree, this.selection.value.ids)
+      if (ids.length === 0) return false
+      const count = tree.order.filter(
+        (id) => ids.includes(id) || ancestorsOf(tree, id).some((a) => ids.includes(a))
+      ).length
+      if (count > 1) {
+        const names = ids.map((id) => `'${tree.nodes.get(id)?.name ?? id}'`).join(", ")
+        const what = count === ids.length ? names : `${names} and everything under ${ids.length === 1 ? "it" : "them"}`
+        if (!(await this.options.confirm(`Delete ${what} (${count} objects)?`, "Delete"))) return false
+      }
+      try {
+        for (const id of ids) await this.engine.destroyEntity(id)
+      } finally {
+        await this.refresh()
+      }
+      return true
+    })
   }
 
   /**
    * Moves the objects (the selection's top-level ones when the dragged object is selected; see dragIds) to the
    * target, keeping where they are in the world. Resolves false when the drop isn't allowed or changes nothing.
    */
-  async move(draggedIds: readonly string[], target: DropTarget): Promise<boolean> {
-    const moves = planMoves(this.tree.value, draggedIds, target)
-    if (moves === null || moves.length === 0) return false
-    try {
-      for (const move of moves) {
-        await this.engine.setEntityParent(move.entityId, move.parentId, move.siblingIndex, true)
+  move(draggedIds: readonly string[], target: DropTarget): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      const moves = planMoves(this.tree.value, draggedIds, target)
+      if (moves === null || moves.length === 0) return false
+      try {
+        for (const move of moves) {
+          await this.engine.setEntityParent(move.entityId, move.parentId, move.siblingIndex, true)
+        }
+      } finally {
+        await this.refresh()
       }
-    } finally {
-      await this.refresh()
-    }
-    if (target.parentId !== RootId) this.expand(target.parentId)
-    return true
+      if (target.parentId !== RootId) this.expand(target.parentId)
+      return true
+    })
   }
 
   /** What a drag that starts on the object carries: the selection when it holds the object, else just the object */
