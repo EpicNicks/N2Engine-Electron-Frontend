@@ -2,11 +2,13 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { ConnectionState, HostState } from "../shared/api"
 import type { CreateOptions, HostExit, HostProcess, LaunchOptions } from "../main/host-launcher"
-import { EngineConnection, ProjectSession } from "../main/project-session"
+import { CancelledError, EngineConnection, ProjectSession, ProjectSessionDeps } from "../main/project-session"
 
 /** The HostProcess surface ProjectSession uses */
 class FakeHost {
   killed = 0
+  /** Ignores kill (a host that takes its time to die) */
+  stubborn = false
   exitInfo: HostExit | null = null
   private listeners: Array<(exit: HostExit) => void> = []
   constructor(
@@ -25,7 +27,7 @@ class FakeHost {
   }
   kill(): void {
     this.killed++
-    this.exit({ code: null, signal: "SIGTERM" })
+    if (!this.stubborn) this.exit({ code: null, signal: "SIGTERM" })
   }
   /** The process ends */
   exit(exit: HostExit): void {
@@ -62,7 +64,7 @@ class FakeEngine implements EngineConnection {
   }
 }
 
-function setup() {
+function setup(overrides: Partial<ProjectSessionDeps> = {}) {
   const states: HostState[] = []
   const launches: LaunchOptions[] = []
   const hosts: FakeHost[] = []
@@ -107,6 +109,7 @@ function setup() {
     create: async (options) => {
       creates.push(options)
     },
+    ...overrides,
   })
 
   return {
@@ -251,7 +254,7 @@ describe("ProjectSession", () => {
     session.killHost()
     assert.equal(killedWhileStarting, 1)
     rejectLaunch(new Error("unused"))
-    await assert.rejects(opening, /SIGTERM/)
+    await assert.rejects(opening, CancelledError)
   })
 
   test("creating runs --create with the host, then opens the new project", async () => {
@@ -274,5 +277,108 @@ describe("ProjectSession", () => {
       ["real:A", "real:B"]
     )
     assert.equal(session.projectPath, "real:B")
+  })
+})
+
+/** A launch that waits until the test settles it, or until it is killed */
+function pendingLaunch() {
+  const control = { kills: 0, spawned: false, options: null as LaunchOptions | null }
+  const launch = (options: LaunchOptions) =>
+    new Promise<HostProcess>((_, reject) => {
+      control.spawned = true
+      control.options = options
+      options.onSpawned?.(() => {
+        control.kills++
+        reject(new Error("N2EditorHost was ended by SIGTERM before it was ready"))
+      })
+    })
+  return { control, launch }
+}
+
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+describe("ProjectSession: quitting, reloading, stopping and closing", () => {
+  test("shutdown while the old host is still dying: the next host is never spawned", async () => {
+    const { session, hosts, launches } = setup({ stopGraceMs: 30 })
+    await session.openProject("A")
+    hosts[0].stubborn = true
+    const opening = session.openProject("B")
+    await tick()
+    // openProject(B) is in stopCurrent, waiting for host A to exit
+    session.shutdown()
+    await assert.rejects(opening, CancelledError)
+    assert.equal(launches.length, 1, "nothing launched after shutdown")
+  })
+
+  test("a page reload while the old host is still dying: the queued open spawns nothing", async () => {
+    const { session, hosts, launches, getRoot } = setup({ stopGraceMs: 30 })
+    await session.openProject("A")
+    hosts[0].stubborn = true
+    const opening = session.openProject("B")
+    await tick()
+    const resetting = session.reset()
+    await assert.rejects(opening, CancelledError)
+    await resetting
+    assert.equal(launches.length, 1)
+    assert.equal(getRoot(), null)
+    assert.equal(session.state.projectPath, null)
+  })
+
+  test("shutdown during --create kills the create child, and nothing is launched after it", async () => {
+    let kills = 0
+    let finish: () => void = () => {}
+    const { session, launches } = setup({
+      create: (options) =>
+        new Promise<void>((resolve, reject) => {
+          finish = resolve
+          options.onSpawned?.(() => {
+            kills++
+            reject(new Error("N2EditorHost --create was ended by SIGTERM"))
+          })
+        }),
+    })
+    const creating = session.createProject("C:\\Games\\New")
+    await tick()
+    session.shutdown()
+    assert.equal(kills, 1)
+    finish()
+    await assert.rejects(creating, CancelledError)
+    assert.equal(launches.length, 0)
+    await assert.rejects(session.openProject("A"), CancelledError)
+    assert.equal(launches.length, 0, "nothing spawns after shutdown")
+  })
+
+  test("closing while the host starts kills it at once, without waiting for the launch", async () => {
+    const { control, launch } = pendingLaunch()
+    const { session, getRoot } = setup({ launch })
+    const opening = session.openProject("A")
+    await tick()
+    assert.equal(session.state.status, "starting")
+    const closing = session.closeProject()
+    assert.equal(control.kills, 1, "killed before the close joins the queue")
+    await assert.rejects(opening, CancelledError)
+    await closing
+    assert.equal(getRoot(), null)
+    assert.deepEqual(
+      { status: session.state.status, projectPath: session.state.projectPath },
+      { status: "stopped", projectPath: null }
+    )
+  })
+
+  test("stopping while the host starts kills it at once; the project stays open", async () => {
+    const { control, launch } = pendingLaunch()
+    const { session } = setup({ launch })
+    await assert.rejects(
+      (async () => {
+        const opening = session.openProject("A")
+        await tick()
+        const stopping = session.stopHost()
+        assert.equal(control.kills, 1)
+        await stopping
+        return opening
+      })(),
+      CancelledError
+    )
+    assert.equal(session.state.status, "stopped")
   })
 })

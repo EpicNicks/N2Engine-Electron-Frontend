@@ -46,8 +46,7 @@ const settings = new HostSettings(path.join(userData, "settings.json"))
 const engine = new EngineHost(new EngineClient(), page, {
   // A page that (re)loads starts at the welcome screen: no project, no host
   onAttach: () => {
-    projectSession.killHost()
-    projectSession.closeProject().catch((e) => console.error("Failed to close the project:", e))
+    projectSession.reset().catch((e) => console.error("Failed to close the project:", e))
   },
 })
 engine.register(ipcMain)
@@ -119,17 +118,17 @@ app.whenReady().then(() => {
 
 // The host never outlives the editor: it's killed however the editor ends. Once connected, closing the connection
 // would end it anyway (--exit-on-disconnect); the kill also covers a host still starting.
-app.on("before-quit", () => projectSession.killHost())
+app.on("before-quit", () => projectSession.shutdown())
 app.on("window-all-closed", () => {
-  projectSession.killHost()
+  projectSession.shutdown()
   app.quit()
 })
 // Ending some other way (process.exit, a fatal error): "exit" handlers are synchronous, and so is the kill
-process.on("exit", () => projectSession.killHost())
+process.on("exit", () => projectSession.shutdown())
 // Ctrl+C in the terminal that started the editor, or a kill: quit properly instead of dying with the host running
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    projectSession.killHost()
+    projectSession.shutdown()
     app.quit()
   })
 }

@@ -281,6 +281,8 @@ export interface CreateOptions {
   projectId?: string
   timeoutMs?: number
   spawn?: SpawnFunction
+  /** Called as soon as the process is spawned, with a function that kills it (the editor quits meanwhile) */
+  onSpawned?: (kill: () => void) => void
 }
 
 /** What creating needs from the engine, said in every failure message until it lands */
@@ -309,6 +311,13 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
       reject(new Error(`Couldn't start ${options.hostPath}: ${e instanceof Error ? e.message : String(e)}`))
       return
     }
+    options.onSpawned?.(() => {
+      try {
+        child.kill()
+      } catch {
+        // already gone
+      }
+    })
 
     const stderrLines: string[] = []
     const stdoutLines: string[] = []

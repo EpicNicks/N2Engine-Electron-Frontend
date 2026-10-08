@@ -149,7 +149,9 @@ export class EditorStore {
     try {
       return await action()
     } catch (e) {
-      this.error.value = e instanceof Error ? e.message : String(e)
+      const message = e instanceof Error ? e.message : String(e)
+      // The editor cancelled it itself (stopped or closed while a host started, the page reloaded): no error
+      if (!message.startsWith("Cancelled:")) this.error.value = message
       return undefined
     } finally {
       if (label) this.busy.value = null
