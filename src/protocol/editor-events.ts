@@ -1,7 +1,7 @@
 // The host's PollEvents events as typed values (protocol 1.3.0: sceneChanged, assetsChanged, projectChanged, with
-// sceneChanged's entityIds and full since 1.4.0; the log events of 1.2.0 stay with the console). Events are plain
-// JSON with the fields the protocol lists, and a client ignores kinds and keys it doesn't know, so parsing is
-// lenient: a missing or mistyped field takes its default.
+// sceneChanged's entityIds and full since 1.4.0, frameChanged since 1.7.0; the log events of 1.2.0 stay with the
+// console). Events are plain JSON with the fields the protocol lists, and a client ignores kinds and keys it doesn't
+// know, so parsing is lenient: a missing or mistyped field takes its default.
 import type { EditorEvent } from "./protocol.generated"
 
 /** The scene revision moved, a scene was saved, or another was loaded */
@@ -51,7 +51,22 @@ export interface HistoryChangedEvent {
   redoCount: number
 }
 
-export type StateEvent = SceneChangedEvent | AssetsChangedEvent | ProjectChangedEvent | HistoryChangedEvent
+/**
+ * What the viewport would show has changed since the last frame RenderFrameIfChanged rendered (since 1.7.0): the scene,
+ * the editor camera, the viewport size, the assets or the project's settings. One event per change that follows a
+ * rendered frame. revision is the one the next frame will have; the viewport answers with RenderFrameIfChanged.
+ */
+export interface FrameChangedEvent {
+  kind: "frameChanged"
+  revision: number
+}
+
+export type StateEvent =
+  | SceneChangedEvent
+  | AssetsChangedEvent
+  | ProjectChangedEvent
+  | HistoryChangedEvent
+  | FrameChangedEvent
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0
@@ -121,6 +136,8 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
         undoCount: count(event.undoCount),
         redoCount: count(event.redoCount),
       }
+    case "frameChanged":
+      return { kind: "frameChanged", revision: count(event.revision) }
     default:
       return null
   }

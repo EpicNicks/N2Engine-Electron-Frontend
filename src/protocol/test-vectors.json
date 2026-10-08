@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.6.0",
+  "protocolVersion": "1.7.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -32,6 +32,14 @@
       "payload": "78563412795634127a563412"
     },
     {
+      "command": "RenderFrameIfChanged",
+      "id": "0x06",
+      "fields": {
+        "sinceRevision": 305419896
+      },
+      "payload": "78563412"
+    },
+    {
       "command": "SetCameraPosition",
       "id": "0x10",
       "fields": {
@@ -40,6 +48,29 @@
         "z": 1.75
       },
       "payload": "0000a03f0000c0bf0000e03f"
+    },
+    {
+      "command": "SetEditorCamera",
+      "id": "0x13",
+      "fields": {
+        "position": {
+          "x": 1.25,
+          "y": -1.5,
+          "z": 1.75
+        },
+        "rotation": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0,
+          "w": 2.25
+        },
+        "fovY": 1.75,
+        "orthographic": false,
+        "orthoSize": 2.25,
+        "nearPlane": -2.5,
+        "farPlane": 2.75
+      },
+      "payload": "0000a03f0000c0bf0000e03f0000c0bf0000e03f000000c0000010400000e03f0000001040000020c000003040"
     },
     {
       "command": "CreateScene",
@@ -448,6 +479,18 @@
       "payload": "78563412795634127a563412a90300005b7b226164646564223a5b22616464656420313320e29c93222c22616464656420313420e29c93225d2c2263616e5265646f223a66616c73652c2263616e556e646f223a747275652c22656e74697479496473223a5b22656e7469747949647320313120e29c93222c22656e7469747949647320313220e29c93225d2c2266756c6c223a747275652c226b696e64223a226b696e64203420e29c93222c226c6162656c223a226c6162656c20313820e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c226d6f646966696564223a5b226d6f64696669656420313520e29c93222c226d6f64696669656420313620e29c93225d2c2270617468223a227061746820313020e29c93222c227265646f436f756e74223a32332e352c227265646f4c6162656c223a227265646f4c6162656c20313920e29c93222c2272656d6f766564223a5b2272656d6f76656420313420e29c93222c2272656d6f76656420313520e29c93225d2c227265766973696f6e223a31302e352c2273617665645265766973696f6e223a31312e352c22736571223a352e352c2274696d65223a392e352c22756e646f436f756e74223a32322e357d2c7b226164646564223a5b22616464656420313420e29c93222c22616464656420313520e29c93225d2c2263616e5265646f223a747275652c2263616e556e646f223a66616c73652c22656e74697479496473223a5b22656e7469747949647320313220e29c93222c22656e7469747949647320313320e29c93225d2c2266756c6c223a66616c73652c226b696e64223a226b696e64203520e29c93222c226c6162656c223a226c6162656c20313920e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c226d6f646966696564223a5b226d6f64696669656420313620e29c93222c226d6f64696669656420313720e29c93225d2c2270617468223a227061746820313120e29c93222c227265646f436f756e74223a32342e352c227265646f4c6162656c223a227265646f4c6162656c20323020e29c93222c2272656d6f766564223a5b2272656d6f76656420313520e29c93222c2272656d6f76656420313620e29c93225d2c227265766973696f6e223a31312e352c2273617665645265766973696f6e223a31322e352c22736571223a362e352c2274696d65223a31302e352c22756e646f436f756e74223a32332e357d5d"
     },
     {
+      "response": "FrameUpdate",
+      "id": "0x18",
+      "fields": {
+        "revision": 305419896,
+        "modified": false,
+        "width": 305419898,
+        "height": 305419899,
+        "pixels": "04294e7398bde207"
+      },
+      "payload": "78563412007a5634127b56341204294e7398bde207"
+    },
+    {
       "response": "CameraPosition",
       "id": "0x03",
       "fields": {
@@ -456,6 +499,65 @@
         "z": 1.75
       },
       "payload": "0000a03f0000c0bf0000e03f"
+    },
+    {
+      "response": "EditorCamera",
+      "id": "0x19",
+      "fields": {
+        "position": {
+          "x": 1.25,
+          "y": -1.5,
+          "z": 1.75
+        },
+        "rotation": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0,
+          "w": 2.25
+        },
+        "fovY": 1.75,
+        "orthographic": false,
+        "orthoSize": 2.25,
+        "nearPlane": -2.5,
+        "farPlane": 2.75,
+        "view": [
+          -0.5,
+          1.0,
+          1.5,
+          -2.0,
+          2.5,
+          3.0,
+          -3.5,
+          4.0,
+          4.5,
+          -5.0,
+          5.5,
+          6.0,
+          -6.5,
+          7.0,
+          7.5,
+          -8.0
+        ],
+        "projection": [
+          -0.5,
+          1.0,
+          1.5,
+          -2.0,
+          2.5,
+          3.0,
+          -3.5,
+          4.0,
+          4.5,
+          -5.0,
+          5.5,
+          6.0,
+          -6.5,
+          7.0,
+          7.5,
+          -8.0
+        ]
+      },
+      "payload": "0000a03f0000c0bf0000e03f0000c0bf0000e03f000000c0000010400000e03f0000001040000020c000003040000000bf0000803f0000c03f000000c00000204000004040000060c000008040000090400000a0c00000b0400000c0400000d0c00000e0400000f040000000c1000000bf0000803f0000c03f000000c00000204000004040000060c000008040000090400000a0c00000b0400000c0400000d0c00000e0400000f040000000c1"
     },
     {
       "response": "SceneData",
@@ -958,6 +1060,20 @@
         }
       },
       "payload": "3d0000007b22657869737473223a747275652c226d6f646966696564223a352e352c2270617468223a2270617468203120e29c93222c2273697a65223a342e357d"
+    }
+  ],
+  "responseVariants": [
+    {
+      "response": "FrameUpdate",
+      "id": "0x18",
+      "fields": {
+        "revision": 305419896,
+        "modified": false,
+        "width": 305419898,
+        "height": 305419899,
+        "pixels": ""
+      },
+      "payload": "78563412007a5634127b563412"
     }
   ]
 }

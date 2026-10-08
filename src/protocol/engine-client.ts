@@ -9,7 +9,9 @@ import {
   EntityDataResponse,
   EntityInfo,
   EventsResponse,
+  EditorCameraResponse,
   FrameDataResponse,
+  FrameUpdateResponse,
   HierarchyResponse,
   HistoryResponse,
   PROTOCOL_VERSION,
@@ -283,6 +285,28 @@ export class EngineClient {
 
   setViewportSize(width: number, height: number): Promise<void> {
     return this.send(Commands.SetViewportSize, { width, height })
+  }
+
+  /** Protocol 1.7.0: the editor view's frame only when it changed since sinceRevision (0: whenever) */
+  renderFrameIfChanged(sinceRevision: number): Promise<FrameUpdateResponse> {
+    return this.send(Commands.RenderFrameIfChanged, { sinceRevision })
+  }
+
+  /** Protocol 1.7.0: the viewpoint of renderFrameIfChanged's frames (the game's main camera is separate) */
+  setEditorCamera(
+    position: Vec3,
+    rotation: Quat,
+    fovY: number,
+    orthographic: boolean,
+    orthoSize: number,
+    nearPlane: number,
+    farPlane: number
+  ): Promise<void> {
+    return this.send(Commands.SetEditorCamera, { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane })
+  }
+
+  getEditorCamera(): Promise<EditorCameraResponse> {
+    return this.send(Commands.GetEditorCamera, {})
   }
 
   // ==================== Audio ====================

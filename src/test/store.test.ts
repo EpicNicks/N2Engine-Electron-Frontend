@@ -746,6 +746,19 @@ describe("EditorStore", () => {
     assert.equal(store.projectChangeCount.value, 1)
   })
 
+  test("frameChanged events are counted for the viewport and touch no other counter", async () => {
+    const { api, store, timers } = makeStore()
+    await store.openProject()
+    const projects = store.projectChangeCount.peek()
+    const assets = store.assetsChangeCount.peek()
+    const frames = store.frameChangeCount.peek()
+    api.events.events.push({ seq: 1, kind: "frameChanged", revision: 5 }, { seq: 2, kind: "frameChanged", revision: 6 })
+    await timers.fire()
+    assert.equal(store.frameChangeCount.peek(), frames + 2)
+    assert.equal(store.projectChangeCount.peek(), projects)
+    assert.equal(store.assetsChangeCount.peek(), assets)
+  })
+
   test("a new host log (events the editor may have missed) refetches the scene", async () => {
     const { api, store, timers } = makeStore()
     api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }

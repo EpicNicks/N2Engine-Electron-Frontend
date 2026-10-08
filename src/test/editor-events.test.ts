@@ -11,6 +11,12 @@ import {
 } from "../protocol/editor-events"
 
 describe("parseStateEvent", () => {
+  test("frameChanged carries the revision the next frame will have", () => {
+    assert.deepEqual(parseStateEvent({ seq: 3, kind: "frameChanged", revision: 12 }), { kind: "frameChanged", revision: 12 })
+    // A missing or mistyped revision takes the default, as the other events' fields do
+    assert.deepEqual(parseStateEvent({ seq: 4, kind: "frameChanged", revision: "x" } as unknown as EditorEvent), { kind: "frameChanged", revision: 0 })
+  })
+
   test("sceneChanged carries the revisions and the scene's path", () => {
     const event: EditorEvent = {
       seq: 1,

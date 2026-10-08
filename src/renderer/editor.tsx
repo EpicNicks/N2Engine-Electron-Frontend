@@ -1,6 +1,6 @@
 // The editor's layout once a project is open: the toolbar, then files | viewport over the console and scripts |
 // hierarchy, inspector and engine, with splitters between them.
-import { useEffect, useRef } from "preact/hooks"
+import { useEffect } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { effect } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
@@ -12,7 +12,7 @@ import { basename, toResPath } from "./paths"
 import { MenuItem, Splitter, modalOpen, showContextMenu, useApp } from "./ui"
 import type { FileInfo } from "../shared/api"
 import { followScene } from "./scene-follow"
-import { ViewportRenderer } from "./viewport-renderer"
+import { Viewport } from "./viewport-panel"
 
 // Panel sizes, in CSS pixels, kept for the session
 const leftWidth = signal(220)
@@ -169,38 +169,6 @@ function Toolbar() {
       <span class={`status ${store.connected.value ? "connected" : host.status}`} title={title}>
         {busy ?? summary}
       </span>
-    </div>
-  )
-}
-
-function Viewport() {
-  const { store } = useApp()
-  const container = useRef<HTMLDivElement>(null)
-  const canvas = useRef<HTMLCanvasElement>(null)
-
-  useEffect(() => {
-    // A failed frame stops the loop until the next connection; usually the connection just dropped, so it's a
-    // console line rather than an error banner
-    const renderer = new ViewportRenderer(canvas.current!, container.current!, window.engine, (e) =>
-      store.console.note("error", `Rendering stopped: ${e instanceof Error ? e.message : String(e)}`)
-    )
-    const stop = effect(() => {
-      if (store.connected.value) renderer.start()
-      else renderer.stop()
-    })
-    return () => {
-      stop()
-      renderer.dispose()
-    }
-  }, [])
-
-  return (
-    <div class="viewport-container" ref={container}>
-      <canvas class="viewport" ref={canvas} width={800} height={600} />
-      {!store.connected.value && <div class="viewport-overlay">{store.busy.value ?? store.hostSummary.value}</div>}
-      {store.connected.value && !store.scene.value && (
-        <div class="viewport-hint">No scene loaded: open one with Open scene, or make one with New scene</div>
-      )}
     </div>
   )
 }

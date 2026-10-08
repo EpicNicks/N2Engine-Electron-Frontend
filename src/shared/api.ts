@@ -6,11 +6,13 @@ import type {
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
+  EditorCameraResponse,
   ComponentSchema,
   EngineHealthResponse,
   EntityDataResponse,
   EventsResponse,
   FrameDataResponse,
+  FrameUpdateResponse,
   HierarchyResponse,
   HistoryResponse,
   ProjectInfoResponse,
@@ -25,6 +27,23 @@ import type { AudioSamples } from "../audio-stream"
 export interface EngineCommands {
   renderFrame(): Promise<FrameDataResponse>
   setViewportSize(width: number, height: number): Promise<void>
+  /**
+   * The editor view's frame (RGBA, top row first) only when it changed since sinceRevision (0: whenever; protocol
+   * 1.7.0): modified false carries the current revision and no pixels
+   */
+  renderFrameIfChanged(sinceRevision: number): Promise<FrameUpdateResponse>
+  /** The editor camera's pose (protocol 1.7.0); the server owns it, it isn't saved and isn't part of undo */
+  setEditorCamera(
+    position: Vec3,
+    rotation: Quat,
+    fovY: number,
+    orthographic: boolean,
+    orthoSize: number,
+    nearPlane: number,
+    farPlane: number
+  ): Promise<void>
+  /** The editor camera as stored, with the view and projection matrices frames are rendered with */
+  getEditorCamera(): Promise<EditorCameraResponse>
   /**
    * Drains the server's audio stream: only the page's AudioPlayer should call it, or the player loses audio.
    * Null when the server has no audio stream (not on a loopback device).
@@ -154,6 +173,9 @@ export type JsonObject = { [key: string]: unknown }
 export const EngineCommandArgs = {
   renderFrame: [],
   setViewportSize: ["int32", "int32"],
+  renderFrameIfChanged: ["uint32"],
+  setEditorCamera: ["vec3", "quat", "number", "bool", "number", "number", "number"],
+  getEditorCamera: [],
   getAudio: [],
   setCameraPosition: ["number", "number", "number"],
   getCameraPosition: [],

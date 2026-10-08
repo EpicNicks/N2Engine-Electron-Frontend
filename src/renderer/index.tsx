@@ -9,8 +9,10 @@ import { editActions } from "./edit-actions"
 import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
+import { emptySelection } from "./hierarchy-tree"
 import { InspectorState } from "./inspector-state"
 import { SceneState } from "./scene-state"
+import { ViewportController } from "./viewport-controller"
 import { EditorStore } from "./store"
 import {
   AppContext,
@@ -78,15 +80,32 @@ const store = new EditorStore({
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
 const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
 const scene = new SceneState(window.engine, window.project)
+const hierarchy = new HierarchyState(window.engine, {
+  confirm: confirmDialog,
+  // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
+  onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
+  groups,
+})
+// The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected. `picking` is the seam
+// for the engine's PickEntity and GetEntityBounds (E7b); null until the engine has them, so a click doesn't select.
+const viewport = new ViewportController({
+  engine: window.engine,
+  groups,
+  picking: null,
+  onError: (what, e) => store.reportError(what, e),
+  onNote: (message) => store.console.note("warn", message),
+  canEdit: () => store.canEdit.peek(),
+  selected: () => scene.selectedId.peek(),
+  select: (id) => {
+    if (id === null) hierarchy.setSelection(emptySelection)
+    else hierarchy.reveal(id)
+  },
+})
 const app: AppState = {
   store,
   scene,
-  // The hierarchy's primary selection is the inspector's object
-  hierarchy: new HierarchyState(window.engine, {
-    confirm: confirmDialog,
-    onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
-    groups,
-  }),
+  hierarchy,
+  viewport,
   inspector: new InspectorState(window.engine, window.project, {
     confirm: confirmDialog,
     // The file systems of Windows and macOS don't tell res:// paths apart by case
@@ -110,6 +129,7 @@ editActions.value = new EditController({
     await app.hierarchy.actionSettled
     await app.inspector.flush()
     await app.inspector.gestureEnded
+    await app.viewport.gestureEnded
   },
   refreshHistory: () => store.refreshHistory(),
   syncAfterEdit: () => store.syncAfterEdit(),
