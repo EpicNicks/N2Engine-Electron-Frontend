@@ -21,7 +21,7 @@ import {
   sceneChangeOf,
 } from "../protocol/editor-events"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
-import { basename } from "./paths"
+import { basename, normalizeScenePath, scenePathProblem } from "./paths"
 
 /** Questions the store asks the user (the page's dialogs; a fake in tests) */
 export interface Dialogs {
@@ -29,11 +29,25 @@ export interface Dialogs {
   prompt(title: string, value: string): Promise<string | null>
   /** Whether the user agreed */
   confirm(message: string, okLabel: string): Promise<boolean>
+  /** What to do with unsaved changes before something discards them: save them, drop them, or not go on */
+  unsaved(message: string, discardLabel: string): Promise<UnsavedChoice>
 }
+
+export type UnsavedChoice = "save" | "discard" | "cancel"
 
 /** The parts of the page's API the store uses */
 export interface StoreApi {
-  engine: Pick<EngineApi, "isConnected" | "serverInfo" | "onConnectionChange" | "pollEvents" | "getOpenScene">
+  engine: Pick<
+    EngineApi,
+    | "isConnected"
+    | "serverInfo"
+    | "onConnectionChange"
+    | "pollEvents"
+    | "getOpenScene"
+    | "openScene"
+    | "newScene"
+    | "saveSceneToFile"
+  >
   host: HostApi
   project: Pick<
     ProjectApi,
@@ -211,17 +225,21 @@ export class EditorStore {
   }
 
   async closeProject(): Promise<void> {
+    if (!(await this.confirmDiscard("close the project"))) return
     await this.run("Closing project...", () => this.api.project.close())
     this.projectPath.value = null
     await this.refreshRecent()
   }
 
-  restartHost(): Promise<void> {
-    return this.run("Restarting the editor host...", () => this.api.host.restart())
+  async restartHost(): Promise<void> {
+    // The host holds the scene's unsaved changes, and a new host starts from the file
+    if (!(await this.confirmDiscard("restart the host"))) return
+    await this.run("Restarting the editor host...", () => this.api.host.restart())
   }
 
-  stopHost(): Promise<void> {
-    return this.run("Stopping the editor host...", () => this.api.host.stop())
+  async stopHost(): Promise<void> {
+    if (!(await this.confirmDiscard("stop the host"))) return
+    await this.run("Stopping the editor host...", () => this.api.host.stop())
   }
 
   /** Picks the N2EditorHost executable */
@@ -331,6 +349,99 @@ export class EditorStore {
     } else {
       this.console.disconnect()
     }
+  }
+
+  // ==================== Scenes ====================
+
+  /** The newest scene revision any sceneChanged event named on this connection; null when unknown */
+  get newestSceneRevision(): number | null {
+    return this.lastSeenRevision
+  }
+
+  /**
+   * Before something discards the loaded scene's unsaved changes: asks whether to save them (and saves), drop them or
+   * not go on. Resolves whether to go on; always true when there are none.
+   */
+  async confirmDiscard(action: string): Promise<boolean> {
+    // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
+    if (this.api.engine.isConnected()) {
+      await this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e))
+      await this.refreshScene()
+    }
+    const scene = this.scene.value
+    if (!scene || !this.sceneDirty.value) return true
+    const choice = await this.api.dialogs.unsaved(
+      `${scene.name || "Untitled"} has unsaved changes.`,
+      `Discard and ${action}`
+    )
+    if (choice === "cancel") return false
+    if (choice === "discard") return true
+    return (await this.saveScene()) !== undefined
+  }
+
+  /** Opens a scene file (a res:// path), after asking about unsaved changes; undefined when not done */
+  async openScene(path: string): Promise<SceneInfoResponse | undefined> {
+    if (!(await this.confirmDiscard("open the scene"))) return undefined
+    return this.sceneAction("Opening scene...", () => this.api.engine.openScene(path))
+  }
+
+  /**
+   * Asks for the new scene's path (a res:// path; the default is offered) and makes an empty scene there, which becomes
+   * the loaded one, after asking about unsaved changes. undefined when not done.
+   */
+  async newScene(defaultPath = "res://scenes/Untitled.scene"): Promise<SceneInfoResponse | undefined> {
+    // The unsaved changes first: a "no" there shouldn't come after the user has typed a path
+    if (!(await this.confirmDiscard("create the scene"))) return undefined
+    const path = this.checkedScenePath(await this.api.dialogs.prompt("New scene (a res:// path)", defaultPath))
+    if (path === "") return undefined
+    return this.sceneAction("Creating scene...", () => this.api.engine.newScene(path, ""))
+  }
+
+  /** What was typed as a scene path, as the host takes it; "" when cancelled or empty, or when it can't be one (error says why) */
+  private checkedScenePath(input: string | null): string {
+    if (input === null) return ""
+    const problem = scenePathProblem(input)
+    if (problem) {
+      this.error.value = problem
+      return ""
+    }
+    return normalizeScenePath(input)
+  }
+
+  /** Writes the loaded scene to its file; a scene with no file asks for a path first (saveSceneAs) */
+  async saveScene(): Promise<SceneInfoResponse | undefined> {
+    const scene = this.scene.value
+    if (!scene) return undefined
+    if (scene.path === "") return this.saveSceneAs()
+    return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(""))
+  }
+
+  /** Asks for a path and writes the loaded scene there; it becomes the scene's file */
+  async saveSceneAs(): Promise<SceneInfoResponse | undefined> {
+    const scene = this.scene.value
+    if (!scene) return undefined
+    const name = (scene.name || "Untitled").replace(/[\\/:*?"<>|]/g, "_")
+    const input = await this.api.dialogs.prompt(
+      "Save scene as (a res:// path)",
+      scene.path || `res://scenes/${name}.scene`
+    )
+    const path = this.checkedScenePath(input)
+    if (path === "") return undefined
+    return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(path))
+  }
+
+  /** Runs a scene command, and takes the scene info it answers as the loaded scene's (the events say the same soon) */
+  private async sceneAction(
+    label: string,
+    action: () => Promise<SceneInfoResponse>
+  ): Promise<SceneInfoResponse | undefined> {
+    const result = await this.run(label, action)
+    if (result && this.api.engine.isConnected()) {
+      this.sceneFetches++ // a GetOpenScene still on its way is older than this
+      this.scene.value = result
+      void this.console.pollNow().catch(() => {}) // the panels hear of it now, not in 100 ms
+    }
+    return result
   }
 
   /** Fetches the loaded scene (GetOpenScene); none when the host has no scene or doesn't have the command */

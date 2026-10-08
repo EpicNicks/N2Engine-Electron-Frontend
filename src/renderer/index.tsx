@@ -5,9 +5,21 @@ import { render } from "preact"
 import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
 import { Editor } from "./editor"
+import { HierarchyState } from "./hierarchy-state"
 import { SceneState } from "./scene-state"
 import { EditorStore } from "./store"
-import { AppContext, AppState, ConfirmDialog, ContextMenu, PromptDialog, confirmDialog, prompt, useApp } from "./ui"
+import {
+  AppContext,
+  AppState,
+  ConfirmDialog,
+  ContextMenu,
+  PromptDialog,
+  UnsavedDialog,
+  confirmDialog,
+  prompt,
+  unsavedDialog,
+  useApp,
+} from "./ui"
 import { Welcome } from "./welcome"
 
 function ErrorBanner() {
@@ -43,6 +55,7 @@ function App({ app }: { app: AppState }) {
       <BusyOverlay />
       <PromptDialog />
       <ConfirmDialog />
+      <UnsavedDialog />
       <ContextMenu />
     </AppContext.Provider>
   )
@@ -52,13 +65,27 @@ const store = new EditorStore({
   engine: window.engine,
   host: window.host,
   project: window.project,
-  dialogs: { prompt, confirm: confirmDialog },
+  dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog },
 })
+const scene = new SceneState(window.engine, window.project)
 const app: AppState = {
   store,
-  scene: new SceneState(window.engine, window.project),
+  scene,
+  // The hierarchy's primary selection is the inspector's object
+  hierarchy: new HierarchyState(window.engine, {
+    confirm: confirmDialog,
+    onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
+  }),
   audio: new AudioController(window.engine),
 }
+
+// Closing or reloading the window with unsaved scene changes asks first (the main process shows the question)
+window.addEventListener("beforeunload", (e) => {
+  if (store.view.value === "editor" && store.sceneDirty.value) {
+    e.preventDefault()
+    e.returnValue = ""
+  }
+})
 
 // The engine's audio plays while connected
 effect(() => {

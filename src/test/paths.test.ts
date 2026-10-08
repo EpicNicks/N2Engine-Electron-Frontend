@@ -1,6 +1,6 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import { basename, extname, join } from "../renderer/paths"
+import { basename, extname, join, normalizeScenePath, scenePathProblem, toResPath } from "../renderer/paths"
 
 describe("renderer paths", () => {
   test("basename", () => {
@@ -21,5 +21,44 @@ describe("renderer paths", () => {
     assert.equal(join("C:\\Projects\\Game", "scenes", "a.scene"), "C:\\Projects\\Game\\scenes\\a.scene")
     assert.equal(join("/home/me/game/", "scripts"), "/home/me/game/scripts")
     assert.equal(join("/home/me", "/x/"), "/home/me/x")
+  })
+})
+
+describe("scene paths", () => {
+  test("toResPath: files and folders of the assets folder, on both platforms' paths", () => {
+    assert.equal(toResPath("C:\\Games\\P", "C:\\Games\\P\\assets\\scenes\\Main.scene"), "res://scenes/Main.scene")
+    assert.equal(toResPath("C:\\Games\\P\\", "c:\\games\\p\\ASSETS\\scenes"), "res://scenes")
+    assert.equal(toResPath("/home/me/p", "/home/me/p/assets/a.scene"), "res://a.scene")
+    assert.equal(toResPath("/home/me/p", "/home/me/p/assets"), "res://")
+    assert.equal(toResPath("/home/me/p", "/home/me/p/Assets/a.scene"), null, "case matters off Windows")
+    assert.equal(toResPath("/home/me/p", "/home/me/p/assets2/a.scene"), null)
+    assert.equal(toResPath("/home/me/p", "/home/me/p/scripts/a.lua"), null)
+    assert.equal(toResPath("/home/me/p", "/elsewhere/assets/a.scene"), null)
+  })
+
+  test("normalizeScenePath adds res:// and .scene, and keeps what is there", () => {
+    assert.equal(normalizeScenePath("res://scenes/Main.scene"), "res://scenes/Main.scene")
+    assert.equal(normalizeScenePath("  levels/One "), "res://levels/One.scene")
+    assert.equal(normalizeScenePath("/levels/One.SCENE"), "res://levels/One.SCENE")
+    assert.equal(normalizeScenePath("levels\\One"), "res://levels/One.scene")
+    assert.equal(normalizeScenePath("res://a.scene.scene"), "res://a.scene.scene")
+    assert.equal(normalizeScenePath("user://x"), "user://x.scene", "the host refuses it")
+    assert.equal(normalizeScenePath("   "), "")
+  })
+})
+
+describe("scenePathProblem", () => {
+  test("a file path, a bare res://, a folder and another scheme are problems; the rest isn't", () => {
+    assert.match(scenePathProblem("C:\\a\\b.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("c:/a/b.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("\\\\server\\share\\a.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("res://") ?? "", /file name/)
+    assert.match(scenePathProblem("res://scenes/") ?? "", /file name/)
+    assert.match(scenePathProblem("res://.scene") ?? "", /file name/)
+    assert.match(scenePathProblem("user://x.scene") ?? "", /starts with res:\/\//)
+    assert.equal(scenePathProblem("res://scenes/a.scene"), null)
+    assert.equal(scenePathProblem("scenes/a"), null)
+    assert.equal(scenePathProblem("a"), null)
+    assert.equal(scenePathProblem("  "), null, "empty is cancel")
   })
 })
