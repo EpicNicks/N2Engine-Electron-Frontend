@@ -11,7 +11,8 @@ import type {
   ProjectApi,
   ServerInfo,
 } from "../shared/api"
-import type { EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
+import type { EditResultResponse, EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
+import { EmptyHistoryStatus, HistoryStatus, historyStatusOf } from "../protocol/edit-history"
 import {
   AssetsChangedEvent,
   SceneChange,
@@ -20,6 +21,7 @@ import {
   parseStateEvent,
   sceneChangeOf,
 } from "../protocol/editor-events"
+import { AutosaveChoice, describeAutosave, sceneKey, shouldOfferAutosave } from "./autosave"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename, normalizeScenePath, scenePathProblem } from "./paths"
 
@@ -31,6 +33,8 @@ export interface Dialogs {
   confirm(message: string, okLabel: string): Promise<boolean>
   /** What to do with unsaved changes before something discards them: save them, drop them, or not go on */
   unsaved(message: string, discardLabel: string): Promise<UnsavedChoice>
+  /** What to do with the autosave a crash left (the message says which scene, when and how large): see autosave.ts */
+  autosave(message: string): Promise<AutosaveChoice>
 }
 
 export type UnsavedChoice = "save" | "discard" | "cancel"
@@ -47,6 +51,10 @@ export interface StoreApi {
     | "openScene"
     | "newScene"
     | "saveSceneToFile"
+    | "getHistory"
+    | "getAutosave"
+    | "restoreAutosave"
+    | "discardAutosave"
   >
   host: HostApi
   project: Pick<
@@ -119,6 +127,11 @@ export class EditorStore {
     if (!scene) return ""
     return (scene.name || "Untitled") + (this.sceneDirty.value ? " *" : "")
   })
+  /**
+   * What the Edit menu shows: whether Undo and Redo can run and their steps' labels, kept current by historyChanged
+   * events (and GetHistory on connecting, after missed events and around an undo). Nothing to undo when not connected.
+   */
+  readonly history = signal<HistoryStatus>(EmptyHistoryStatus)
   /** The last assetsChanged event, and how many arrived (panels refetch their listings when it changes) */
   readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
   readonly assetsChangeCount = signal(0)
@@ -143,6 +156,14 @@ export class EditorStore {
   private sceneMissed = false
   /** The newest scene revision any sceneChanged event named on this connection; null when none (or unreliable) */
   private lastSeenRevision: number | null = null
+  /** Counts history events and reads, so a slow GetHistory can't replace what a newer event said */
+  private historyReads = 0
+  /** Counts connections, so an answer or a question for an earlier one is dropped */
+  private connections = 0
+  /** The scene the user was last asked about an autosave for on this connection (sceneKey); null when none */
+  private autosaveAsked: string | null = null
+  /** The autosave question is on screen: no second one */
+  private autosaveAsking = false
 
   constructor(
     private readonly api: StoreApi,
@@ -167,6 +188,7 @@ export class EditorStore {
           this.recordSceneChange({ full: true, entityIds: [] })
         })
         void this.refreshScene()
+        void this.refreshHistory() // a historyChanged may have been among them
         consoleOptions.onMissedEvents?.()
       },
     })
@@ -333,6 +355,10 @@ export class EditorStore {
 
   private onConnection(connected: boolean): void {
     batch(() => {
+      this.connections++
+      this.autosaveAsked = null
+      this.historyReads++
+      this.history.value = EmptyHistoryStatus // GetHistory below says what the host has (it may be a running host)
       this.connected.value = connected
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
       if (!connected) {
@@ -346,6 +372,7 @@ export class EditorStore {
     if (connected) {
       this.console.connect(this.host.value.launch)
       void this.refreshScene()
+      void this.refreshHistory()
     } else {
       this.console.disconnect()
     }
@@ -382,7 +409,13 @@ export class EditorStore {
   /** Opens a scene file (a res:// path), after asking about unsaved changes; undefined when not done */
   async openScene(path: string): Promise<SceneInfoResponse | undefined> {
     if (!(await this.confirmDiscard("open the scene"))) return undefined
-    return this.sceneAction("Opening scene...", () => this.api.engine.openScene(path))
+    const opened = await this.sceneAction("Opening scene...", () => this.api.engine.openScene(path))
+    // Opening a scene again is reverting it, which removed its own autosave: one found now is a crash's
+    if (opened) {
+      this.autosaveAsked = null
+      void this.checkAutosave(opened)
+    }
+    return opened
   }
 
   /**
@@ -460,7 +493,97 @@ export class EditorStore {
       }
     }
     // Not for a connection that dropped while waiting, or when a newer fetch started
-    if (fetch === this.sceneFetches && this.api.engine.isConnected()) this.scene.value = scene
+    if (fetch === this.sceneFetches && this.api.engine.isConnected()) {
+      this.scene.value = scene
+      // A scene this connection hasn't asked about (the host opened its startup scene, or another client changed it)
+      if (scene && this.autosaveAsked !== sceneKey(scene)) void this.checkAutosave(scene)
+    }
+  }
+
+  // ==================== Undo history ====================
+
+  /** Reads the host's history (GetHistory) into history; a host without it (before protocol 1.6) has none */
+  async refreshHistory(): Promise<void> {
+    const read = ++this.historyReads
+    let status = EmptyHistoryStatus
+    if (this.api.engine.isConnected()) {
+      try {
+        status = historyStatusOf(await this.api.engine.getHistory())
+      } catch (e) {
+        console.debug("GetHistory failed:", e)
+      }
+    }
+    if (read === this.historyReads) this.history.value = status
+  }
+
+  /**
+   * After an undo, a redo, a restore or anything else the panels should hear of now rather than at the next poll:
+   * polls the host's events (the scene's change reaches the hierarchy and the inspector) and reads the history
+   */
+  async syncAfterEdit(): Promise<void> {
+    await Promise.all([
+      this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e)),
+      this.refreshHistory(),
+    ])
+  }
+
+  /**
+   * Takes an undo's or redo's answer as the scene's revisions at once (the events say the same soon): when it brings
+   * the scene back to the state it was saved at, savedRevision == revision and the unsaved marker goes
+   */
+  applyEditResult(result: EditResultResponse): void {
+    const scene = this.scene.value
+    if (!scene || result.revision < scene.revision) return
+    this.scene.value = { ...scene, revision: result.revision, savedRevision: result.savedRevision }
+  }
+
+  // ==================== Autosave recovery ====================
+
+  /**
+   * Asks about the scene's autosave when the host has one that a crash left (GetAutosave; a host before protocol 1.6
+   * has none to ask about): restore it (RestoreAutosave, one undoable step), discard it (DiscardAutosave), or decide
+   * later (the host keeps it and writes no new one until the user decides or saves). Asked once per scene per
+   * connection, and never when the scene has unsaved changes (then the autosave is this host's own copy of them).
+   */
+  async checkAutosave(scene: SceneInfoResponse): Promise<void> {
+    this.autosaveAsked = sceneKey(scene)
+    if (this.autosaveAsking) return
+    const connection = this.connections
+    let info
+    try {
+      info = await this.api.engine.getAutosave()
+    } catch (e) {
+      console.debug("GetAutosave failed:", e)
+      return
+    }
+    const current = this.scene.value
+    if (connection !== this.connections || !current || sceneKey(current) !== sceneKey(scene)) return
+    if (!shouldOfferAutosave(current, info)) return
+    this.autosaveAsking = true
+    let choice: AutosaveChoice
+    try {
+      choice = await this.api.dialogs.autosave(describeAutosave(current.name, info))
+    } finally {
+      this.autosaveAsking = false
+    }
+    if (connection !== this.connections) return // another host: its autosave is another question
+    if (choice === "restore") await this.restoreAutosave()
+    else if (choice === "discard") await this.run(null, () => this.api.engine.discardAutosave())
+  }
+
+  /** Replaces the loaded scene's content with its autosave (one undoable step), and has everything follow */
+  async restoreAutosave(): Promise<SceneInfoResponse | undefined> {
+    const result = await this.run("Restoring the autosave...", () => this.api.engine.restoreAutosave())
+    if (result && this.api.engine.isConnected()) {
+      batch(() => {
+        this.sceneFetches++ // a GetOpenScene still on its way is older than this
+        this.scene.value = result
+        // The content was replaced: nothing held about the objects is valid
+        this.recordSceneChange({ full: true, entityIds: [] })
+      })
+      await this.syncAfterEdit()
+    }
+    return result
   }
 
   /** Applies the host's state events; log events are the console's */
@@ -491,6 +614,16 @@ export class EditorStore {
         } else if (parsed.kind === "assetsChanged") {
           this.lastAssetsChange.value = parsed
           this.assetsChangeCount.value++
+        } else if (parsed.kind === "historyChanged") {
+          this.historyReads++ // an older GetHistory still on its way is out of date
+          this.history.value = {
+            canUndo: parsed.canUndo,
+            canRedo: parsed.canRedo,
+            label: parsed.label,
+            redoLabel: parsed.redoLabel,
+            undoCount: parsed.undoCount,
+            redoCount: parsed.redoCount,
+          }
         } else {
           this.projectChangeCount.value++
         }

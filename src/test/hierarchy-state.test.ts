@@ -2,6 +2,7 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { HierarchyNode, HierarchyResponse } from "../protocol/protocol.generated"
 import type { JsonObject } from "../shared/api"
+import { EditGroups } from "../renderer/edit-groups"
 import { HierarchyState, CreatePresets } from "../renderer/hierarchy-state"
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
@@ -656,5 +657,77 @@ describe("HierarchyState", () => {
       await assert.rejects(state.move([id("A")], { parentId: id("B"), index: -1 }), /No such parent/)
       assert.equal(scene.text(), "A,B")
     })
+  })
+})
+
+describe("HierarchyState and edit groups", () => {
+  /** A state whose host records the group commands among the scene's: the order is what is tested */
+  function grouped(spec: string, answers: boolean[] = [true]) {
+    const scene = new FakeScene(spec)
+    const groups = new EditGroups({
+      isConnected: () => true,
+      beginEditGroup: async (label: string) => void scene.calls.push(`begin ${label}`),
+      endEditGroup: async () => void scene.calls.push("end"),
+    })
+    const state = new HierarchyState(scene.engine, {
+      confirm: async () => answers.shift() ?? false,
+      groups,
+    })
+    return { scene, state, groups }
+  }
+  const commands = (scene: FakeScene) => scene.calls.filter((c) => c !== "getHierarchy")
+
+  test("deleting several objects is one group, ended after the last", async () => {
+    const { scene, state, groups } = grouped("A,B,C")
+    await state.refresh()
+    state.click(id("A"))
+    state.click(id("C"), { toggle: true })
+    await state.deleteSelected()
+    assert.deepEqual(commands(scene), ["begin Delete 2 objects", `destroyEntity ${id("A")}`, `destroyEntity ${id("C")}`, "end"])
+    assert.equal(groups.depth, 0)
+  })
+
+  test("moving several objects, and duplicating several, are one group each", async () => {
+    const { scene, state } = grouped("A,B,C,D")
+    await state.refresh()
+    await state.move([id("A"), id("B")], { parentId: id("D"), index: -1 })
+    const moves = commands(scene)
+    assert.equal(moves[0], "begin Move 2 objects")
+    assert.equal(moves[moves.length - 1], "end")
+    assert.equal(moves.filter((c) => c.startsWith("setEntityParent")).length, 2)
+
+    scene.calls.length = 0
+    state.click(id("C"))
+    state.click(id("D"), { toggle: true })
+    await state.duplicateSelected()
+    assert.deepEqual(commands(scene), [
+      "begin Duplicate 2 objects",
+      `duplicateEntity ${id("C")}`,
+      `duplicateEntity ${id("D")}`,
+      "end",
+    ])
+  })
+
+  test("one object is one step already: no group", async () => {
+    const { scene, state } = grouped("A,B")
+    await state.refresh()
+    state.click(id("A"))
+    await state.duplicateSelected()
+    await state.deleteSelected()
+    await state.move([id("B")], { parentId: "", index: 0 })
+    assert.ok(!scene.calls.some((c) => c.startsWith("begin") || c === "end"))
+  })
+
+  test("the group is ended when a command fails, and the failure is thrown", async () => {
+    const { scene, state, groups } = grouped("A,B,C")
+    await state.refresh()
+    state.click(id("A"))
+    state.click(id("B"), { toggle: true })
+    scene.failNext = "gone"
+    await assert.rejects(state.deleteSelected(), /gone/)
+    const sent = commands(scene)
+    assert.equal(sent[0], "begin Delete 2 objects")
+    assert.equal(sent[sent.length - 1], "end")
+    assert.equal(groups.depth, 0)
   })
 })

@@ -9,6 +9,7 @@ import type { AudioController } from "./audio-controller"
 import type { HierarchyState } from "./hierarchy-state"
 import type { InspectorState } from "./inspector-state"
 import type { UnsavedChoice } from "./store"
+import type { AutosaveChoice } from "./autosave"
 
 /** What every component can reach: the editor's store and the page's other state */
 export interface AppState {
@@ -250,9 +251,14 @@ export function ContextMenu() {
   )
 }
 
-/** Whether a dialog (prompt, confirm, unsaved changes) is open: keys meant for the editor mustn't act then */
+/** Whether a dialog (prompt, confirm, unsaved changes, autosave) is open: keys meant for the editor mustn't act then */
 export function modalOpen(): boolean {
-  return promptRequest.value !== null || confirmRequest.value !== null || unsavedRequest.value !== null
+  return (
+    promptRequest.value !== null ||
+    confirmRequest.value !== null ||
+    unsavedRequest.value !== null ||
+    autosaveRequest.value !== null
+  )
 }
 
 // ==================== Unsaved changes ====================
@@ -301,6 +307,58 @@ export function UnsavedDialog() {
           </button>
           <button ref={save} onClick={() => close("save")}>
             Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==================== Autosave recovery ====================
+
+interface AutosaveRequest {
+  message: string
+  resolve: (choice: AutosaveChoice) => void
+}
+
+const autosaveRequest = signal<AutosaveRequest | null>(null)
+
+/** Asks what to do with the autosave a crash left: restore it, discard it, or decide later (also what Escape does) */
+export function autosaveDialog(message: string): Promise<AutosaveChoice> {
+  autosaveRequest.value?.resolve("later")
+  return new Promise((resolve) => {
+    autosaveRequest.value = { message, resolve }
+  })
+}
+
+export function AutosaveDialog() {
+  const request = autosaveRequest.value
+  const restore = useRef<HTMLButtonElement>(null)
+  useEffect(() => restore.current?.focus(), [request])
+  if (!request) return null
+
+  const close = (choice: AutosaveChoice) => {
+    autosaveRequest.value = null
+    request.resolve(choice)
+  }
+  return (
+    <div class="modal-overlay">
+      <div
+        class="modal"
+        role="alertdialog"
+        aria-label="Recover the autosave"
+        onKeyDown={(e) => e.key === "Escape" && close("later")}
+      >
+        <p class="modal-message">{request.message}</p>
+        <div class="modal-buttons">
+          <button class="secondary" onClick={() => close("later")}>
+            Decide later
+          </button>
+          <button class="danger" onClick={() => close("discard")}>
+            Discard
+          </button>
+          <button ref={restore} onClick={() => close("restore")}>
+            Restore
           </button>
         </div>
       </div>

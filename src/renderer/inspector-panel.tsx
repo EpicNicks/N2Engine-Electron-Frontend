@@ -15,6 +15,7 @@ import {
   groupComponentTypes,
   visibleFields,
 } from "./inspector-fields"
+import { endWhenReleased } from "./edit-groups"
 import { Empty, Panel, useApp } from "./ui"
 
 // ==================== The object's own properties and transform ====================
@@ -170,11 +171,18 @@ function FieldRow({ view, field }: { view: ComponentView; field: FieldSchema }) 
       store.reportError(`Failed to edit ${field.displayName}`, e)
     }
   }
+  // A drag of a slider is one undo step: its group opens when the pointer goes down and ends when it is released
+  const onPointerDown = (e: PointerEvent) => {
+    const target = e.target as HTMLInputElement | null
+    if (target?.tagName !== "INPUT" || target.type !== "range") return
+    inspector.beginGesture(`Edit ${field.displayName}`)
+    endWhenReleased(document, window, () => void inspector.endGesture())
+  }
   const tip = [field.tooltip, field.readOnly ? "Read only" : null].filter(Boolean).join(". ")
   return (
     <div class="field-row">
       <label title={tip || undefined}>{field.displayName}</label>
-      <div class="field-editor">
+      <div class="field-editor" onPointerDownCapture={onPointerDown}>
         <FieldEditor field={field} value={value} disabled={disabled} commit={commit} invalid={setError} />
         {error && <div class="field-error">{error}</div>}
       </div>

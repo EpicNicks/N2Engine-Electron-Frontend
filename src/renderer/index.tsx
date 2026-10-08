@@ -4,6 +4,9 @@
 import { render } from "preact"
 import { effect } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
+import { EditController } from "./edit-controller"
+import { editActions } from "./edit-actions"
+import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
 import { InspectorState } from "./inspector-state"
@@ -12,10 +15,12 @@ import { EditorStore } from "./store"
 import {
   AppContext,
   AppState,
+  AutosaveDialog,
   ConfirmDialog,
   ContextMenu,
   PromptDialog,
   UnsavedDialog,
+  autosaveDialog,
   confirmDialog,
   prompt,
   unsavedDialog,
@@ -57,6 +62,7 @@ function App({ app }: { app: AppState }) {
       <PromptDialog />
       <ConfirmDialog />
       <UnsavedDialog />
+      <AutosaveDialog />
       <ContextMenu />
     </AppContext.Provider>
   )
@@ -66,8 +72,10 @@ const store = new EditorStore({
   engine: window.engine,
   host: window.host,
   project: window.project,
-  dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog },
+  dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog, autosave: autosaveDialog },
 })
+// Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
+const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
 const scene = new SceneState(window.engine, window.project)
 const app: AppState = {
   store,
@@ -76,6 +84,7 @@ const app: AppState = {
   hierarchy: new HierarchyState(window.engine, {
     confirm: confirmDialog,
     onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
+    groups,
   }),
   inspector: new InspectorState(window.engine, window.project, {
     confirm: confirmDialog,
@@ -83,9 +92,30 @@ const app: AppState = {
     caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
     // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
     onError: (what, e) => store.reportError(what, e),
+    groups,
   }),
   audio: new AudioController(window.engine),
 }
+
+// Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y): the host's history, after the editor's own pending edits
+editActions.value = new EditController({
+  engine: window.engine,
+  groups,
+  history: store.history,
+  enabled: () => store.connected.value && store.scene.value !== null && !app.inspector.readOnly.value,
+  settle: async () => {
+    await app.hierarchy.renameSettled
+    await app.inspector.flush()
+  },
+  refreshHistory: () => store.refreshHistory(),
+  syncAfterEdit: () => store.syncAfterEdit(),
+  applyResult: (result) => store.applyEditResult(result),
+})
+// The host ends the groups of a connection that closes (and at the next Hello): none is open on another connection
+effect(() => {
+  store.connected.value // what this runs on
+  groups.reset()
+})
 
 // Closing or reloading the window with unsaved scene changes asks first (the main process shows the question)
 window.addEventListener("beforeunload", (e) => {

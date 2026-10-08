@@ -1,10 +1,10 @@
 // The Edit menu and its keyboard shortcuts, which the editor's undo and redo plug into.
 //
-// EXTENSION POINT FOR UNDO AND REDO (engine #78, phase E6): nothing registers actions yet, so there is no Edit menu
-// button and the shortcuts do nothing. When the host has undo and redo, the page builds an EditActions from them and
-// sets `editActions.value = actions`: the toolbar then shows an Edit button with these items (editMenuItems), and
-// Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y call them (editor.tsx, via editShortcutOf) except while a text field has the focus
-// (isTextEntry), where the field's own undo is meant. Nothing else in the inspector or the hierarchy needs to change.
+// The page registers the host's undo and redo (engine #78, phase E6; EditController in edit-controller.ts, set up in
+// index.tsx) by setting `editActions.value = actions`: the toolbar then shows an Edit button with these items
+// (editMenuItems), and Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y call them (editor.tsx, via editShortcutOf) except while a text
+// field has the focus (isTextEntry), where the field's own undo is meant. Nothing registered: no button, and the keys
+// do nothing.
 import { signal } from "@preact/signals-core"
 
 /** What undo and redo do, and whether they can right now */
@@ -13,9 +13,13 @@ export interface EditActions {
   redo(): Promise<void> | void
   canUndo(): boolean
   canRedo(): boolean
+  /** What Undo would undo ("Create Cube"), for the menu; "" or absent for none */
+  undoLabel?(): string
+  /** What Redo would redo; "" or absent for none */
+  redoLabel?(): string
 }
 
-/** The registered actions; null until undo and redo exist (E6) */
+/** The registered actions; null until the page registers them */
 export const editActions = signal<EditActions | null>(null)
 
 export type EditShortcut = "undo" | "redo"
@@ -82,12 +86,21 @@ export function editMenuItems(
   onError: (what: string, error: unknown) => void
 ): EditMenuItem[] {
   if (actions === null) return []
+  const canUndo = actions.canUndo()
+  const canRedo = actions.canRedo()
+  // The step's label only while there is a step: a stale one would name what can't be done
+  const undoLabel = canUndo ? (actions.undoLabel?.() ?? "") : ""
+  const redoLabel = canRedo ? (actions.redoLabel?.() ?? "") : ""
   return [
-    { label: "Undo (Ctrl+Z)", action: () => void runEditAction(actions, "undo", onError), disabled: !actions.canUndo() },
     {
-      label: "Redo (Ctrl+Shift+Z)",
+      label: `Undo${undoLabel ? ` ${undoLabel}` : ""} (Ctrl+Z)`,
+      action: () => void runEditAction(actions, "undo", onError),
+      disabled: !canUndo,
+    },
+    {
+      label: `Redo${redoLabel ? ` ${redoLabel}` : ""} (Ctrl+Shift+Z)`,
       action: () => void runEditAction(actions, "redo", onError),
-      disabled: !actions.canRedo(),
+      disabled: !canRedo,
     },
   ]
 }
