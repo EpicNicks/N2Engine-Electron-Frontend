@@ -4,7 +4,7 @@
 import { useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import type { Vec3 } from "../protocol/protocol.generated"
-import { FieldEditor, NumberInput, PickerButton, PickerEntry } from "./inspector-editors"
+import { FieldEditor, NumberInput, PickerButton, PickerEntry, TextInput } from "./inspector-editors"
 import { MaxLayer } from "../protocol/entity-args"
 import { ComponentView, EntityKey } from "./inspector-state"
 import {
@@ -74,15 +74,11 @@ function EntitySection() {
       <h4>Entity</h4>
       <div class="inspector-row">
         <label>Name</label>
-        <input
-          type="text"
-          aria-label="Name"
+        <TextInput
+          label="Name"
           value={header.name}
           disabled={disabled}
-          onChange={(e) => {
-            const name = (e.currentTarget as HTMLInputElement).value
-            if (name !== header.name) void set({ name })
-          }}
+          onCommit={(name) => name !== header.name && void set({ name })}
         />
       </div>
       <div class="inspector-row">
@@ -98,15 +94,11 @@ function EntitySection() {
       </div>
       <div class="inspector-row">
         <label>Tag</label>
-        <input
-          type="text"
-          aria-label="Tag"
+        <TextInput
+          label="Tag"
           value={header.tag}
           disabled={disabled}
-          onChange={(e) => {
-            const tag = (e.currentTarget as HTMLInputElement).value
-            if (tag !== header.tag) void set({ tag })
-          }}
+          onCommit={(tag) => tag !== header.tag && void set({ tag })}
         />
       </div>
       <div class="inspector-row">
@@ -190,6 +182,24 @@ function FieldRow({ view, field }: { view: ComponentView; field: FieldSchema }) 
   )
 }
 
+/** Why a component has no fields to edit: the types are still being read, couldn't be, or its type isn't one */
+function SchemaMissing({ type }: { type: string }) {
+  const { inspector } = useApp()
+  if (inspector.types.value === null) {
+    const problem = inspector.typesProblem.value
+    if (problem === null) return <Empty>Reading the component types...</Empty>
+    return (
+      <Empty error>
+        The component types couldn't be read: {problem}{" "}
+        <button class="link" onClick={() => void inspector.loadTypes()}>
+          Try again
+        </button>
+      </Empty>
+    )
+  }
+  return <Empty error>{type} isn't a registered component type, so it can't be edited</Empty>
+}
+
 function ComponentCard({ view }: { view: ComponentView }) {
   const { store, inspector } = useApp()
   const schema = inspector.schemaFor(view)
@@ -247,7 +257,7 @@ function ComponentCard({ view }: { view: ComponentView }) {
       {!collapsed && (
         <div class="component-body">
           {schema === null ? (
-            <Empty error>{view.type} isn't a registered component type, so it can't be edited</Empty>
+            <SchemaMissing type={view.type} />
           ) : (
             visibleFields(schema).map((field) => (
               <FieldRow view={view} field={field} key={(field.container ?? "") + "/" + field.name} />
@@ -275,12 +285,18 @@ function AddComponent() {
       <PickerButton
         class="add-component-button"
         label="Add Component"
-        disabled={types === null || inspector.readOnly.value}
-        title={inspector.typesProblem.value ?? (inspector.readOnly.value ? inspector.readOnlyReason.value ?? "" : "")}
+        disabled={inspector.readOnly.value}
+        title={inspector.readOnly.value ? (inspector.readOnlyReason.value ?? "") : undefined}
+        // Types that couldn't be read are asked for again
+        onOpen={() => void inspector.loadTypes()}
         entries={null}
         search={search}
         placeholder="Search components"
-        emptyText="No component types match"
+        emptyText={
+          types === null
+            ? (inspector.typesProblem.value ?? "Reading the component types...")
+            : "No component types match"
+        }
         onPick={(typeName) =>
           inspector.addComponent(typeName).catch((e) => store.reportError(`Failed to add ${typeName}`, e))
         }

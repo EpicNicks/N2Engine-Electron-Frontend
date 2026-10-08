@@ -2,15 +2,16 @@
 // hierarchy, inspector and engine, with splitters between them.
 import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
-import { effect, untracked } from "@preact/signals-core"
+import { effect } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
-import { editActions, editMenuItems, editShortcutOf } from "./edit-actions"
+import { editActions, editMenuItems, editShortcutOf, isTextEntry, runEditAction } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
 import { InspectorPanel } from "./inspector-panel"
 import { EnginePanel, FilesPanel, ScriptEditor } from "./panels"
 import { basename, toResPath } from "./paths"
 import { MenuItem, Splitter, modalOpen, showContextMenu, useApp } from "./ui"
 import type { FileInfo } from "../shared/api"
+import { followScene } from "./scene-follow"
 import { ViewportRenderer } from "./viewport-renderer"
 
 // Panel sizes, in CSS pixels, kept for the session
@@ -85,7 +86,9 @@ function SceneButtons() {
 
 /** The Edit menu: Undo and Redo, once something registers them (edit-actions.ts); no button before */
 function EditButton() {
-  const items = editMenuItems(editActions.value)
+  const { store } = useApp()
+  const onError = (what: string, e: unknown) => store.reportError(what, e)
+  const items = editMenuItems(editActions.value, onError)
   if (items.length === 0) return null
   return (
     <button
@@ -94,7 +97,7 @@ function EditButton() {
       onClick={(e) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
         e.stopPropagation()
-        showContextMenu(rect.left, rect.bottom, editMenuItems(editActions.value))
+        showContextMenu(rect.left, rect.bottom, editMenuItems(editActions.value, onError))
       }}
     >
       Edit
@@ -248,72 +251,8 @@ function BottomPanel() {
 export function Editor() {
   const { store, scene, hierarchy, inspector } = useApp()
 
-  // The panels follow the connection: a new connection is a new host, with nothing loaded yet
-  useEffect(
-    () =>
-      effect(() => {
-        if (!store.connected.value) {
-          scene.reset()
-          hierarchy.reset()
-          untracked(() => inspector.reset())
-        } else {
-          // The component types and the project's assets don't change while the host runs (the assets on a rescan)
-          untracked(() => {
-            void inspector.loadTypes()
-            void inspector.loadAssets()
-          })
-        }
-      }),
-    []
-  )
-  // The inspector shows the selected object (the hierarchy's primary selection)
-  useEffect(
-    () =>
-      effect(() => {
-        const id = scene.selectedId.value
-        if (!store.connected.peek()) return
-        // select reads and writes the inspector's own signals: this effect runs on the selection alone
-        untracked(() => inspector.select(id)).catch((e) => store.reportError("Failed to read the object", e))
-      }),
-    []
-  )
-  // Assets were added, changed or removed: the asset names, and a script's fields
-  useEffect(
-    () =>
-      effect(() => {
-        store.assetsChangeCount.value // what this runs on
-        if (!store.connected.peek()) return
-        untracked(() => {
-          void inspector.loadAssets()
-          void inspector.refreshLuaFields()
-        })
-      }),
-    []
-  )
-  // The hierarchy follows the scene's changes (a connection is one too, so it is read on connecting)
-  useEffect(
-    () =>
-      effect(() => {
-        store.sceneChangeCount.value // what this runs on
-        const change = store.lastSceneChange.peek()
-        if (!change || !store.connected.peek()) return
-        // The inspector's components may have changed (this includes the echoes of its own edits)
-        untracked(() => inspector.applyChange(change)).catch((e) => store.reportError("Failed to read the object", e))
-        // untracked: applyChange reads the hierarchy's response, which it then replaces: without this the effect would
-        // run again on every answer, and read the hierarchy again for ever
-        untracked(() => hierarchy.applyChange(change, store.newestSceneRevision))
-          .then(() => {
-            // The inspector's object may have changed (a transform, say): read it again
-            const id = scene.selectedId.peek()
-            // Not for an object that is gone: the hierarchy has dropped it from the selection by now
-            if (id !== null && hierarchy.tree.peek().nodes.has(id) && (change.full || change.entityIds.includes(id))) {
-              return scene.refreshTransform()
-            }
-          })
-          .catch((e) => store.reportError("Failed to read the scene", e))
-      }),
-    []
-  )
+  // The panels follow the connection, the selection, the assets and the scene's changes (scene-follow.ts)
+  useEffect(() => followScene({ store, scene, hierarchy, inspector }), [])
   // Ctrl+S saves the scene (the script editor handles the key first, for its file)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -341,10 +280,10 @@ export function Editor() {
       const shortcut = editShortcutOf(e)
       const actions = editActions.value
       if (e.defaultPrevented || shortcut === null || actions === null || modalOpen()) return
-      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select")) return
+      // Only a field that takes text has its own undo; a checkbox, a slider or a select hasn't
+      if (isTextEntry(e.target as HTMLElement | null)) return
       e.preventDefault()
-      const done = shortcut === "undo" ? actions.undo() : actions.redo()
-      void Promise.resolve(done).catch((err) => store.reportError("Failed to " + shortcut, err))
+      void runEditAction(actions, shortcut, (what, err) => store.reportError(what, err))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)

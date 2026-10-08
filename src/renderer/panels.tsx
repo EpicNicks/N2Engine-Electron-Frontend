@@ -3,7 +3,7 @@
 import { useEffect, useState } from "preact/hooks"
 import type { EngineHealthResponse } from "../protocol/protocol.generated"
 import type { FileInfo } from "../shared/api"
-import { AssetDragType } from "./drag-types"
+import { AssetDragEffect, AssetDragType } from "./drag-types"
 import { basename, extname, toResPath } from "./paths"
 import { Empty, Panel, prompt, showContextMenu, useApp } from "./ui"
 
@@ -93,7 +93,7 @@ function FileNode({ node, depth }: { node: FileInfo; depth: number }) {
       draggable
       onDragStart={(e) => {
         if (!e.dataTransfer) return
-        e.dataTransfer.effectAllowed = "copy"
+        e.dataTransfer.effectAllowed = AssetDragEffect
         e.dataTransfer.setData(AssetDragType, node.path)
         e.dataTransfer.setData("text/plain", node.name)
       }}

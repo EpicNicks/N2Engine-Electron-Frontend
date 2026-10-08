@@ -6,7 +6,7 @@ import { ComponentChildren } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import { assetName } from "./asset-lookup"
-import { AssetDragType, EntityDragType, dragHas } from "./drag-types"
+import { AssetDragType, EntityDragType, FieldDropEffect, dragHas } from "./drag-types"
 import {
   axesOf,
   checkNumber,
@@ -156,13 +156,16 @@ function PickerButton(props: {
   label: string
   title?: string
   disabled?: boolean
-  entries: PickerEntry[] | null | (() => Promise<PickerEntry[]>)
+  /** The entries, or a function that makes them when the picker is opened (not on every render of the field) */
+  entries: PickerEntry[] | null | (() => PickerEntry[] | Promise<PickerEntry[]>)
   search?: (query: string) => PickerEntry[]
   placeholder: string
   emptyText: string
   /** at: where the picker was opened, for one that opens another next to it */
   onPick(key: string, at: { x: number; y: number }): void
   class?: string
+  /** Called when the picker is opened */
+  onOpen?: () => void
 }) {
   const [at, setAt] = useState<{ x: number; y: number } | null>(null)
   const [loaded, setLoaded] = useState<PickerEntry[] | null>(null)
@@ -171,9 +174,16 @@ function PickerButton(props: {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     setAt({ x: rect.left, y: rect.bottom })
     setProblem(null)
+    props.onOpen?.()
     if (typeof props.entries === "function") {
       setLoaded(null)
-      props.entries().then(setLoaded, (err) => setProblem(err instanceof Error ? err.message : String(err)))
+      try {
+        const made = props.entries()
+        if (Array.isArray(made)) setLoaded(made)
+        else made.then(setLoaded, (err) => setProblem(err instanceof Error ? err.message : String(err)))
+      } catch (err) {
+        setProblem(err instanceof Error ? err.message : String(err))
+      }
     }
   }
   const entries = typeof props.entries === "function" ? loaded : props.entries
@@ -362,14 +372,53 @@ function BoolEditor({ field, value, disabled, commit }: EditorProps) {
   )
 }
 
-function StringEditor({ field, value, disabled, commit }: EditorProps) {
+/**
+ * A text box that keeps what is typed in it until it is committed (on Enter or leaving), so a re-render (the scene
+ * changed, an edit was answered) doesn't overwrite it. It shows the value again when that changes and nothing is being
+ * typed, and Escape puts the value back.
+ */
+export function TextInput(props: {
+  value: string
+  disabled: boolean
+  label: string
+  onCommit(text: string): void
+}) {
+  const [text, setText] = useState(props.value)
+  const typing = useRef(false)
+  useEffect(() => {
+    if (!typing.current) setText(props.value)
+  }, [props.value])
   return (
     <input
       type="text"
-      aria-label={field.displayName}
+      aria-label={props.label}
+      value={text}
+      disabled={props.disabled}
+      onInput={(e) => {
+        typing.current = true
+        setText((e.currentTarget as HTMLInputElement).value)
+      }}
+      onChange={(e) => {
+        typing.current = false
+        props.onCommit((e.currentTarget as HTMLInputElement).value)
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          typing.current = false
+          setText(props.value)
+        }
+      }}
+    />
+  )
+}
+
+function StringEditor({ field, value, disabled, commit }: EditorProps) {
+  return (
+    <TextInput
+      label={field.displayName}
       value={typeof value === "string" ? value : ""}
       disabled={disabled}
-      onChange={(e) => commit((e.currentTarget as HTMLInputElement).value, true)}
+      onCommit={(text) => commit(text, true)}
     />
   )
 }
@@ -457,6 +506,8 @@ function Slot(props: {
   accepts(event: DragEvent): boolean
   onDrop(event: DragEvent): void
   onClear(): void
+  /** Whether the slot can be emptied (a LuaComponent's script can't: the host refuses null) */
+  clearable?: boolean
   children: ComponentChildren
 }) {
   const [over, setOver] = useState(false)
@@ -466,7 +517,7 @@ function Slot(props: {
       onDragOver={(e) => {
         if (props.disabled || !props.accepts(e)) return
         e.preventDefault() // allows the drop
-        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
+        if (e.dataTransfer) e.dataTransfer.dropEffect = FieldDropEffect
         if (!over) setOver(true)
       }}
       onDragLeave={() => setOver(false)}
@@ -482,7 +533,7 @@ function Slot(props: {
         {props.empty ? "None" : props.label}
       </span>
       {props.children}
-      {!props.empty && !props.disabled && (
+      {!props.empty && !props.disabled && props.clearable !== false && (
         <button class="secondary slot-clear" title="Clear" aria-label="Clear" onClick={props.onClear}>
           ×
         </button>
@@ -503,6 +554,8 @@ function AssetSlot(props: {
   const assets = inspector.assets.value
   const { field, uuid } = props
   const label = uuid ? assets.label(uuid) : null
+  // A script can be replaced, not removed
+  const required = field.name === "scriptUUID" && !field.container
   const choose = (key: string) => {
     if (key === "") return props.onChange(null)
     const entry = assets.byUuid(key)
@@ -531,13 +584,14 @@ function AssetSlot(props: {
       accepts={(e) => dragHas(e, AssetDragType)}
       onDrop={dropped}
       onClear={() => props.onChange(null)}
+      clearable={!required}
     >
       {!props.disabled && (
         <PickerButton
           label="..."
           title={`Pick a${field.assetType ? ` ${field.assetType}` : "n asset"}`}
-          entries={[
-            { key: "", label: "None" },
+          entries={() => [
+            ...(required ? [] : [{ key: "", label: "None" }]),
             ...assets.ofType(field.assetType).map((entry) => ({
               key: entry.uuid,
               label: assetName(entry),
@@ -588,7 +642,7 @@ function ObjectSlot(props: {
         <PickerButton
           label="..."
           title="Pick an object"
-          entries={[
+          entries={() => [
             { key: "", label: "None" },
             ...tree.order.map((id) => ({ key: id, label: tree.nodes.get(id)?.name ?? id, indent: depthOf(id) })),
           ]}
@@ -616,6 +670,14 @@ function ComponentSlot(props: {
   const [problem, setProblem] = useState<string | null>(null)
   const wanted = props.field.typeName
   const info = props.uuid ? inspector.componentInfo(props.uuid) : undefined
+  // A component of another object isn't known until that object is read: look for it among the objects that could have it
+  useEffect(() => {
+    if (!props.uuid || info) return
+    const candidates = tree.order.filter(
+      (id) => wanted === "Component" || wanted === "" || (tree.nodes.get(id)?.components ?? []).includes(wanted)
+    )
+    void inspector.resolveComponent(props.uuid, candidates)
+  }, [props.uuid, tree])
   const owner = info ? tree.nodes.get(info.entityId) : undefined
   const label = info ? `${owner?.name ?? "?"} > ${info.type}` : `${(props.uuid ?? "").slice(0, 8)}...`
   const depthOf = (id: string): number => {
@@ -654,7 +716,7 @@ function ComponentSlot(props: {
         <PickerButton
           label="..."
           title="Pick a component"
-          entries={[
+          entries={() => [
             { key: "", label: "None" },
             ...tree.order.map((id) => ({ key: id, label: tree.nodes.get(id)?.name ?? id, indent: depthOf(id) })),
           ]}
