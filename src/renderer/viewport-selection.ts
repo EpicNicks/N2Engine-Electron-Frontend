@@ -13,6 +13,9 @@ export const moveIdsOf = (tree: HierarchyTree, selection: Selection): string[] =
 export const selectionKeyOf = (primary: string | null, moveIds: readonly string[]): string =>
   `${primary ?? ""}|${moveIds.join(",")}`
 
+/** Which objects are selected, whatever the order they were clicked in */
+export const selectionIdsKey = (selection: Selection): string => [...selection.ids].sort().join("\n")
+
 export interface ViewportFollowDeps {
   store: {
     connected: ReadonlySignal<boolean>
@@ -24,6 +27,8 @@ export interface ViewportFollowDeps {
   hierarchy: { selection: ReadonlySignal<Selection>; tree: ReadonlySignal<HierarchyTree> }
   viewport: {
     loadTarget(id: string | null, changed?: ReadonlySet<string> | null): Promise<void>
+    /** The selection's boxes are read again */
+    reloadBounds(): void
     objectsChanged(entityIds: readonly string[], full: boolean, replaced: boolean): void
   }
 }
@@ -38,6 +43,7 @@ export function followViewportSelection({ store, hierarchy, viewport }: Viewport
   forget(): void
 } {
   let loaded = ""
+  let boxed = ""
   let seenReplaced = untracked(() => store.sceneReplacedCount.value)
   const stops = [
     effect(() => {
@@ -48,6 +54,16 @@ export function followViewportSelection({ store, hierarchy, viewport }: Viewport
         if (key === loaded) return
         loaded = key
         void viewport.loadTarget(store.connected.value ? selection.primary : null)
+      })
+    }),
+    // The selection's boxes follow every change of WHICH objects are selected (not only the primary or the topmost ones)
+    effect(() => {
+      const selection = hierarchy.selection.value
+      untracked(() => {
+        const key = selectionIdsKey(selection)
+        if (key === boxed) return
+        boxed = key
+        viewport.reloadBounds()
       })
     }),
     effect(() => {
@@ -64,6 +80,7 @@ export function followViewportSelection({ store, hierarchy, viewport }: Viewport
     stop: () => stops.forEach((stop) => stop()),
     forget: () => {
       loaded = ""
+      boxed = ""
     },
   }
 }

@@ -4,15 +4,18 @@
 // origin), which the panel converts from the page's pointer positions. No DOM: it is given the engine API or a fake,
 // so it is unit tested in Node.
 //
-// Picking and bounds are a SEAM, not protocol: E7b's PickEntity and GetEntityBounds are not in the engine yet, so
-// PickBackend is null until something implements it (the one place to wire them: createViewportController's
-// `picking`). With none, a click does not select, and "frame selected" frames the object's world position instead.
+// Picking and bounds (protocol 1.8.0: PickEntity, GetEntityBounds) are reached through PickBackend (the engine's
+// implementation is viewport-picking.ts's createPickBackend, passed as `picking`). With none (a test, or a host without
+// them), a click does not select, there is no selection box, and "frame selected" frames the object's world position.
 import { signal } from "@preact/signals-core"
 import type { EditorCameraResponse, Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
 import type { EngineApi } from "../shared/api"
 import type { EditGroups } from "./edit-groups"
 import { Bounds, EditorCameraController } from "./viewport-camera"
 import { LatestWinsSender } from "./viewport-frames"
+import type { ClickModifiers } from "./hierarchy-tree"
+import { insideFrame } from "./viewport-size"
+import { translateBounds, unionBounds } from "./viewport-picking"
 import {
   AxisDrag,
   DragSource,
@@ -31,14 +34,11 @@ import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
 import { selectionKeyOf } from "./viewport-selection"
 
-/**
- * The host's picking and bounds (E7b: PickEntity and GetEntityBounds; neither exists in protocol 1.7.0). Implement it
- * over the generated codecs when the engine has them, and pass it to the controller.
- */
+/** The host's picking and bounds (PickEntity and GetEntityBounds, protocol 1.8.0) */
 export interface PickBackend {
   /** The object under the pixel (frame pixels, top-left origin), or null for none */
   pick(x: number, y: number, includeInactive: boolean): Promise<string | null>
-  /** World bounds of the objects that have any; null when the host can't say */
+  /** World bounds of the objects that have any (an id the host can't measure is not in the map); null when the host can't say */
   bounds(entityIds: string[]): Promise<Map<string, Bounds> | null>
 }
 
@@ -47,7 +47,7 @@ type Engine = Pick<EngineApi, "isConnected" | "setEditorCamera" | "getEditorCame
 export interface ViewportDeps {
   engine: Engine
   groups: Pick<EditGroups, "begin" | "end">
-  /** Null until the engine has PickEntity and GetEntityBounds (E7b) */
+  /** Null without the engine's PickEntity and GetEntityBounds (see createPickBackend) */
   picking: PickBackend | null
   /** A failure to show (the page's error banner) */
   onError(what: string, error: unknown): void
@@ -64,8 +64,11 @@ export interface ViewportDeps {
   moveIds?(): readonly string[]
   /** Every selected object (a change to any of them reloads the gizmo's targets). Default: just the primary selection. */
   selectionIds?(): readonly string[]
-  /** A click picked this object (null: empty space) */
-  select(entityId: string | null): void
+  /**
+   * A click picked this object (null: empty space), with the modifier keys held: the editor's selection acts on it the
+   * way a click in the hierarchy does (plain: just it; Ctrl: toggle; Shift: extend; nothing and no modifier: clear)
+   */
+  select(entityId: string | null, modifiers: ClickModifiers): void
 }
 
 /** The camera matrices at a viewport size */
@@ -116,8 +119,8 @@ export class ViewportController {
   /** The handle (an axis or a plane) under the pointer, or the one being dragged */
   readonly hoverHandle = signal<HandleId | null>(null)
   readonly dragging = signal(false)
-  /** The selection's world bounds, when the host can say (the seam); drawn as a box */
-  readonly selectionBounds = signal<Bounds | null>(null)
+  /** The world bounds of the selected objects the host could measure, by id; drawn as boxes */
+  readonly selectionBounds = signal<ReadonlyMap<string, Bounds>>(new Map())
   /** Bumped when anything the overlay draws changed (the panel redraws on it) */
   readonly overlayVersion = signal(0)
 
@@ -131,6 +134,10 @@ export class ViewportController {
   private readonly read = new Map<string, GizmoTarget | null>()
   private ended: Promise<void> = Promise.resolve()
   private pressed: { pixel: Pixel; onGizmo: boolean } | null = null
+  /** The click to pick for (one pick in flight; clicks meanwhile wait, and only the newest of them is asked) */
+  private readonly pickSender: LatestWinsSender<{ pixel: Pixel; modifiers: ClickModifiers; connection: number }>
+  private boundsRunning = false
+  private boundsDirty = false
   /** Counts target loads, so a slow answer can't replace a newer one */
   private loads = 0
   private connections = 0
@@ -148,6 +155,10 @@ export class ViewportController {
         this.frameNeeded()
       },
       (e) => deps.onError("Failed to move the camera", e)
+    )
+    this.pickSender = new LatestWinsSender(
+      (click) => this.pick(click.pixel, click.modifiers, click.connection),
+      (e) => deps.onError("Failed to pick an object", e)
     )
   }
 
@@ -200,6 +211,7 @@ export class ViewportController {
       this.deps.onError("Failed to read the editor camera", e)
     }
     await this.loadTarget(this.deps.selected())
+    this.reloadBounds()
     await this.verifyMatrices()
   }
 
@@ -213,7 +225,8 @@ export class ViewportController {
     this.movers = []
     this.moversKey = null
     this.read.clear()
-    this.selectionBounds.value = null
+    this.pickSender.discard()
+    this.selectionBounds.value = new Map()
     this.dragging.value = false
     this.hoverHandle.value = null
     this.redraw()
@@ -307,18 +320,21 @@ export class ViewportController {
   }
 
   /**
-   * Frames the selected object: its world bounds when the host can give them (the seam), else its world position
-   * (GetEntity's world matrix) at a fixed distance. False when nothing is selected or the object can't be read.
+   * Frames the selected objects: the union of their world bounds when the host can give them (GetEntityBounds, one
+   * call), else the primary object's world position (GetEntity's world matrix) at a fixed distance. False when nothing
+   * is selected or the object can't be read.
    */
   async frameSelected(): Promise<boolean> {
     if (this.drag) return false
     const id = this.deps.selected()
     if (id === null) return false
-    if (this.deps.picking) {
+    if (this.deps.picking && this.deps.engine.isConnected()) {
       try {
-        const bounds = (await this.deps.picking.bounds([id]))?.get(id)
-        if (bounds) {
-          this.camera.frameBounds(bounds)
+        const ids = [...new Set([id, ...this.selectedIds(id)])]
+        const found = await this.deps.picking.bounds(ids)
+        const union = found ? unionBounds(found.values()) : null
+        if (union) {
+          this.camera.frameBounds(union)
           this.cameraChanged()
           return true
         }
@@ -338,6 +354,10 @@ export class ViewportController {
   }
 
   // ==================== The selected object ====================
+
+  private selectedIds(primary: string | null): readonly string[] {
+    return this.deps.selectionIds?.() ?? (primary === null ? [] : [primary])
+  }
 
   private moveIds(id: string): readonly string[] {
     return this.deps.moveIds?.() ?? [id]
@@ -394,7 +414,6 @@ export class ViewportController {
       this.movers = []
       this.moversKey = null
       this.read.clear()
-      this.selectionBounds.value = null
       this.redraw()
       return
     }
@@ -410,8 +429,7 @@ export class ViewportController {
     this.movers = moveIds.map((i) => this.read.get(i) ?? null).filter((t): t is GizmoTarget => t !== null)
     this.target.value = this.read.get(id) ?? this.movers[0] ?? null
     this.moversKey = key
-    await this.loadBounds(id)
-    if (load === this.loads) this.redraw()
+    this.redraw()
   }
 
   /**
@@ -423,9 +441,15 @@ export class ViewportController {
   objectsChanged(entityIds: readonly string[], full: boolean, replaced: boolean = false): void {
     const id = this.deps.selected()
     if (this.drag) {
-      if (replaced) void this.finishDrag("abandon", true)
+      if (replaced) {
+        void this.finishDrag("abandon", true)
+        this.reloadBounds()
+      }
       return
     }
+    // The boxes follow every change (also a "full" one, which a drag's own echo can be): an object's bounds include
+    // what is under it, and a change names only what changed
+    this.reloadBounds()
     if (id === null) return
     if (full) {
       void this.loadTarget(id)
@@ -435,15 +459,49 @@ export class ViewportController {
     if ((this.deps.selectionIds?.() ?? [id]).some((s) => changed.has(s))) void this.loadTarget(id, changed)
   }
 
-  private async loadBounds(id: string): Promise<void> {
-    this.selectionBounds.value = null
-    if (!this.deps.picking) return
-    try {
-      const bounds = (await this.deps.picking.bounds([id]))?.get(id) ?? null
-      if (this.deps.selected() === id) this.selectionBounds.value = bounds
-    } catch (e) {
-      console.debug("GetEntityBounds failed:", e)
+  /**
+   * The selection's boxes are read again (one GetEntityBounds for all the selected objects): after a change of the
+   * selection, a change of the scene, or a connection. One read is in flight at a time; asking meanwhile makes one
+   * more read when it is done, and an answer that is out of date by then is not shown.
+   */
+  reloadBounds(): void {
+    if (this.boundsRunning) {
+      this.boundsDirty = true
+      return
     }
+    this.boundsRunning = true
+    void this.runBounds()
+  }
+
+  private async runBounds(): Promise<void> {
+    try {
+      do {
+        this.boundsDirty = false
+        const connection = this.connections
+        const picking = this.deps.picking
+        const ids = [...new Set(this.selectedIds(this.deps.selected()))]
+        if (!picking || ids.length === 0 || !this.deps.engine.isConnected()) {
+          this.setBounds(new Map())
+          continue
+        }
+        try {
+          const found = await picking.bounds(ids)
+          if (!this.boundsDirty && connection === this.connections) this.setBounds(found ?? new Map())
+        } catch (e) {
+          // The box is a convenience: a host that can't measure leaves the objects unboxed
+          console.debug("GetEntityBounds failed:", e)
+          if (!this.boundsDirty) this.setBounds(new Map())
+        }
+      } while (this.boundsDirty)
+    } finally {
+      this.boundsRunning = false
+    }
+  }
+
+  private setBounds(bounds: ReadonlyMap<string, Bounds>): void {
+    if (bounds.size === 0 && this.selectionBounds.peek().size === 0) return
+    this.selectionBounds.value = bounds
+    this.redraw()
   }
 
   // ==================== Gizmo and picking ====================
@@ -461,12 +519,22 @@ export class ViewportController {
   /** The world position the gizmo is drawn at during a drag (the host's reading of it lags the drag) */
   private dragOrigin: Vec3 | null = null
 
-  /** The selection's box on screen, as pixel pairs (empty without bounds) */
+  /**
+   * The selected objects' boxes on screen, as pixel pairs: 12 edges per object (the ones with both ends in front of the
+   * camera), for the objects still selected. During a drag the boxes move with it, ahead of the host's answer (every
+   * selected object is one the drag moves or lies under one).
+   */
   boxEdges(): Array<[Pixel, Pixel]> {
-    const bounds = this.selectionBounds.value
     const m = this.matrices()
-    if (!bounds || !m || !this.size) return []
-    return projectBox(m.viewProjection, bounds.min, bounds.max, this.size.width, this.size.height)
+    if (!m || !this.size) return []
+    const selected = new Set(this.selectedIds(this.deps.selected()))
+    const edges: Array<[Pixel, Pixel]> = []
+    for (const [id, box] of this.selectionBounds.value) {
+      if (!selected.has(id)) continue
+      const shown = this.drag ? translateBounds(box, this.drag.worldDelta) : box
+      edges.push(...projectBox(m.viewProjection, shown.min, shown.max, this.size.width, this.size.height))
+    }
+    return edges
   }
 
   /** The pointer moved without a button: the handle under it lights up */
@@ -489,7 +557,8 @@ export class ViewportController {
     const layout = this.layout()
     const m = this.matrices()
     const handle = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
-    this.pressed = { pixel, onGizmo: false }
+    // A press on a handle is the gizmo's, even when no drag can begin from it: it never selects what is behind it
+    this.pressed = { pixel, onGizmo: handle !== null }
     if (!target || !layout || !m || !this.size || !handle || this.movers.length === 0) return false
     // The objects the drag moves were read for another selection (a change of it is on its way): not this press
     const id = this.deps.selected()
@@ -502,7 +571,6 @@ export class ViewportController {
       ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
       : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
     if (!source) return false
-    this.pressed.onGizmo = true
     this.drag = new GizmoDrag(
       {
         engine: this.deps.engine,
@@ -534,13 +602,15 @@ export class ViewportController {
 
   /**
    * The left button was released at pixel. Ends a gizmo drag (resolving when its group has ended); otherwise a press
-   * that stayed put is a click: with picking, it selects the object under the pointer (or none).
+   * that stayed put (within the click slop) is a click: with picking, it selects the object under the pointer, or none,
+   * with the modifier keys held at the release. Resolves when the pick has been answered.
    */
-  async pointerUp(pixel: Pixel): Promise<void> {
+  async pointerUp(pixel: Pixel, modifiers: ClickModifiers = {}): Promise<void> {
     const pressed = this.pressed
     this.pressed = null
     if (this.drag) return this.finishDrag("end", true)
-    if (pressed && !pressed.onGizmo && isClick(pressed.pixel, pixel, ClickSlop * this.ratio)) await this.click(pixel)
+    if (pressed && !pressed.onGizmo && isClick(pressed.pixel, pixel, ClickSlop * this.ratio)) this.click(pixel, modifiers)
+    await this.pickSender.flush()
   }
 
   /** The press was cancelled (Escape, or the window lost the pointer): a drag in progress puts the object back */
@@ -569,7 +639,12 @@ export class ViewportController {
       () => undefined
     )
     // The host's reading of the object is the truth again
-    return done.then(() => (reload ? this.loadTarget(this.deps.selected()) : undefined))
+    return done.then(() => {
+      if (!reload) return undefined
+      // The objects moved: their boxes are the host's again too
+      this.reloadBounds()
+      return this.loadTarget(this.deps.selected())
+    })
   }
 
   /** Resolves when a drag's group has ended (what the undo waits for) */
@@ -577,14 +652,23 @@ export class ViewportController {
     return this.ended
   }
 
-  private async click(pixel: Pixel): Promise<void> {
+  /** A click on the frame: a pixel outside the viewport is a miss (no call); else the host is asked, newest click first */
+  private click(pixel: Pixel, modifiers: ClickModifiers): void {
+    if (!this.deps.picking || !this.deps.engine.isConnected()) return
+    if (!this.size || !insideFrame(pixel, this.size)) {
+      this.pickSender.discard()
+      this.deps.select(null, modifiers)
+      return
+    }
+    this.pickSender.push({ pixel, modifiers, connection: this.connections })
+  }
+
+  private async pick(pixel: Pixel, modifiers: ClickModifiers, connection: number): Promise<void> {
     const picking = this.deps.picking
     if (!picking) return
-    try {
-      this.deps.select(await picking.pick(pixel.x, pixel.y, false))
-    } catch (e) {
-      this.deps.onError("Failed to pick an object", e)
-    }
+    const id = await picking.pick(pixel.x, pixel.y, false)
+    // The connection ended while it was asked: the answer is about another host's scene
+    if (connection === this.connections) this.deps.select(id, modifiers)
   }
 
   private redraw(): void {

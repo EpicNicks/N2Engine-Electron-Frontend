@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.7.0";
+export const PROTOCOL_VERSION = "1.8.0";
 
 // ==================== Types ====================
 
@@ -114,6 +114,12 @@ export interface JsonQuat {
   w: number;
 }
 
+export interface EntityBounds {
+  id: string;
+  min: JsonVec3;
+  max: JsonVec3;
+}
+
 export interface LocalTransform {
   position: JsonVec3;
   rotation: JsonQuat;
@@ -167,6 +173,8 @@ export const CommandType = {
   GetCameraPosition: 0x12,
   SetEditorCamera: 0x13,
   GetEditorCamera: 0x14,
+  PickEntity: 0x15,
+  GetEntityBounds: 0x16,
   CreateScene: 0x20,
   LoadScene: 0x21,
   SaveScene: 0x22,
@@ -240,6 +248,8 @@ export const ResponseType = {
   Autosave: 0x17,
   FrameUpdate: 0x18,
   EditorCamera: 0x19,
+  PickResult: 0x1A,
+  Bounds: 0x1B,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -256,6 +266,8 @@ export const CommandResponse = {
   GetCameraPosition: "CameraPosition",
   SetEditorCamera: "Ok",
   GetEditorCamera: "EditorCamera",
+  PickEntity: "PickResult",
+  GetEntityBounds: "Bounds",
   CreateScene: "SceneData",
   LoadScene: "Ok",
   SaveScene: "SceneData",
@@ -337,6 +349,16 @@ export interface SetEditorCameraRequest {
   orthoSize: number;
   nearPlane: number;
   farPlane: number;
+}
+
+export interface PickEntityRequest {
+  x: number;
+  y: number;
+  includeInactive: boolean;
+}
+
+export interface GetEntityBoundsRequest {
+  entityIds: string[];
 }
 
 export interface CreateSceneRequest {
@@ -520,6 +542,16 @@ export interface EditorCameraResponse {
   farPlane: number;
   view: Mat4;
   projection: Mat4;
+}
+
+export interface PickResultResponse {
+  entityId: string;
+  point: Vec3;
+  distance: number;
+}
+
+export interface BoundsResponse {
+  bounds: EntityBounds[];
 }
 
 export interface SceneDataResponse {
@@ -1002,6 +1034,38 @@ export function decodeSetEditorCameraRequest(payload: Uint8Array): SetEditorCame
   const nearPlane = reader.f32();
   const farPlane = reader.f32();
   return { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane };
+}
+
+/** PickEntity's request payload (without the frame header) */
+export function encodePickEntityRequest(value: PickEntityRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.f32(value.x);
+  writer.f32(value.y);
+  writer.bool(value.includeInactive);
+  return writer.finish();
+}
+
+/** Reads PickEntity's request payload; bytes after the last field are ignored */
+export function decodePickEntityRequest(payload: Uint8Array): PickEntityRequest {
+  const reader = new ProtocolReader(payload);
+  const x = reader.f32();
+  const y = reader.f32();
+  const includeInactive = reader.bool();
+  return { x, y, includeInactive };
+}
+
+/** GetEntityBounds's request payload (without the frame header) */
+export function encodeGetEntityBoundsRequest(value: GetEntityBoundsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.entityIds);
+  return writer.finish();
+}
+
+/** Reads GetEntityBounds's request payload; bytes after the last field are ignored */
+export function decodeGetEntityBoundsRequest(payload: Uint8Array): GetEntityBoundsRequest {
+  const reader = new ProtocolReader(payload);
+  const entityIds = reader.json() as string[];
+  return { entityIds };
 }
 
 /** CreateScene's request payload (without the frame header) */
@@ -1567,6 +1631,38 @@ export function decodeEditorCameraResponse(payload: Uint8Array): EditorCameraRes
   return { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane, view, projection };
 }
 
+/** PickResult's payload (without the frame header) */
+export function encodePickResultResponse(value: PickResultResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writeVec3(writer, value.point);
+  writer.f32(value.distance);
+  return writer.finish();
+}
+
+/** Reads PickResult's payload; bytes after the last field are ignored */
+export function decodePickResultResponse(payload: Uint8Array): PickResultResponse {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const point = readVec3(reader);
+  const distance = reader.f32();
+  return { entityId, point, distance };
+}
+
+/** Bounds's payload (without the frame header) */
+export function encodeBoundsResponse(value: BoundsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.bounds);
+  return writer.finish();
+}
+
+/** Reads Bounds's payload; bytes after the last field are ignored */
+export function decodeBoundsResponse(payload: Uint8Array): BoundsResponse {
+  const reader = new ProtocolReader(payload);
+  const bounds = reader.json() as EntityBounds[];
+  return { bounds };
+}
+
 /** SceneData's payload (without the frame header) */
 export function encodeSceneDataResponse(value: SceneDataResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1851,6 +1947,8 @@ export const RequestCodecs = {
   RenderFrameIfChanged: { encode: encodeRenderFrameIfChangedRequest, decode: decodeRenderFrameIfChangedRequest },
   SetCameraPosition: { encode: encodeSetCameraPositionRequest, decode: decodeSetCameraPositionRequest },
   SetEditorCamera: { encode: encodeSetEditorCameraRequest, decode: decodeSetEditorCameraRequest },
+  PickEntity: { encode: encodePickEntityRequest, decode: decodePickEntityRequest },
+  GetEntityBounds: { encode: encodeGetEntityBoundsRequest, decode: decodeGetEntityBoundsRequest },
   CreateScene: { encode: encodeCreateSceneRequest, decode: decodeCreateSceneRequest },
   LoadScene: { encode: encodeLoadSceneRequest, decode: decodeLoadSceneRequest },
   DeleteScene: { encode: encodeDeleteSceneRequest, decode: decodeDeleteSceneRequest },
@@ -1889,6 +1987,8 @@ export const ResponseCodecs = {
   FrameUpdate: { encode: encodeFrameUpdateResponse, decode: decodeFrameUpdateResponse },
   CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
   EditorCamera: { encode: encodeEditorCameraResponse, decode: decodeEditorCameraResponse },
+  PickResult: { encode: encodePickResultResponse, decode: decodePickResultResponse },
+  Bounds: { encode: encodeBoundsResponse, decode: decodeBoundsResponse },
   SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
   SceneInfo: { encode: encodeSceneInfoResponse, decode: decodeSceneInfoResponse },
   Hierarchy: { encode: encodeHierarchyResponse, decode: decodeHierarchyResponse },

@@ -183,6 +183,20 @@ export class HierarchyState {
     )
   }
 
+  /**
+   * A click in the viewport picked this object (null: empty space), with the modifier keys held. It acts as a click on
+   * the object's row (same rules: Ctrl toggles, Shift extends from the anchor), after its ancestors are expanded so the
+   * row is shown. Empty space clears the selection, unless Ctrl or Shift is held (a missed click doesn't lose it).
+   */
+  pick(id: string | null, modifiers: ClickModifiers = {}): void {
+    if (id === null) {
+      if (!modifiers.toggle && !modifiers.range) this.setSelection(emptySelection)
+      return
+    }
+    this.expandAncestors(id)
+    this.click(id, modifiers)
+  }
+
   /** A right-click: keeps the selection when it holds the object, else selects just it */
   contextClick(id: string): void {
     this.setSelection(contextSelect(this.selection.value, id))

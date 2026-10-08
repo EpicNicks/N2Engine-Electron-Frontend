@@ -139,6 +139,8 @@ class FakeClient {
   renderFrameIfChanged = (...args: unknown[]) => this.record("renderFrameIfChanged", args)
   setEditorCamera = (...args: unknown[]) => this.record("setEditorCamera", args)
   getEditorCamera = (...args: unknown[]) => this.record("getEditorCamera", args)
+  pickEntity = (...args: unknown[]) => this.record("pickEntity", args)
+  getEntityBounds = (...args: unknown[]) => this.record("getEntityBounds", args)
   getComponentTypes = (...args: unknown[]) => this.record("getComponentTypes", args)
   addComponent = (...args: unknown[]) => this.record("addComponent", args)
   removeComponent = (...args: unknown[]) => this.record("removeComponent", args)
@@ -367,6 +369,44 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const ok = await ipc.invoke(Channels.engineCall, editor, "setLocalTransform", ["id", v, { ...q, extra: 1 }, v])
     assert.equal(ok.ok, true)
     assert.deepEqual(client.calls[0], ["setLocalTransform", ["id", v, q, v]])
+  })
+
+  test("pickEntity and getEntityBounds are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const calls: Array<[string, unknown[]]> = [
+      ["pickEntity", [10, 20, false]],
+      ["pickEntity", [12.5, 0.25, true]],
+      ["getEntityBounds", [[]]],
+      ["getEntityBounds", [["a", "b"]]],
+      ["getEntityBounds", [Array.from({ length: 4096 }, (_, i) => `id-${i}`)]],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["pickEntity", [10, 20]], // too few
+      ["pickEntity", [NaN, 20, false]],
+      ["pickEntity", [10, Infinity, false]],
+      ["pickEntity", ["10", 20, false]],
+      ["pickEntity", [10, 20, 0]], // a number where a bool is expected
+      ["pickEntity", [10, 20, false, 1]], // too many
+      ["getEntityBounds", []],
+      ["getEntityBounds", ["a"]], // a string where an array is expected
+      ["getEntityBounds", [{ length: 1, 0: "a" }]],
+      ["getEntityBounds", [["a", 1]]],
+      ["getEntityBounds", [["a", null]]],
+      ["getEntityBounds", [Array.from({ length: 4097 }, (_, i) => `id-${i}`)]], // more than the host takes
+      ["getEntityBounds", [["a"], 1]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args).slice(0, 60)}) is refused`)
+    }
+    assert.deepEqual(client.calls, [])
   })
 
   test("the viewport commands are forwarded with checked arguments", async () => {

@@ -9,6 +9,7 @@ import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
 import { followViewportSelection } from "./viewport-selection"
 import { FlyKeys, pointerActionFor, shortcutFor, wheelPixels, PointerAction } from "./viewport-input"
 import { ViewportRenderer } from "./viewport-renderer"
+import { framePixelOf } from "./viewport-size"
 
 const AxisColors: Readonly<Record<'x' | 'y' | 'z', string>> = { x: "#e5484d", y: "#46a758", z: "#3e63dd" }
 const AxisHighlight: Readonly<Record<'x' | 'y' | 'z', string>> = { x: "#ff9592", y: "#8eda9a", z: "#8da4ef" }
@@ -133,11 +134,7 @@ export function Viewport() {
 
     /** A pointer event's position in frame pixels (the engine's viewport, top-left origin) */
     function framePixel(e: { clientX: number; clientY: number }): { x: number; y: number } {
-      const rect = frame.getBoundingClientRect()
-      return {
-        x: ((e.clientX - rect.left) * frame.width) / Math.max(1, rect.width),
-        y: ((e.clientY - rect.top) * frame.height) / Math.max(1, rect.height),
-      }
+      return framePixelOf({ x: e.clientX, y: e.clientY }, frame.getBoundingClientRect(), frame)
     }
 
     const reportFailure = (what: string) => (e: unknown) => store.reportError(what, e)
@@ -223,7 +220,12 @@ export function Viewport() {
       flyFrame = null
       host.style.cursor = ""
       if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId)
-      if (ended.action === "select") viewport.pointerUp(framePixel(e)).catch(reportFailure("Failed to end the move"))
+      if (ended.action === "select") {
+        // Ctrl toggles and Shift extends the selection, as in the hierarchy (a click, not a drag: Ctrl at the press snaps)
+        viewport
+          .pointerUp(framePixel(e), { toggle: e.ctrlKey || e.metaKey, range: e.shiftKey })
+          .catch(reportFailure("Failed to end the move"))
+      }
     }
 
     const onWheel = (e: WheelEvent): void => {
@@ -305,7 +307,7 @@ export function Viewport() {
       effect(() => {
         viewport.overlayVersion.value
         viewport.target.value
-        viewport.selectionBounds.value
+        viewport.selectionBounds.value // the selection's boxes
         store.canEdit.value // the gizmo is for editing only
         drawOverlay()
       }),
@@ -357,17 +359,12 @@ export function Viewport() {
             class="viewport-help"
             title={
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
-              "(Shift: faster). F: frame the selection. Drag a gizmo arrow or square to move the selected objects (Ctrl: snap, " +
-              "Esc: cancel)."
+              "(Shift: faster). F: frame the selection. Click: select (Ctrl: toggle, Shift: extend; empty space clears). Drag a gizmo arrow or square to move " +
+              "the selected objects (Ctrl: snap, Esc: cancel)."
             }
           >
-            Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · F frame
+            Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · click select · F frame
           </span>
-          {!viewport.canPick && (
-            <span class="viewport-help" title="Clicking an object to select it needs the engine's PickEntity (E7b), which this host doesn't have yet: select in the hierarchy">
-              Click-to-select: awaiting engine E7b
-            </span>
-          )}
         </div>
       )}
     </div>

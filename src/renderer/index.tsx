@@ -11,6 +11,7 @@ import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
+import { createPickBackend } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
@@ -87,12 +88,12 @@ const hierarchy = new HierarchyState(window.engine, {
   onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
   groups,
 })
-// The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected. `picking` is the seam
-// for the engine's PickEntity and GetEntityBounds (E7b); null until the engine has them, so a click doesn't select.
+// The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected, click to select and
+// the selection box (the engine's PickEntity and GetEntityBounds)
 const viewport = new ViewportController({
   engine: window.engine,
   groups,
-  picking: null,
+  picking: createPickBackend(window.engine),
   onError: (what, e) => store.reportError(what, e),
   onNote: (message) => store.console.note("warn", message),
   canEdit: () => store.canEdit.peek(),
@@ -100,10 +101,8 @@ const viewport = new ViewportController({
   // The gizmo moves the topmost of the selection (what is under a selected object moves with it), all in one group
   moveIds: () => moveIdsOf(hierarchy.tree.peek(), hierarchy.selection.peek()),
   selectionIds: () => [...hierarchy.selection.peek().ids],
-  select: (id) => {
-    if (id === null) hierarchy.setSelection(emptySelection)
-    else hierarchy.reveal(id)
-  },
+  // A click in the viewport selects like a click on the hierarchy's row (Ctrl toggles, Shift extends)
+  select: (id, modifiers) => hierarchy.pick(id, modifiers),
 })
 const app: AppState = {
   store,

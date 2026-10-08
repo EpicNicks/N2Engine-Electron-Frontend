@@ -11,6 +11,7 @@ import {
   EngineCommandArgs,
   EngineCommandName,
   EngineCommands,
+  MaxEntityBoundsIds,
   MaxJsonDepth,
   MaxJsonNodes,
 } from "../shared/api"
@@ -28,6 +29,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   vec3: "an {x, y, z} of finite numbers",
   quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
+  stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
 }
 
 // How deep and how large a JSON argument may be (shared with the page, whose editors check the same limits)
@@ -97,6 +99,11 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const { x, y, z, w } = value as Record<string, unknown>
         if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z) && isFiniteNumber(w)) return { x, y, z, w }
+      }
+      break
+    case "stringArray":
+      if (Array.isArray(value) && value.length <= MaxEntityBoundsIds && value.every((item) => typeof item === "string")) {
+        return [...value]
       }
       break
     case "jsonObject":
