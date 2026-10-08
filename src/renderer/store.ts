@@ -52,12 +52,12 @@ export class EditorStore {
 
   constructor(
     private readonly api: StoreApi,
-    consoleOptions: ConsoleStoreOptions = {},
+    consoleOptions: ConsoleStoreOptions = {}
   ) {
     this.host = signal(api.host.state())
     this.console = new ConsoleStore(
       (epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents),
-      consoleOptions,
+      consoleOptions
     )
     api.host.onStateChange((state) => this.onHostState(state))
     api.engine.onConnectionChange((connected) => this.onConnection(connected))
@@ -126,6 +126,12 @@ export class EditorStore {
 
   dismissError(): void {
     this.error.value = null
+  }
+
+  /** Shows a failure from elsewhere in the editor (a panel's action), and logs it */
+  reportError(what: string, e: unknown): void {
+    console.error(`${what}:`, e)
+    this.error.value = `${what}: ${e instanceof Error ? e.message : String(e)}`
   }
 
   private async opening(label: string, open: () => Promise<string | null>): Promise<void> {

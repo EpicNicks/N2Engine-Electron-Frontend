@@ -17,7 +17,7 @@ const common = {
 Promise.all([
   esbuild.build({
     ...common,
-    entryPoints: ["src/renderer/renderer.ts"],
+    entryPoints: ["src/renderer/index.tsx"],
     outfile: "dist/bundle/renderer.js",
     platform: "browser",
     format: "iife",

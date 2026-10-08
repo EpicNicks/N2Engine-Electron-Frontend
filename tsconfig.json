@@ -16,5 +16,5 @@
     "skipLibCheck": true
   },
   "include": ["src"],
-  "exclude": ["src/renderer/renderer.ts", "src/renderer/**/*.tsx"]
+  "exclude": ["src/renderer/**/*.tsx"]
 }
