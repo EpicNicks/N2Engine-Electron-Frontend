@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.2.0";
+export const PROTOCOL_VERSION = "1.3.0";
 
 // ==================== Types ====================
 
@@ -40,6 +40,22 @@ export interface EditorEvent {
   level?: string;
   message?: string;
   time?: number;
+  revision?: number;
+  savedRevision?: number;
+  path?: string;
+  added?: string[];
+  removed?: string[];
+  modified?: string[];
+}
+
+export interface ProjectFile {
+  formatVersion: number;
+  name: string;
+  projectId: string;
+  engineVersion: string;
+  startupScene: string;
+  scenes: string[];
+  settings: unknown;
 }
 
 // ==================== Ids ====================
@@ -57,6 +73,10 @@ export const CommandType = {
   SaveScene: 0x22,
   DeleteScene: 0x23,
   GetCurrentScene: 0x24,
+  OpenScene: 0x25,
+  SaveSceneToFile: 0x26,
+  NewScene: 0x27,
+  GetOpenScene: 0x29,
   CreateEntity: 0x30,
   DestroyEntity: 0x31,
   SetEntityTransform: 0x32,
@@ -65,6 +85,9 @@ export const CommandType = {
   CreateScript: 0x40,
   RescanAssets: 0x41,
   GetEngineHealth: 0x50,
+  GetProjectInfo: 0x70,
+  SetProjectSettings: 0x71,
+  SetStartupScene: 0x72,
   Shutdown: 0xFF,
 } as const;
 
@@ -84,6 +107,8 @@ export const ResponseType = {
   AudioSamples: 0x0A,
   ServerInfo: 0x0B,
   Events: 0x0C,
+  SceneInfo: 0x0D,
+  ProjectInfo: 0x0E,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -102,6 +127,10 @@ export const CommandResponse = {
   SaveScene: "SceneData",
   DeleteScene: "Ok",
   GetCurrentScene: "SceneData",
+  OpenScene: "SceneInfo",
+  SaveSceneToFile: "SceneInfo",
+  NewScene: "SceneInfo",
+  GetOpenScene: "SceneInfo",
   CreateEntity: "EntityCreated",
   DestroyEntity: "Ok",
   SetEntityTransform: "Ok",
@@ -110,6 +139,9 @@ export const CommandResponse = {
   CreateScript: "ScriptData",
   RescanAssets: "Ok",
   GetEngineHealth: "EngineHealth",
+  GetProjectInfo: "ProjectInfo",
+  SetProjectSettings: "ProjectInfo",
+  SetStartupScene: "ProjectInfo",
   Shutdown: "Ok",
 } as const;
 
@@ -150,6 +182,19 @@ export interface DeleteSceneRequest {
   sceneName: string;
 }
 
+export interface OpenSceneRequest {
+  path: string;
+}
+
+export interface SaveSceneToFileRequest {
+  path: string;
+}
+
+export interface NewSceneRequest {
+  path: string;
+  name: string;
+}
+
 export interface CreateEntityRequest {
   name: string;
 }
@@ -171,6 +216,14 @@ export interface GetEntityTransformRequest {
 
 export interface CreateScriptRequest {
   name: string;
+}
+
+export interface SetProjectSettingsRequest {
+  settings: unknown;
+}
+
+export interface SetStartupSceneRequest {
+  path: string;
 }
 
 /** Ok has no payload */
@@ -220,6 +273,14 @@ export interface SceneDataResponse {
   sceneJson: string;
 }
 
+export interface SceneInfoResponse {
+  path: string;
+  name: string;
+  uuid: string;
+  revision: number;
+  savedRevision: number;
+}
+
 export interface EntityCreatedResponse {
   entityId: string;
 }
@@ -243,6 +304,12 @@ export interface EngineHealthResponse {
   healthy: boolean;
   count: number;
   subsystems: SubsystemStatus[];
+}
+
+export interface ProjectInfoResponse {
+  rootPath: string;
+  userDataPath: string;
+  project: ProjectFile;
 }
 
 // ==================== Codec runtime ====================
@@ -642,6 +709,50 @@ export function decodeDeleteSceneRequest(payload: Uint8Array): DeleteSceneReques
   return { sceneName };
 }
 
+/** OpenScene's request payload (without the frame header) */
+export function encodeOpenSceneRequest(value: OpenSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  return writer.finish();
+}
+
+/** Reads OpenScene's request payload; bytes after the last field are ignored */
+export function decodeOpenSceneRequest(payload: Uint8Array): OpenSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  return { path };
+}
+
+/** SaveSceneToFile's request payload (without the frame header) */
+export function encodeSaveSceneToFileRequest(value: SaveSceneToFileRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  return writer.finish();
+}
+
+/** Reads SaveSceneToFile's request payload; bytes after the last field are ignored */
+export function decodeSaveSceneToFileRequest(payload: Uint8Array): SaveSceneToFileRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  return { path };
+}
+
+/** NewScene's request payload (without the frame header) */
+export function encodeNewSceneRequest(value: NewSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.string(value.name);
+  return writer.finish();
+}
+
+/** Reads NewScene's request payload; bytes after the last field are ignored */
+export function decodeNewSceneRequest(payload: Uint8Array): NewSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const name = reader.string();
+  return { path, name };
+}
+
 /** CreateEntity's request payload (without the frame header) */
 export function encodeCreateEntityRequest(value: CreateEntityRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -716,6 +827,34 @@ export function decodeCreateScriptRequest(payload: Uint8Array): CreateScriptRequ
   const reader = new ProtocolReader(payload);
   const name = reader.string();
   return { name };
+}
+
+/** SetProjectSettings's request payload (without the frame header) */
+export function encodeSetProjectSettingsRequest(value: SetProjectSettingsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.settings);
+  return writer.finish();
+}
+
+/** Reads SetProjectSettings's request payload; bytes after the last field are ignored */
+export function decodeSetProjectSettingsRequest(payload: Uint8Array): SetProjectSettingsRequest {
+  const reader = new ProtocolReader(payload);
+  const settings = reader.json() as unknown;
+  return { settings };
+}
+
+/** SetStartupScene's request payload (without the frame header) */
+export function encodeSetStartupSceneRequest(value: SetStartupSceneRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  return writer.finish();
+}
+
+/** Reads SetStartupScene's request payload; bytes after the last field are ignored */
+export function decodeSetStartupSceneRequest(payload: Uint8Array): SetStartupSceneRequest {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  return { path };
 }
 
 /** Ok's (empty) payload */
@@ -853,6 +992,28 @@ export function decodeSceneDataResponse(payload: Uint8Array): SceneDataResponse 
   return { sceneJson };
 }
 
+/** SceneInfo's payload (without the frame header) */
+export function encodeSceneInfoResponse(value: SceneInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.path);
+  writer.string(value.name);
+  writer.string(value.uuid);
+  writer.u32(value.revision);
+  writer.u32(value.savedRevision);
+  return writer.finish();
+}
+
+/** Reads SceneInfo's payload; bytes after the last field are ignored */
+export function decodeSceneInfoResponse(payload: Uint8Array): SceneInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const path = reader.string();
+  const name = reader.string();
+  const uuid = reader.string();
+  const revision = reader.u32();
+  const savedRevision = reader.u32();
+  return { path, name, uuid, revision, savedRevision };
+}
+
 /** EntityCreated's payload (without the frame header) */
 export function encodeEntityCreatedResponse(value: EntityCreatedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -933,6 +1094,24 @@ export function decodeEngineHealthResponse(payload: Uint8Array): EngineHealthRes
   return { healthy, count, subsystems };
 }
 
+/** ProjectInfo's payload (without the frame header) */
+export function encodeProjectInfoResponse(value: ProjectInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.rootPath);
+  writer.string(value.userDataPath);
+  writer.json(value.project);
+  return writer.finish();
+}
+
+/** Reads ProjectInfo's payload; bytes after the last field are ignored */
+export function decodeProjectInfoResponse(payload: Uint8Array): ProjectInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const rootPath = reader.string();
+  const userDataPath = reader.string();
+  const project = reader.json() as ProjectFile;
+  return { rootPath, userDataPath, project };
+}
+
 /** Each command's request codecs, for commands with request fields */
 export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
@@ -942,11 +1121,16 @@ export const RequestCodecs = {
   CreateScene: { encode: encodeCreateSceneRequest, decode: decodeCreateSceneRequest },
   LoadScene: { encode: encodeLoadSceneRequest, decode: decodeLoadSceneRequest },
   DeleteScene: { encode: encodeDeleteSceneRequest, decode: decodeDeleteSceneRequest },
+  OpenScene: { encode: encodeOpenSceneRequest, decode: decodeOpenSceneRequest },
+  SaveSceneToFile: { encode: encodeSaveSceneToFileRequest, decode: decodeSaveSceneToFileRequest },
+  NewScene: { encode: encodeNewSceneRequest, decode: decodeNewSceneRequest },
   CreateEntity: { encode: encodeCreateEntityRequest, decode: decodeCreateEntityRequest },
   DestroyEntity: { encode: encodeDestroyEntityRequest, decode: decodeDestroyEntityRequest },
   SetEntityTransform: { encode: encodeSetEntityTransformRequest, decode: decodeSetEntityTransformRequest },
   GetEntityTransform: { encode: encodeGetEntityTransformRequest, decode: decodeGetEntityTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
+  SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
+  SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
 } as const;
 
 /** Each response's codecs */
@@ -959,9 +1143,11 @@ export const ResponseCodecs = {
   Events: { encode: encodeEventsResponse, decode: decodeEventsResponse },
   CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
   SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
+  SceneInfo: { encode: encodeSceneInfoResponse, decode: decodeSceneInfoResponse },
   EntityCreated: { encode: encodeEntityCreatedResponse, decode: decodeEntityCreatedResponse },
   EntityTransform: { encode: encodeEntityTransformResponse, decode: decodeEntityTransformResponse },
   EntityList: { encode: encodeEntityListResponse, decode: decodeEntityListResponse },
   ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
   EngineHealth: { encode: encodeEngineHealthResponse, decode: decodeEngineHealthResponse },
+  ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },
 } as const;

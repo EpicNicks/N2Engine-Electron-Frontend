@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.2.0",
+  "protocolVersion": "1.3.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -66,6 +66,31 @@
       "payload": "120000007363656e654e616d65203020e29c9320c3a9"
     },
     {
+      "command": "OpenScene",
+      "id": "0x25",
+      "fields": {
+        "path": "path 0 ✓ é"
+      },
+      "payload": "0d00000070617468203020e29c9320c3a9"
+    },
+    {
+      "command": "SaveSceneToFile",
+      "id": "0x26",
+      "fields": {
+        "path": "path 0 ✓ é"
+      },
+      "payload": "0d00000070617468203020e29c9320c3a9"
+    },
+    {
+      "command": "NewScene",
+      "id": "0x27",
+      "fields": {
+        "path": "path 0 ✓ é",
+        "name": "name 1 ✓ é"
+      },
+      "payload": "0d00000070617468203020e29c9320c3a90d0000006e616d65203120e29c9320c3a9"
+    },
+    {
       "command": "CreateEntity",
       "id": "0x30",
       "fields": {
@@ -119,6 +144,32 @@
         "name": "name 0 ✓ é"
       },
       "payload": "0d0000006e616d65203020e29c9320c3a9"
+    },
+    {
+      "command": "SetProjectSettings",
+      "id": "0x71",
+      "fields": {
+        "settings": {
+          "list": [
+            0,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "370000007b226c697374223a5b302c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "command": "SetStartupScene",
+      "id": "0x72",
+      "fields": {
+        "path": "path 0 ✓ é"
+      },
+      "payload": "0d00000070617468203020e29c9320c3a9"
     }
   ],
   "responses": [
@@ -182,22 +233,52 @@
         "dropped": 305419898,
         "events": [
           {
+            "added": [
+              "added 11 ✓",
+              "added 12 ✓"
+            ],
             "kind": "kind 4 ✓",
             "level": "level 5 ✓",
             "message": "message 6 ✓",
+            "modified": [
+              "modified 13 ✓",
+              "modified 14 ✓"
+            ],
+            "path": "path 10 ✓",
+            "removed": [
+              "removed 12 ✓",
+              "removed 13 ✓"
+            ],
+            "revision": 10.5,
+            "savedRevision": 11.5,
             "seq": 5.5,
             "time": 9.5
           },
           {
+            "added": [
+              "added 12 ✓",
+              "added 13 ✓"
+            ],
             "kind": "kind 5 ✓",
             "level": "level 6 ✓",
             "message": "message 7 ✓",
+            "modified": [
+              "modified 14 ✓",
+              "modified 15 ✓"
+            ],
+            "path": "path 11 ✓",
+            "removed": [
+              "removed 13 ✓",
+              "removed 14 ✓"
+            ],
+            "revision": 11.5,
+            "savedRevision": 12.5,
             "seq": 6.5,
             "time": 10.5
           }
         ]
       },
-      "payload": "78563412795634127a563412b80000005b7b226b696e64223a226b696e64203420e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c22736571223a352e352c2274696d65223a392e357d2c7b226b696e64223a226b696e64203520e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c22736571223a362e352c2274696d65223a31302e357d5d"
+      "payload": "78563412795634127a5634123a0200005b7b226164646564223a5b22616464656420313120e29c93222c22616464656420313220e29c93225d2c226b696e64223a226b696e64203420e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c226d6f646966696564223a5b226d6f64696669656420313320e29c93222c226d6f64696669656420313420e29c93225d2c2270617468223a227061746820313020e29c93222c2272656d6f766564223a5b2272656d6f76656420313220e29c93222c2272656d6f76656420313320e29c93225d2c227265766973696f6e223a31302e352c2273617665645265766973696f6e223a31312e352c22736571223a352e352c2274696d65223a392e357d2c7b226164646564223a5b22616464656420313220e29c93222c22616464656420313320e29c93225d2c226b696e64223a226b696e64203520e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c226d6f646966696564223a5b226d6f64696669656420313420e29c93222c226d6f64696669656420313520e29c93225d2c2270617468223a227061746820313120e29c93222c2272656d6f766564223a5b2272656d6f76656420313320e29c93222c2272656d6f76656420313420e29c93225d2c227265766973696f6e223a31312e352c2273617665645265766973696f6e223a31322e352c22736571223a362e352c2274696d65223a31302e357d5d"
     },
     {
       "response": "CameraPosition",
@@ -216,6 +297,18 @@
         "sceneJson": "sceneJson 0 ✓ é"
       },
       "payload": "120000007363656e654a736f6e203020e29c9320c3a9"
+    },
+    {
+      "response": "SceneInfo",
+      "id": "0x0D",
+      "fields": {
+        "path": "path 0 ✓ é",
+        "name": "name 1 ✓ é",
+        "uuid": "uuid 2 ✓ é",
+        "revision": 305419899,
+        "savedRevision": 305419900
+      },
+      "payload": "0d00000070617468203020e29c9320c3a90d0000006e616d65203120e29c9320c3a90d00000075756964203220e29c9320c3a97b5634127c563412"
     },
     {
       "response": "EntityCreated",
@@ -293,6 +386,37 @@
         ]
       },
       "payload": "01020000000d0000006e616d65203220e29c9320c3a90e0000007374617465203320e29c9320c3a90f00000064657461696c203420e29c9320c3a90d0000006e616d65203320e29c9320c3a90e0000007374617465203420e29c9320c3a90f00000064657461696c203520e29c9320c3a9"
+    },
+    {
+      "response": "ProjectInfo",
+      "id": "0x0E",
+      "fields": {
+        "rootPath": "rootPath 0 ✓ é",
+        "userDataPath": "userDataPath 1 ✓ é",
+        "project": {
+          "engineVersion": "engineVersion 5 ✓",
+          "formatVersion": 4.5,
+          "name": "name 3 ✓",
+          "projectId": "projectId 4 ✓",
+          "scenes": [
+            "scenes 7 ✓",
+            "scenes 8 ✓"
+          ],
+          "settings": {
+            "list": [
+              8,
+              "two ✓",
+              true,
+              null
+            ],
+            "nested": {
+              "value": 1.5
+            }
+          },
+          "startupScene": "startupScene 6 ✓"
+        }
+      },
+      "payload": "11000000726f6f7450617468203020e29c9320c3a915000000757365724461746150617468203120e29c9320c3a9fd0000007b22656e67696e6556657273696f6e223a22656e67696e6556657273696f6e203520e29c93222c22666f726d617456657273696f6e223a342e352c226e616d65223a226e616d65203320e29c93222c2270726f6a6563744964223a2270726f6a6563744964203420e29c93222c227363656e6573223a5b227363656e6573203720e29c93222c227363656e6573203820e29c93225d2c2273657474696e6773223a7b226c697374223a5b382c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c22737461727475705363656e65223a22737461727475705363656e65203620e29c93227d"
     }
   ]
 }
