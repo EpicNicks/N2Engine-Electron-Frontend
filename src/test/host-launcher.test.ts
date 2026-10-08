@@ -1,4 +1,4 @@
-import { test, describe } from "node:test"
+import { test, describe, before, after } from "node:test"
 import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
@@ -291,10 +291,14 @@ describe("HostProcess.launch with a real process", () => {
   /** Runs the script with Node in place of the host executable */
   const viaNode: SpawnFunction = (_command, args, options) => spawn(process.execPath, [scriptPath, ...args], options)
 
-  test("setup", () => {
+  before(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "n2-host-launcher-"))
     scriptPath = path.join(dir, "fake-host.js")
     fs.writeFileSync(scriptPath, script)
+  })
+
+  after(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 
   test("reads the ready line from a real child's stdout, and kill ends it", async () => {
@@ -315,10 +319,6 @@ describe("HostProcess.launch with a real process", () => {
       HostProcess.launch({ hostPath: "N2EditorHost", projectDir: dir, spawn: failing }),
       /exited with code 1 before it was ready:\nProject folder not found/
     )
-  })
-
-  test("cleanup", () => {
-    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 

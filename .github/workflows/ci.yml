@@ -24,6 +24,23 @@ jobs:
       - name: Build and test (node --test)
         run: npm test
 
+  test-windows:
+    # The editor launches and kills the host as a child process, and Windows is where the engine runs: the launcher
+    # (pipes, \r\n ready lines, kill) is tested there too
+    name: Build and test on Windows
+    runs-on: windows-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and test (node --test)
+        run: npm test
+
   protocol:
     name: Generated protocol matches the pinned engine
     runs-on: ubuntu-latest
