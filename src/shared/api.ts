@@ -8,6 +8,8 @@ import type {
   EntityInfo,
   EventsResponse,
   FrameDataResponse,
+  ProjectInfoResponse,
+  SceneInfoResponse,
   SceneDataResponse,
   ServerInfoResponse,
   Vec3,
@@ -33,6 +35,19 @@ export interface EngineCommands {
   deleteScene(sceneName: string): Promise<void>
   getCurrentScene(): Promise<SceneDataResponse | null>
 
+  /** Scenes of the project (protocol 1.3): a scene is a .scene file, a path like res://assets/scenes/main.scene */
+  openScene(path: string): Promise<SceneInfoResponse>
+  /** Empty path: the scene's own file */
+  saveSceneToFile(path: string): Promise<SceneInfoResponse>
+  newScene(path: string, name: string): Promise<SceneInfoResponse>
+  getOpenScene(): Promise<SceneInfoResponse>
+
+  /** The project (protocol 1.3): project.n2proj and its settings */
+  getProjectInfo(): Promise<ProjectInfoResponse>
+  /** settings: a JSON merge patch object (RFC 7386: a null value removes the key) */
+  setProjectSettings(settings: JsonObject): Promise<ProjectInfoResponse>
+  setStartupScene(path: string): Promise<ProjectInfoResponse>
+
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
 
@@ -57,7 +72,10 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "string" | "number" | "int32" | "uint32" | "vec3"
+export type ArgKind = "string" | "number" | "int32" | "uint32" | "vec3" | "jsonObject"
+
+/** A plain JSON object (not an array): what a merge patch is */
+export type JsonObject = { [key: string]: unknown }
 
 /** Every forwarded command and its arguments; the main process refuses any other name */
 export const EngineCommandArgs = {
@@ -71,6 +89,13 @@ export const EngineCommandArgs = {
   saveScene: [],
   deleteScene: ["string"],
   getCurrentScene: [],
+  openScene: ["string"],
+  saveSceneToFile: ["string"],
+  newScene: ["string", "string"],
+  getOpenScene: [],
+  getProjectInfo: [],
+  setProjectSettings: ["jsonObject"],
+  setStartupScene: ["string"],
   createScript: ["string"],
   rescanAssets: [],
   getEngineHealth: [],
@@ -91,6 +116,7 @@ interface ArgKindTypes {
   int32: number
   uint32: number
   vec3: Vec3
+  jsonObject: JsonObject
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
 type ArgsMatch = {

@@ -7,8 +7,10 @@ import {
   EventsResponse,
   FrameDataResponse,
   PROTOCOL_VERSION,
+  ProjectInfoResponse,
   ResponseType,
   SceneDataResponse,
+  SceneInfoResponse,
   ServerInfoResponse,
   Vec3,
   encodeFrame,
@@ -103,9 +105,7 @@ export class EngineClient {
   /** The current connection's answer to Hello; null until its Hello succeeds */
   private session: ServerInfoResponse | null = null
 
-  constructor(
-    private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)
-  ) {}
+  constructor(private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)) {}
 
   /** Whether there is a connection whose Hello succeeded */
   get isConnected(): boolean {
@@ -332,6 +332,48 @@ export class EngineClient {
       if (e instanceof EngineError) return null // no scene loaded
       throw e
     }
+  }
+
+  // ==================== Scenes of the project (protocol 1.3) ====================
+
+  /**
+   * Opens a scene file of the project (res:// then a path inside assets/, ending in .scene) as the loaded scene,
+   * replacing the loaded one: unsaved changes are lost, so the editor asks first
+   */
+  openScene(path: string): Promise<SceneInfoResponse> {
+    return this.send(Commands.OpenScene, { path })
+  }
+
+  /** Writes the loaded scene to a scene file; an empty path saves it to its own file (an error when it has none) */
+  saveSceneToFile(path: string): Promise<SceneInfoResponse> {
+    return this.send(Commands.SaveSceneToFile, { path })
+  }
+
+  /** Makes an empty scene the loaded one; with a path it is written there first (an existing file is an error) */
+  newScene(path: string, name: string): Promise<SceneInfoResponse> {
+    return this.send(Commands.NewScene, { path, name })
+  }
+
+  /** The loaded scene's file, name, uuid and revisions (it has unsaved changes when revision != savedRevision) */
+  getOpenScene(): Promise<SceneInfoResponse> {
+    return this.send(Commands.GetOpenScene, {})
+  }
+
+  // ==================== Project (protocol 1.3) ====================
+
+  /** The project the host opened: its folders and its project.n2proj as saved */
+  getProjectInfo(): Promise<ProjectInfoResponse> {
+    return this.send(Commands.GetProjectInfo, {})
+  }
+
+  /** Changes the project's settings with a JSON merge patch (RFC 7386: null removes a key); answers the project saved */
+  setProjectSettings(settings: unknown): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetProjectSettings, { settings })
+  }
+
+  /** Sets the scene the host opens first (an existing scene file, or empty for none); answers the project saved */
+  setStartupScene(path: string): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetStartupScene, { path })
   }
 
   // ==================== Entity Management ====================

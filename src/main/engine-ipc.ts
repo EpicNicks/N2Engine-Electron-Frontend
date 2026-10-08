@@ -4,14 +4,7 @@
 // host's access token, which the page never sees).
 import { IpcMain } from "electron"
 import { EngineClient } from "../protocol/engine-client"
-import {
-  ArgKind,
-  Channels,
-  ConnectionState,
-  EngineCommandArgs,
-  EngineCommandName,
-  EngineCommands,
-} from "../shared/api"
+import { ArgKind, Channels, ConnectionState, EngineCommandArgs, EngineCommandName, EngineCommands } from "../shared/api"
 import { EditorPage, handleResult } from "./ipc"
 
 /** Launched hosts listen on loopback only (N2EditorHost's default --bind) */
@@ -23,6 +16,44 @@ const KindDescriptions: Record<ArgKind, string> = {
   int32: "a 32-bit integer",
   uint32: "an unsigned 32-bit integer",
   vec3: "an {x, y, z} of finite numbers",
+  jsonObject: "a JSON object",
+}
+
+/** How deeply nested a JSON argument may be (the page's merge patches are a few levels; this stops runaway input) */
+export const MaxJsonDepth = 32
+
+/** How many values (every scalar, array and object counts) a JSON argument may hold, shared references counted per use */
+export const MaxJsonNodes = 100_000
+
+/**
+ * A fresh copy of the value if it is plain JSON (null, booleans, finite numbers, strings, arrays and plain
+ * objects), else undefined. Class instances, functions, undefined, NaN and cycles (by the depth limit) are refused, as is more than MaxJsonNodes values.
+ */
+function copyJson(value: unknown, depth: number, budget: { nodes: number }): { value: unknown } | undefined {
+  // Shared references (a DAG, not a cycle) copy once per use, so the depth limit alone doesn't bound the work
+  if (--budget.nodes < 0) return undefined
+  if (value === null || typeof value === "boolean" || typeof value === "string") return { value }
+  if (typeof value === "number") return Number.isFinite(value) ? { value } : undefined
+  if (depth >= MaxJsonDepth || typeof value !== "object") return undefined
+  if (Array.isArray(value)) {
+    const items: unknown[] = []
+    for (const item of value) {
+      const copy = copyJson(item, depth + 1, budget)
+      if (!copy) return undefined
+      items.push(copy.value)
+    }
+    return { value: items }
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return undefined
+  // fromEntries defines own properties, so a "__proto__" key stays data instead of setting the prototype
+  const entries: Array<[string, unknown]> = []
+  for (const [key, field] of Object.entries(value)) {
+    const copy = copyJson(field, depth + 1, budget)
+    if (!copy) return undefined
+    entries.push([key, copy.value])
+  }
+  return { value: Object.fromEntries(entries) }
 }
 
 const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value)
@@ -49,6 +80,12 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const { x, y, z } = value as Record<string, unknown>
         if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z)) return { x, y, z }
+      }
+      break
+    case "jsonObject":
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
+        if (copy) return copy.value
       }
       break
   }
