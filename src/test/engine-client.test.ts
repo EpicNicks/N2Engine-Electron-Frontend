@@ -28,6 +28,8 @@ import {
   decodeHelloRequest,
   decodeNewSceneRequest,
   decodeOpenSceneRequest,
+  decodeRenderFrameIfChangedRequest,
+  decodeSetEditorCameraRequest,
   decodeSaveSceneToFileRequest,
   decodeRemoveComponentRequest,
   decodeSetComponentFieldsRequest,
@@ -41,7 +43,9 @@ import {
   encodeComponentDataResponse,
   encodeComponentTypesResponse,
   encodeEditResultResponse,
+  encodeEditorCameraResponse,
   encodeEntityCreatedResponse,
+  encodeFrameUpdateResponse,
   encodeEntityDataResponse,
   encodeErrorResponse,
   encodeHierarchyResponse,
@@ -884,5 +888,86 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     const pending = client.openScene("res://nope.txt")
     sockets[0].emit("data", frame(ResponseType.Error, Buffer.from("not a scene path")))
     await assert.rejects(pending, /not a scene path/)
+  })
+})
+
+describe("EngineClient viewport commands (protocol 1.7)", () => {
+  const sentFrame = (socket: FakeSocket, i: number): { type: number; payload: Buffer } => ({
+    type: socket.written[i][0],
+    payload: socket.written[i].subarray(5),
+  })
+
+  test("renderFrameIfChanged sends the revision held and decodes both answers", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+
+    const changed = client.renderFrameIfChanged(0)
+    const pixels = new Uint8Array([1, 2, 3, 255, 4, 5, 6, 255])
+    answer(ResponseType.FrameUpdate, encodeFrameUpdateResponse({ revision: 7, modified: true, width: 2, height: 1, pixels }))
+    const first = await changed
+    assert.equal(sentFrame(sockets[0], 0).type, CommandType.RenderFrameIfChanged)
+    assert.deepEqual(decodeRenderFrameIfChangedRequest(sentFrame(sockets[0], 0).payload), { sinceRevision: 0 })
+    assert.equal(first.modified, true)
+    assert.equal(first.revision, 7)
+    assert.deepEqual([first.width, first.height], [2, 1])
+    assert.deepEqual([...first.pixels], [...pixels])
+
+    const idle = client.renderFrameIfChanged(7)
+    answer(
+      ResponseType.FrameUpdate,
+      encodeFrameUpdateResponse({ revision: 7, modified: false, width: 2, height: 1, pixels: new Uint8Array(0) })
+    )
+    const second = await idle
+    assert.deepEqual(decodeRenderFrameIfChangedRequest(sentFrame(sockets[0], 1).payload), { sinceRevision: 7 })
+    assert.equal(second.modified, false)
+    assert.equal(second.pixels.length, 0)
+  })
+
+  test("setEditorCamera and getEditorCamera send and decode the pose and the matrices", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+
+    const set = client.setEditorCamera({ x: 1, y: 2, z: 3 }, { x: 0, y: 0, z: 0, w: 1 }, 60, false, 5, 0.5, 500)
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await set
+    assert.equal(sentFrame(sockets[0], 0).type, CommandType.SetEditorCamera)
+    assert.deepEqual(decodeSetEditorCameraRequest(sentFrame(sockets[0], 0).payload), {
+      position: { x: 1, y: 2, z: 3 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      fovY: 60,
+      orthographic: false,
+      orthoSize: 5,
+      nearPlane: 0.5,
+      farPlane: 500,
+    })
+
+    const view = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -1, -2, -3, 1]
+    const projection = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, -1, -1, 0, 0, -1, 0]
+    const get = client.getEditorCamera()
+    answer(
+      ResponseType.EditorCamera,
+      encodeEditorCameraResponse({
+        position: { x: 1, y: 2, z: 3 },
+        rotation: { x: 0, y: 0, z: 0, w: 1 },
+        fovY: 60,
+        orthographic: false,
+        orthoSize: 5,
+        nearPlane: 0.5,
+        farPlane: 500,
+        view,
+        projection,
+      })
+    )
+    const camera = await get
+    assert.equal(sentFrame(sockets[0], 1).type, CommandType.GetEditorCamera)
+    assert.deepEqual(camera.view, view)
+    assert.deepEqual(camera.projection, projection)
+    assert.equal(camera.nearPlane, 0.5)
   })
 })

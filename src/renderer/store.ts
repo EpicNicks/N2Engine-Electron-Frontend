@@ -157,6 +157,16 @@ export class EditorStore {
   readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
   readonly assetsChangeCount = signal(0)
   /**
+   * How many frameChanged events arrived (protocol 1.7.0: what the viewport would show changed): the viewport asks for
+   * a frame again when it changes. Events missed count too.
+   */
+  readonly frameChangeCount = signal(0)
+  /**
+   * How many sceneChanged events the host itself flagged full (another scene was loaded, or a snapshot restored). A
+   * full change of lastSceneChange can also be a change too big to list: only this counts a replacement.
+   */
+  readonly sceneReplacedCount = signal(0)
+  /**
    * What the scene's latest change touched, for panels that show its objects (the hierarchy, the inspector): they
    * react to sceneChangeCount changing, then read this. full: refetch everything (another scene was loaded, a change
    * too big to list, events were missed, or the connection changed), else refetch just entityIds with GetEntity, and
@@ -203,6 +213,7 @@ export class EditorStore {
           // Panels refetch on these counters, and a missed assetsChanged or projectChanged can't be told apart
           this.assetsChangeCount.value++
           this.projectChangeCount.value++
+          this.frameChangeCount.value++
           // The events of this same poll come next and must not narrow this to their ids: onEvents sees the flag
           this.sceneMissed = true
           this.lastSeenRevision = null // another host's revisions can't be compared with these
@@ -678,6 +689,7 @@ export class EditorStore {
         if (!parsed) continue
         if (parsed.kind === "sceneChanged") {
           const objects = sceneChangeOf(parsed, this.lastSeenRevision)
+          if (parsed.full) this.sceneReplacedCount.value++
           if (objects) pending.change = mergeSceneChange(pending.change, objects)
           // The host's scene revision never goes down while it runs (loading a scene moves it up too)
           this.lastSeenRevision = Math.max(this.lastSeenRevision ?? 0, parsed.revision)
@@ -704,6 +716,8 @@ export class EditorStore {
             undoCount: parsed.undoCount,
             redoCount: parsed.redoCount,
           }
+        } else if (parsed.kind === "frameChanged") {
+          this.frameChangeCount.value++
         } else {
           this.projectChangeCount.value++
         }

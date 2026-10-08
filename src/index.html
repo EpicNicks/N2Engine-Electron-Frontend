@@ -111,6 +111,15 @@
       .viewport-container { flex: 1; position: relative; background: #0a0a0a; overflow: hidden; min-height: 0; min-width: 0; }
       /* Sized and centred by ViewportRenderer: one frame pixel per device pixel */
       .viewport { position: absolute; background: #000; }
+      /* The gizmo and the selection box, over the frame (sized and placed like it by the viewport panel) */
+      .viewport-overlay-canvas { position: absolute; pointer-events: none; }
+      .viewport-container { outline: none; }
+      .viewport-tools {
+        position: absolute; top: 8px; left: 8px; right: 8px;
+        display: flex; align-items: center; gap: 10px; pointer-events: none;
+      }
+      .viewport-tools button { pointer-events: auto; padding: 2px 10px; font-size: 11px; }
+      .viewport-help { pointer-events: auto; color: #888; font-size: 11px; background: rgba(30, 30, 30, 0.7); padding: 2px 8px; border-radius: 4px; }
       .viewport-overlay, .viewport-hint {
         position: absolute;
         left: 50%;

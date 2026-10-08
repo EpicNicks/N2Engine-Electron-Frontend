@@ -1,21 +1,26 @@
-// Shows the engine's frames on the viewport's canvas: a RenderFrame loop while connected, and the engine's viewport
+// Shows the engine's frames on the viewport's canvas, on demand: a RenderFrameIfChanged (protocol 1.7.0) when the view
+// may have changed (FrameScheduler, viewport-frames.ts; nothing is polled at a fixed rate), and the engine's viewport
 // kept at the container's size in device pixels. The canvas shows each frame 1:1: its drawing buffer is the frame's
 // size and its CSS size is that divided by devicePixelRatio. It is positioned absolutely, so its size never feeds
 // back into the layout; while a resize is pending, a stale frame is shown unscaled (cropped or bordered) rather than
 // stretched. Frames arrive as RGBA, top row first (engine #69), and are drawn as they are.
 import type { EngineApi } from "../shared/api"
+import { FrameScheduler } from "./viewport-frames"
 import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 
 /** After the container stops changing size for this long, the new size is sent (on the next animation frame) */
 const ViewportSettleMilliseconds = 100
 
+export interface ViewportHooks {
+  /** A frame was presented: its size is the one the picture (and so the gizmo's maths) has */
+  onFrame?(size: PixelSize): void
+  /** The canvas was moved, resized or given a new frame size: an overlay on top of it follows */
+  onLayout?(): void
+}
+
 export class ViewportRenderer {
   private readonly context: CanvasRenderingContext2D
-  private running = false
-  private frameRequest: number | null = null
-  // Bumped by every start and stop: a loop whose generation is stale ends at its next check, including one that
-  // was awaiting a frame when it was stopped, so a quick stop and start never leaves two loops running
-  private generation = 0
+  private readonly scheduler: FrameScheduler
   private sentSize: PixelSize | null = null
   private settleTimer: number | null = null
   private readonly resizeObserver: ResizeObserver
@@ -24,36 +29,14 @@ export class ViewportRenderer {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly container: HTMLElement,
-    private readonly engine: Pick<EngineApi, "isConnected" | "renderFrame" | "setViewportSize">,
-    private readonly onError: (e: unknown) => void
+    private readonly engine: Pick<EngineApi, "isConnected" | "renderFrameIfChanged" | "setViewportSize">,
+    private readonly onError: (e: unknown) => void,
+    private readonly hooks: ViewportHooks = {}
   ) {
     this.context = canvas.getContext("2d")!
-    this.resizeObserver = new ResizeObserver(() => {
-      this.showCanvasAtDevicePixels()
-      this.scheduleSync()
-    })
-    this.resizeObserver.observe(container)
-    this.showCanvasAtDevicePixels()
-    this.watchDevicePixelRatio()
-  }
-
-  /** Starts rendering (once connected): sends the size first, so the first frame is already the right size */
-  start(): void {
-    if (this.running || this.disposed) return
-    this.syncSize(true)
-    this.running = true
-    const generation = ++this.generation
-
-    const render = async (): Promise<void> => {
-      this.frameRequest = null
-      if (generation !== this.generation) return
-      if (!this.engine.isConnected()) {
-        this.stop()
-        return
-      }
-      try {
-        const frame = await this.engine.renderFrame()
-        if (generation !== this.generation) return
+    this.scheduler = new FrameScheduler({
+      request: (since) => this.engine.renderFrameIfChanged(since),
+      present: (frame) => {
         if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
           this.canvas.width = frame.width
           this.canvas.height = frame.height
@@ -63,26 +46,44 @@ export class ViewportRenderer {
         const { buffer, byteOffset, byteLength } = frame.pixels
         const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
         this.context.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
-      } catch (e) {
-        if (generation === this.generation) {
-          this.stop()
-          this.onError(e)
-        }
-        return
-      }
-      this.frameRequest = requestAnimationFrame(render)
-    }
-    render()
+        this.hooks.onFrame?.({ width: frame.width, height: frame.height })
+      },
+      schedule: (callback) => {
+        const request = requestAnimationFrame(callback)
+        return () => cancelAnimationFrame(request)
+      },
+      onError: (e) => this.onError(e),
+      isConnected: () => this.engine.isConnected(),
+    })
+    this.resizeObserver = new ResizeObserver(() => {
+      this.showCanvasAtDevicePixels()
+      this.scheduleSync()
+    })
+    this.resizeObserver.observe(container)
+    this.showCanvasAtDevicePixels()
+    this.watchDevicePixelRatio()
+  }
+
+  /** Starts showing frames (once connected): sends the size first, so the first frame is already the right size */
+  start(): void {
+    if (this.scheduler.isRunning || this.disposed) return
+    this.syncSize(true)
+    this.scheduler.start()
   }
 
   stop(): void {
-    this.running = false
-    this.generation++
+    this.scheduler.stop()
     this.sentSize = null
-    if (this.frameRequest !== null) {
-      cancelAnimationFrame(this.frameRequest)
-      this.frameRequest = null
-    }
+  }
+
+  /** The view may have changed (the camera moved, the selected object did): ask for a frame */
+  invalidate(): void {
+    this.scheduler.invalidate()
+  }
+
+  /** The scheduler's frame requests so far (a test of idle cost reads it) */
+  get requests(): number {
+    return this.scheduler.requests
   }
 
   dispose(): void {
@@ -102,6 +103,7 @@ export class ViewportRenderer {
     // Offsets rounded to whole device pixels, so the frame isn't resampled by a half-pixel shift
     this.canvas.style.left = `${Math.round(((container.width - css.width) / 2) * ratio) / ratio}px`
     this.canvas.style.top = `${Math.round(((container.height - css.height) / 2) * ratio) / ratio}px`
+    this.hooks.onLayout?.()
   }
 
   /** Sends the container's device-pixel size to the engine, if it changed (or always, when forced) */
@@ -116,10 +118,16 @@ export class ViewportRenderer {
     if (!force && this.sentSize?.width === size.width && this.sentSize?.height === size.height) return
 
     this.sentSize = size
-    this.engine.setViewportSize(size.width, size.height).catch((e) => {
-      console.error("Failed to set viewport size:", e)
-      this.sentSize = null
-    })
+    this.engine.setViewportSize(size.width, size.height).then(
+      () => {
+        // The host's frame changed with its size (it says so in an event too; this needn't wait for the poll)
+        this.scheduler.invalidate()
+      },
+      (e) => {
+        console.error("Failed to set viewport size:", e)
+        this.sentSize = null
+      }
+    )
   }
 
   private scheduleSync(): void {

@@ -136,6 +136,9 @@ class FakeClient {
   duplicateEntity = (...args: unknown[]) => this.record("duplicateEntity", args)
   getEntity = (...args: unknown[]) => this.record("getEntity", args)
   setLocalTransform = (...args: unknown[]) => this.record("setLocalTransform", args)
+  renderFrameIfChanged = (...args: unknown[]) => this.record("renderFrameIfChanged", args)
+  setEditorCamera = (...args: unknown[]) => this.record("setEditorCamera", args)
+  getEditorCamera = (...args: unknown[]) => this.record("getEditorCamera", args)
   getComponentTypes = (...args: unknown[]) => this.record("getComponentTypes", args)
   addComponent = (...args: unknown[]) => this.record("addComponent", args)
   removeComponent = (...args: unknown[]) => this.record("removeComponent", args)
@@ -364,6 +367,43 @@ describe("EngineHost (the main process's engine IPC)", () => {
     const ok = await ipc.invoke(Channels.engineCall, editor, "setLocalTransform", ["id", v, { ...q, extra: 1 }, v])
     assert.equal(ok.ok, true)
     assert.deepEqual(client.calls[0], ["setLocalTransform", ["id", v, q, v]])
+  })
+
+  test("the viewport commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const v = { x: 1, y: 2, z: 3 }
+    const q = { x: 0, y: 0, z: 0, w: 1 }
+    const calls: Array<[string, unknown[]]> = [
+      ["renderFrameIfChanged", [0]],
+      ["renderFrameIfChanged", [4294967295]],
+      ["setEditorCamera", [v, q, 60, false, 5, 0.1, 1000]],
+      ["getEditorCamera", []],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["renderFrameIfChanged", []],
+      ["renderFrameIfChanged", [-1]],
+      ["renderFrameIfChanged", [1.5]],
+      ["renderFrameIfChanged", ["1"]],
+      ["renderFrameIfChanged", [2 ** 32]],
+      ["setEditorCamera", [v, q, 60, false, 5, 0.1]], // too few
+      ["setEditorCamera", [v, v, 60, false, 5, 0.1, 1000]], // a vec3 where a quaternion is expected
+      ["setEditorCamera", [v, q, 60, 0, 5, 0.1, 1000]], // a number where a bool is expected
+      ["setEditorCamera", [v, q, NaN, false, 5, 0.1, 1000]],
+      ["setEditorCamera", [v, q, 60, false, Infinity, 0.1, 1000]],
+      ["getEditorCamera", [1]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
   })
 
   test("the component commands are forwarded with checked arguments", async () => {

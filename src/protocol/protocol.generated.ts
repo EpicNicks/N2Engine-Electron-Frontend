@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.6.0";
+export const PROTOCOL_VERSION = "1.7.0";
 
 // ==================== Types ====================
 
@@ -162,8 +162,11 @@ export const CommandType = {
   GetAudio: 0x03,
   Hello: 0x04,
   PollEvents: 0x05,
+  RenderFrameIfChanged: 0x06,
   SetCameraPosition: 0x10,
   GetCameraPosition: 0x12,
+  SetEditorCamera: 0x13,
+  GetEditorCamera: 0x14,
   CreateScene: 0x20,
   LoadScene: 0x21,
   SaveScene: 0x22,
@@ -235,6 +238,8 @@ export const ResponseType = {
   EditResult: 0x15,
   History: 0x16,
   Autosave: 0x17,
+  FrameUpdate: 0x18,
+  EditorCamera: 0x19,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -246,8 +251,11 @@ export const CommandResponse = {
   GetAudio: "AudioSamples",
   Hello: "ServerInfo",
   PollEvents: "Events",
+  RenderFrameIfChanged: "FrameUpdate",
   SetCameraPosition: "Ok",
   GetCameraPosition: "CameraPosition",
+  SetEditorCamera: "Ok",
+  GetEditorCamera: "EditorCamera",
   CreateScene: "SceneData",
   LoadScene: "Ok",
   SaveScene: "SceneData",
@@ -311,10 +319,24 @@ export interface PollEventsRequest {
   maxEvents: number;
 }
 
+export interface RenderFrameIfChangedRequest {
+  sinceRevision: number;
+}
+
 export interface SetCameraPositionRequest {
   x: number;
   y: number;
   z: number;
+}
+
+export interface SetEditorCameraRequest {
+  position: Vec3;
+  rotation: Quat;
+  fovY: number;
+  orthographic: boolean;
+  orthoSize: number;
+  nearPlane: number;
+  farPlane: number;
 }
 
 export interface CreateSceneRequest {
@@ -474,10 +496,30 @@ export interface EventsResponse {
   events: EditorEvent[];
 }
 
+export interface FrameUpdateResponse {
+  revision: number;
+  modified: boolean;
+  width: number;
+  height: number;
+  pixels: Uint8Array;
+}
+
 export interface CameraPositionResponse {
   x: number;
   y: number;
   z: number;
+}
+
+export interface EditorCameraResponse {
+  position: Vec3;
+  rotation: Quat;
+  fovY: number;
+  orthographic: boolean;
+  orthoSize: number;
+  nearPlane: number;
+  farPlane: number;
+  view: Mat4;
+  projection: Mat4;
 }
 
 export interface SceneDataResponse {
@@ -904,6 +946,20 @@ export function decodePollEventsRequest(payload: Uint8Array): PollEventsRequest 
   return { epoch, afterSeq, maxEvents };
 }
 
+/** RenderFrameIfChanged's request payload (without the frame header) */
+export function encodeRenderFrameIfChangedRequest(value: RenderFrameIfChangedRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.sinceRevision);
+  return writer.finish();
+}
+
+/** Reads RenderFrameIfChanged's request payload; bytes after the last field are ignored */
+export function decodeRenderFrameIfChangedRequest(payload: Uint8Array): RenderFrameIfChangedRequest {
+  const reader = new ProtocolReader(payload);
+  const sinceRevision = reader.u32();
+  return { sinceRevision };
+}
+
 /** SetCameraPosition's request payload (without the frame header) */
 export function encodeSetCameraPositionRequest(value: SetCameraPositionRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -920,6 +976,32 @@ export function decodeSetCameraPositionRequest(payload: Uint8Array): SetCameraPo
   const y = reader.f32();
   const z = reader.f32();
   return { x, y, z };
+}
+
+/** SetEditorCamera's request payload (without the frame header) */
+export function encodeSetEditorCameraRequest(value: SetEditorCameraRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writeVec3(writer, value.position);
+  writeQuat(writer, value.rotation);
+  writer.f32(value.fovY);
+  writer.bool(value.orthographic);
+  writer.f32(value.orthoSize);
+  writer.f32(value.nearPlane);
+  writer.f32(value.farPlane);
+  return writer.finish();
+}
+
+/** Reads SetEditorCamera's request payload; bytes after the last field are ignored */
+export function decodeSetEditorCameraRequest(payload: Uint8Array): SetEditorCameraRequest {
+  const reader = new ProtocolReader(payload);
+  const position = readVec3(reader);
+  const rotation = readQuat(reader);
+  const fovY = reader.f32();
+  const orthographic = reader.bool();
+  const orthoSize = reader.f32();
+  const nearPlane = reader.f32();
+  const farPlane = reader.f32();
+  return { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane };
 }
 
 /** CreateScene's request payload (without the frame header) */
@@ -1415,6 +1497,28 @@ export function decodeEventsResponse(payload: Uint8Array): EventsResponse {
   return { epoch, nextSeq, dropped, events };
 }
 
+/** FrameUpdate's payload (without the frame header) */
+export function encodeFrameUpdateResponse(value: FrameUpdateResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.revision);
+  writer.bool(value.modified);
+  writer.u32(value.width);
+  writer.u32(value.height);
+  writer.bytes(value.pixels);
+  return writer.finish();
+}
+
+/** Reads FrameUpdate's payload; bytes after the last field are ignored */
+export function decodeFrameUpdateResponse(payload: Uint8Array): FrameUpdateResponse {
+  const reader = new ProtocolReader(payload);
+  const revision = reader.u32();
+  const modified = reader.bool();
+  const width = reader.u32();
+  const height = reader.u32();
+  const pixels = reader.rest();
+  return { revision, modified, width, height, pixels };
+}
+
 /** CameraPosition's payload (without the frame header) */
 export function encodeCameraPositionResponse(value: CameraPositionResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1431,6 +1535,36 @@ export function decodeCameraPositionResponse(payload: Uint8Array): CameraPositio
   const y = reader.f32();
   const z = reader.f32();
   return { x, y, z };
+}
+
+/** EditorCamera's payload (without the frame header) */
+export function encodeEditorCameraResponse(value: EditorCameraResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writeVec3(writer, value.position);
+  writeQuat(writer, value.rotation);
+  writer.f32(value.fovY);
+  writer.bool(value.orthographic);
+  writer.f32(value.orthoSize);
+  writer.f32(value.nearPlane);
+  writer.f32(value.farPlane);
+  writer.mat4(value.view);
+  writer.mat4(value.projection);
+  return writer.finish();
+}
+
+/** Reads EditorCamera's payload; bytes after the last field are ignored */
+export function decodeEditorCameraResponse(payload: Uint8Array): EditorCameraResponse {
+  const reader = new ProtocolReader(payload);
+  const position = readVec3(reader);
+  const rotation = readQuat(reader);
+  const fovY = reader.f32();
+  const orthographic = reader.bool();
+  const orthoSize = reader.f32();
+  const nearPlane = reader.f32();
+  const farPlane = reader.f32();
+  const view = reader.mat4();
+  const projection = reader.mat4();
+  return { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane, view, projection };
 }
 
 /** SceneData's payload (without the frame header) */
@@ -1714,7 +1848,9 @@ export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
   Hello: { encode: encodeHelloRequest, decode: decodeHelloRequest },
   PollEvents: { encode: encodePollEventsRequest, decode: decodePollEventsRequest },
+  RenderFrameIfChanged: { encode: encodeRenderFrameIfChangedRequest, decode: decodeRenderFrameIfChangedRequest },
   SetCameraPosition: { encode: encodeSetCameraPositionRequest, decode: decodeSetCameraPositionRequest },
+  SetEditorCamera: { encode: encodeSetEditorCameraRequest, decode: decodeSetEditorCameraRequest },
   CreateScene: { encode: encodeCreateSceneRequest, decode: decodeCreateSceneRequest },
   LoadScene: { encode: encodeLoadSceneRequest, decode: decodeLoadSceneRequest },
   DeleteScene: { encode: encodeDeleteSceneRequest, decode: decodeDeleteSceneRequest },
@@ -1750,7 +1886,9 @@ export const ResponseCodecs = {
   AudioSamples: { encode: encodeAudioSamplesResponse, decode: decodeAudioSamplesResponse },
   ServerInfo: { encode: encodeServerInfoResponse, decode: decodeServerInfoResponse },
   Events: { encode: encodeEventsResponse, decode: decodeEventsResponse },
+  FrameUpdate: { encode: encodeFrameUpdateResponse, decode: decodeFrameUpdateResponse },
   CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
+  EditorCamera: { encode: encodeEditorCameraResponse, decode: decodeEditorCameraResponse },
   SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
   SceneInfo: { encode: encodeSceneInfoResponse, decode: decodeSceneInfoResponse },
   Hierarchy: { encode: encodeHierarchyResponse, decode: decodeHierarchyResponse },
