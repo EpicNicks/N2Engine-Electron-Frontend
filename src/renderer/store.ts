@@ -237,14 +237,15 @@ export class EditorStore {
   private onHostState(state: HostState): void {
     const previous = this.host.value
     this.host.value = state
+    // The main process closed the project (a page reload does that); the welcome screen shows again. Checked
+    // before anything else: closing a stopped host's project changes neither its status nor its launch.
+    if (state.projectPath === null && this.projectPath.value !== null) this.projectPath.value = null
     if (state.status === previous.status && state.launch === previous.launch) return
     if (state.status === "starting") {
       this.console.note("info", `Starting N2EditorHost for ${state.projectPath ?? "the project"}`)
     } else if ((state.status === "exited" || state.status === "failed") && state.message) {
       this.console.note("error", state.message)
     }
-    // The main process closed the project (a page reload does that); the welcome screen shows again
-    if (state.projectPath === null && this.projectPath.value !== null) this.projectPath.value = null
   }
 
   private onConnection(connected: boolean): void {

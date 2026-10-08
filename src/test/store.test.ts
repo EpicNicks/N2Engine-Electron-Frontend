@@ -455,6 +455,16 @@ describe("EditorStore", () => {
     assert.equal(store.view.value, "welcome")
   })
 
+  test("closing a stopped host's project shows the welcome screen, though status and launch are unchanged", async () => {
+    const { api, store } = makeStore()
+    await store.openRecent("C:\\Games\\A")
+    api.pushConnection(false)
+    api.pushHost({ status: "stopped" })
+    assert.equal(store.view.value, "editor", "stopping keeps the project open")
+    api.pushHost({ status: "stopped", projectPath: null })
+    assert.equal(store.view.value, "welcome")
+  })
+
   test("removing a recent project and locating the host", async () => {
     const { store } = makeStore()
     await store.load()
