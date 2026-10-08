@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.3.0";
+export const PROTOCOL_VERSION = "1.4.0";
 
 // ==================== Types ====================
 
@@ -43,6 +43,8 @@ export interface EditorEvent {
   revision?: number;
   savedRevision?: number;
   path?: string;
+  entityIds?: string[];
+  full?: boolean;
   added?: string[];
   removed?: string[];
   modified?: string[];
@@ -56,6 +58,60 @@ export interface ProjectFile {
   startupScene: string;
   scenes: string[];
   settings: unknown;
+}
+
+export interface HierarchyNode {
+  id: string;
+  parentId: string;
+  index: number;
+  name: string;
+  active: boolean;
+  activeInHierarchy: boolean;
+  layer: number;
+  tag: string;
+  components: string[];
+}
+
+export interface EntityHeader {
+  id: string;
+  parentId: string;
+  index: number;
+  name: string;
+  active: boolean;
+  activeInHierarchy: boolean;
+  layer: number;
+  tag: string;
+}
+
+export interface JsonVec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface JsonQuat {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
+export interface LocalTransform {
+  position: JsonVec3;
+  rotation: JsonQuat;
+  scale: JsonVec3;
+}
+
+export interface EntityComponent {
+  type: string;
+  uuid: string;
+  values: unknown;
+}
+
+export interface EntityDetails {
+  header: EntityHeader;
+  transform?: LocalTransform;
+  components: EntityComponent[];
 }
 
 // ==================== Ids ====================
@@ -76,12 +132,19 @@ export const CommandType = {
   OpenScene: 0x25,
   SaveSceneToFile: 0x26,
   NewScene: 0x27,
+  GetHierarchy: 0x28,
   GetOpenScene: 0x29,
   CreateEntity: 0x30,
   DestroyEntity: 0x31,
   SetEntityTransform: 0x32,
   GetEntityTransform: 0x33,
   GetAllEntities: 0x34,
+  CreateEntityEx: 0x35,
+  SetEntityParent: 0x36,
+  SetEntityProperties: 0x37,
+  DuplicateEntity: 0x38,
+  GetEntity: 0x39,
+  SetLocalTransform: 0x3A,
   CreateScript: 0x40,
   RescanAssets: 0x41,
   GetEngineHealth: 0x50,
@@ -109,6 +172,8 @@ export const ResponseType = {
   Events: 0x0C,
   SceneInfo: 0x0D,
   ProjectInfo: 0x0E,
+  Hierarchy: 0x0F,
+  EntityData: 0x10,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -130,12 +195,19 @@ export const CommandResponse = {
   OpenScene: "SceneInfo",
   SaveSceneToFile: "SceneInfo",
   NewScene: "SceneInfo",
+  GetHierarchy: "Hierarchy",
   GetOpenScene: "SceneInfo",
   CreateEntity: "EntityCreated",
   DestroyEntity: "Ok",
   SetEntityTransform: "Ok",
   GetEntityTransform: "EntityTransform",
   GetAllEntities: "EntityList",
+  CreateEntityEx: "EntityCreated",
+  SetEntityParent: "Ok",
+  SetEntityProperties: "Ok",
+  DuplicateEntity: "EntityCreated",
+  GetEntity: "EntityData",
+  SetLocalTransform: "Ok",
   CreateScript: "ScriptData",
   RescanAssets: "Ok",
   GetEngineHealth: "EngineHealth",
@@ -214,6 +286,40 @@ export interface GetEntityTransformRequest {
   entityId: string;
 }
 
+export interface CreateEntityExRequest {
+  name: string;
+  parentId: string;
+  siblingIndex: number;
+  preset: string;
+}
+
+export interface SetEntityParentRequest {
+  entityId: string;
+  parentId: string;
+  siblingIndex: number;
+  keepWorldTransform: boolean;
+}
+
+export interface SetEntityPropertiesRequest {
+  entityId: string;
+  properties: unknown;
+}
+
+export interface DuplicateEntityRequest {
+  entityId: string;
+}
+
+export interface GetEntityRequest {
+  entityId: string;
+}
+
+export interface SetLocalTransformRequest {
+  entityId: string;
+  position: Vec3;
+  rotation: Quat;
+  scale: Vec3;
+}
+
 export interface CreateScriptRequest {
   name: string;
 }
@@ -281,6 +387,11 @@ export interface SceneInfoResponse {
   savedRevision: number;
 }
 
+export interface HierarchyResponse {
+  revision: number;
+  nodes: HierarchyNode[];
+}
+
 export interface EntityCreatedResponse {
   entityId: string;
 }
@@ -294,6 +405,11 @@ export interface EntityTransformResponse {
 export interface EntityListResponse {
   count: number;
   entities: EntityInfo[];
+}
+
+export interface EntityDataResponse {
+  entity: EntityDetails;
+  worldMatrix: Mat4;
 }
 
 export interface ScriptDataResponse {
@@ -815,6 +931,110 @@ export function decodeGetEntityTransformRequest(payload: Uint8Array): GetEntityT
   return { entityId };
 }
 
+/** CreateEntityEx's request payload (without the frame header) */
+export function encodeCreateEntityExRequest(value: CreateEntityExRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.name);
+  writer.string(value.parentId);
+  writer.i32(value.siblingIndex);
+  writer.string(value.preset);
+  return writer.finish();
+}
+
+/** Reads CreateEntityEx's request payload; bytes after the last field are ignored */
+export function decodeCreateEntityExRequest(payload: Uint8Array): CreateEntityExRequest {
+  const reader = new ProtocolReader(payload);
+  const name = reader.string();
+  const parentId = reader.string();
+  const siblingIndex = reader.i32();
+  const preset = reader.string();
+  return { name, parentId, siblingIndex, preset };
+}
+
+/** SetEntityParent's request payload (without the frame header) */
+export function encodeSetEntityParentRequest(value: SetEntityParentRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.parentId);
+  writer.i32(value.siblingIndex);
+  writer.bool(value.keepWorldTransform);
+  return writer.finish();
+}
+
+/** Reads SetEntityParent's request payload; bytes after the last field are ignored */
+export function decodeSetEntityParentRequest(payload: Uint8Array): SetEntityParentRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const parentId = reader.string();
+  const siblingIndex = reader.i32();
+  const keepWorldTransform = reader.bool();
+  return { entityId, parentId, siblingIndex, keepWorldTransform };
+}
+
+/** SetEntityProperties's request payload (without the frame header) */
+export function encodeSetEntityPropertiesRequest(value: SetEntityPropertiesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.json(value.properties);
+  return writer.finish();
+}
+
+/** Reads SetEntityProperties's request payload; bytes after the last field are ignored */
+export function decodeSetEntityPropertiesRequest(payload: Uint8Array): SetEntityPropertiesRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const properties = reader.json() as unknown;
+  return { entityId, properties };
+}
+
+/** DuplicateEntity's request payload (without the frame header) */
+export function encodeDuplicateEntityRequest(value: DuplicateEntityRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads DuplicateEntity's request payload; bytes after the last field are ignored */
+export function decodeDuplicateEntityRequest(payload: Uint8Array): DuplicateEntityRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** GetEntity's request payload (without the frame header) */
+export function encodeGetEntityRequest(value: GetEntityRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads GetEntity's request payload; bytes after the last field are ignored */
+export function decodeGetEntityRequest(payload: Uint8Array): GetEntityRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** SetLocalTransform's request payload (without the frame header) */
+export function encodeSetLocalTransformRequest(value: SetLocalTransformRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writeVec3(writer, value.position);
+  writeQuat(writer, value.rotation);
+  writeVec3(writer, value.scale);
+  return writer.finish();
+}
+
+/** Reads SetLocalTransform's request payload; bytes after the last field are ignored */
+export function decodeSetLocalTransformRequest(payload: Uint8Array): SetLocalTransformRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const position = readVec3(reader);
+  const rotation = readQuat(reader);
+  const scale = readVec3(reader);
+  return { entityId, position, rotation, scale };
+}
+
 /** CreateScript's request payload (without the frame header) */
 export function encodeCreateScriptRequest(value: CreateScriptRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1014,6 +1234,22 @@ export function decodeSceneInfoResponse(payload: Uint8Array): SceneInfoResponse 
   return { path, name, uuid, revision, savedRevision };
 }
 
+/** Hierarchy's payload (without the frame header) */
+export function encodeHierarchyResponse(value: HierarchyResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.revision);
+  writer.json(value.nodes);
+  return writer.finish();
+}
+
+/** Reads Hierarchy's payload; bytes after the last field are ignored */
+export function decodeHierarchyResponse(payload: Uint8Array): HierarchyResponse {
+  const reader = new ProtocolReader(payload);
+  const revision = reader.u32();
+  const nodes = reader.json() as HierarchyNode[];
+  return { revision, nodes };
+}
+
 /** EntityCreated's payload (without the frame header) */
 export function encodeEntityCreatedResponse(value: EntityCreatedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -1060,6 +1296,22 @@ export function decodeEntityListResponse(payload: Uint8Array): EntityListRespons
   const count = reader.u32();
   const entities = readArray(reader, count, readEntityInfo);
   return { count, entities };
+}
+
+/** EntityData's payload (without the frame header) */
+export function encodeEntityDataResponse(value: EntityDataResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.entity);
+  writer.mat4(value.worldMatrix);
+  return writer.finish();
+}
+
+/** Reads EntityData's payload; bytes after the last field are ignored */
+export function decodeEntityDataResponse(payload: Uint8Array): EntityDataResponse {
+  const reader = new ProtocolReader(payload);
+  const entity = reader.json() as EntityDetails;
+  const worldMatrix = reader.mat4();
+  return { entity, worldMatrix };
 }
 
 /** ScriptData's payload (without the frame header) */
@@ -1128,6 +1380,12 @@ export const RequestCodecs = {
   DestroyEntity: { encode: encodeDestroyEntityRequest, decode: decodeDestroyEntityRequest },
   SetEntityTransform: { encode: encodeSetEntityTransformRequest, decode: decodeSetEntityTransformRequest },
   GetEntityTransform: { encode: encodeGetEntityTransformRequest, decode: decodeGetEntityTransformRequest },
+  CreateEntityEx: { encode: encodeCreateEntityExRequest, decode: decodeCreateEntityExRequest },
+  SetEntityParent: { encode: encodeSetEntityParentRequest, decode: decodeSetEntityParentRequest },
+  SetEntityProperties: { encode: encodeSetEntityPropertiesRequest, decode: decodeSetEntityPropertiesRequest },
+  DuplicateEntity: { encode: encodeDuplicateEntityRequest, decode: decodeDuplicateEntityRequest },
+  GetEntity: { encode: encodeGetEntityRequest, decode: decodeGetEntityRequest },
+  SetLocalTransform: { encode: encodeSetLocalTransformRequest, decode: decodeSetLocalTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
@@ -1144,9 +1402,11 @@ export const ResponseCodecs = {
   CameraPosition: { encode: encodeCameraPositionResponse, decode: decodeCameraPositionResponse },
   SceneData: { encode: encodeSceneDataResponse, decode: decodeSceneDataResponse },
   SceneInfo: { encode: encodeSceneInfoResponse, decode: decodeSceneInfoResponse },
+  Hierarchy: { encode: encodeHierarchyResponse, decode: decodeHierarchyResponse },
   EntityCreated: { encode: encodeEntityCreatedResponse, decode: decodeEntityCreatedResponse },
   EntityTransform: { encode: encodeEntityTransformResponse, decode: decodeEntityTransformResponse },
   EntityList: { encode: encodeEntityListResponse, decode: decodeEntityListResponse },
+  EntityData: { encode: encodeEntityDataResponse, decode: decodeEntityDataResponse },
   ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
   EngineHealth: { encode: encodeEngineHealthResponse, decode: decodeEngineHealthResponse },
   ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },

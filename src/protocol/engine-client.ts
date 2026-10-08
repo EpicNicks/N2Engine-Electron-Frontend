@@ -3,15 +3,18 @@ import {
   CameraPositionResponse,
   CommandType,
   EngineHealthResponse,
+  EntityDataResponse,
   EntityInfo,
   EventsResponse,
   FrameDataResponse,
+  HierarchyResponse,
   PROTOCOL_VERSION,
   ProjectInfoResponse,
   ResponseType,
   SceneDataResponse,
   SceneInfoResponse,
   ServerInfoResponse,
+  Quat,
   Vec3,
   encodeFrame,
   isProtocolCompatible,
@@ -19,6 +22,7 @@ import {
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
+import { checkEntityProperties } from "./entity-args"
 import { AudioSamples } from "../audio-stream"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */
@@ -396,6 +400,44 @@ export class EngineClient {
 
   getEntityTransform(entityId: string): Promise<{ position: Vec3; rotation: Vec3; scale: Vec3 }> {
     return this.send(Commands.GetEntityTransform, { entityId })
+  }
+
+  // ==================== Hierarchy (protocol 1.4) ====================
+
+  /** The scene's objects as a flat depth-first list, and the revision it was read at */
+  getHierarchy(): Promise<HierarchyResponse> {
+    return this.send(Commands.GetHierarchy, {})
+  }
+
+  /** Makes an object with a transform and the preset's components; answers its id (see EngineCommands) */
+  async createEntityEx(name: string, parentId: string, siblingIndex: number, preset: string): Promise<string> {
+    return (await this.send(Commands.CreateEntityEx, { name, parentId, siblingIndex, preset })).entityId
+  }
+
+  setEntityParent(entityId: string, parentId: string, siblingIndex: number, keepWorldTransform: boolean): Promise<void> {
+    return this.send(Commands.SetEntityParent, { entityId, parentId, siblingIndex, keepWorldTransform })
+  }
+
+  /** The properties are checked first (EntityPropertyKeys): an unknown key or a bad value is refused before sending */
+  setEntityProperties(entityId: string, properties: unknown): Promise<void> {
+    try {
+      checkEntityProperties(properties)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+    return this.send(Commands.SetEntityProperties, { entityId, properties })
+  }
+
+  async duplicateEntity(entityId: string): Promise<string> {
+    return (await this.send(Commands.DuplicateEntity, { entityId })).entityId
+  }
+
+  getEntity(entityId: string): Promise<EntityDataResponse> {
+    return this.send(Commands.GetEntity, { entityId })
+  }
+
+  setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void> {
+    return this.send(Commands.SetLocalTransform, { entityId, position, rotation, scale })
   }
 
   // ==================== Assets ====================

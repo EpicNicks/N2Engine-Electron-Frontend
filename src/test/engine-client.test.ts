@@ -18,13 +18,23 @@ import {
   PROTOCOL_VERSION,
   ResponseType,
   ServerInfoResponse,
+  decodeCreateEntityExRequest,
+  decodeDuplicateEntityRequest,
+  decodeGetEntityRequest,
   decodeHelloRequest,
   decodeNewSceneRequest,
   decodeOpenSceneRequest,
   decodeSaveSceneToFileRequest,
+  decodeSetEntityParentRequest,
+  decodeSetEntityPropertiesRequest,
+  decodeSetLocalTransformRequest,
   decodeSetProjectSettingsRequest,
   decodeSetStartupSceneRequest,
+  encodeEntityCreatedResponse,
+  encodeEntityDataResponse,
   encodeErrorResponse,
+  encodeHierarchyResponse,
+  encodeOkResponse,
   encodeProjectInfoResponse,
   encodeSceneInfoResponse,
   encodeFrame,
@@ -572,6 +582,115 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     await startup
     assert.equal(sentFrame(sockets[0], 2).type, 0x72)
     assert.deepEqual(decodeSetStartupSceneRequest(sentFrame(sockets[0], 2).payload), { path: "" })
+  })
+
+  test("the hierarchy commands send their ids and payloads and decode the answers", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const answer = (type: number, payload: Uint8Array): void => {
+      sockets[0].emit("data", frame(type, Buffer.from(payload)))
+    }
+    const node = {
+      id: "u1",
+      parentId: "",
+      index: 0,
+      name: "Cube",
+      active: true,
+      activeInHierarchy: true,
+      layer: 0,
+      tag: "",
+      components: ["Transform", "MeshRenderer"],
+    }
+
+    const hierarchy = client.getHierarchy()
+    answer(ResponseType.Hierarchy, encodeHierarchyResponse({ revision: 7, nodes: [node] }))
+    assert.deepEqual(await hierarchy, { revision: 7, nodes: [node] })
+    assert.equal(sentFrame(sockets[0], 0).type, 0x28)
+    assert.equal(sentFrame(sockets[0], 0).payload.length, 0)
+
+    const created = client.createEntityEx("Box", "parent", -1, "Cube")
+    answer(ResponseType.EntityCreated, encodeEntityCreatedResponse({ entityId: "new-id" }))
+    assert.equal(await created, "new-id")
+    assert.equal(sentFrame(sockets[0], 1).type, 0x35)
+    assert.deepEqual(decodeCreateEntityExRequest(sentFrame(sockets[0], 1).payload), {
+      name: "Box",
+      parentId: "parent",
+      siblingIndex: -1,
+      preset: "Cube",
+    })
+
+    const moved = client.setEntityParent("a", "", 3, true)
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await moved
+    assert.equal(sentFrame(sockets[0], 2).type, 0x36)
+    assert.deepEqual(decodeSetEntityParentRequest(sentFrame(sockets[0], 2).payload), {
+      entityId: "a",
+      parentId: "",
+      siblingIndex: 3,
+      keepWorldTransform: true,
+    })
+
+    const properties = { name: "Hero", active: false, tag: "Player", layer: 31 }
+    const changed = client.setEntityProperties("a", properties)
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await changed
+    assert.equal(sentFrame(sockets[0], 3).type, 0x37)
+    assert.deepEqual(decodeSetEntityPropertiesRequest(sentFrame(sockets[0], 3).payload), { entityId: "a", properties })
+
+    const copy = client.duplicateEntity("a")
+    answer(ResponseType.EntityCreated, encodeEntityCreatedResponse({ entityId: "copy-id" }))
+    assert.equal(await copy, "copy-id")
+    assert.equal(sentFrame(sockets[0], 4).type, 0x38)
+    assert.deepEqual(decodeDuplicateEntityRequest(sentFrame(sockets[0], 4).payload), { entityId: "a" })
+
+    const worldMatrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
+    const entity = {
+      header: { ...node, id: "a" },
+      transform: { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
+      components: [{ type: "Transform", uuid: "c1", values: { enabled: true } }],
+    }
+    const detail = client.getEntity("a")
+    answer(ResponseType.EntityData, encodeEntityDataResponse({ entity, worldMatrix }))
+    assert.deepEqual(await detail, { entity, worldMatrix })
+    assert.equal(sentFrame(sockets[0], 5).type, 0x39)
+    assert.deepEqual(decodeGetEntityRequest(sentFrame(sockets[0], 5).payload), { entityId: "a" })
+
+    const placed = client.setLocalTransform("a", { x: 1, y: 2, z: 3 }, { x: 0, y: 0.5, z: 0, w: 0.5 }, { x: 2, y: 2, z: 2 })
+    answer(ResponseType.Ok, encodeOkResponse({}))
+    await placed
+    assert.equal(sentFrame(sockets[0], 6).type, 0x3a)
+    assert.deepEqual(decodeSetLocalTransformRequest(sentFrame(sockets[0], 6).payload), {
+      entityId: "a",
+      position: { x: 1, y: 2, z: 3 },
+      rotation: { x: 0, y: 0.5, z: 0, w: 0.5 },
+      scale: { x: 2, y: 2, z: 2 },
+    })
+  })
+
+  test("setEntityProperties refuses an unknown key or a bad value without sending anything", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const bad: unknown[] = [
+      { colour: "red" },
+      { name: 5 },
+      { tag: null },
+      { active: "yes" },
+      { active: 1 },
+      { layer: 32 },
+      { layer: -1 },
+      { layer: 1.5 },
+      { layer: "3" },
+      { name: "ok", extra: true }, // one bad key refuses the lot
+      JSON.parse('{"__proto__": {}}'),
+      [],
+      null,
+      "{}",
+    ]
+    for (const properties of bad) {
+      await assert.rejects(client.setEntityProperties("a", properties), Error, JSON.stringify(properties))
+    }
+    assert.equal(sockets[0].written.length, 0)
+    await assert.rejects(client.setEntityProperties("a", { colour: 1 }), /unknown property colour/)
   })
 
   test("an Error answer rejects with the host's message", async () => {

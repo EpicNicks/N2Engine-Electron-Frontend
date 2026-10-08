@@ -12,7 +12,14 @@ import type {
   ServerInfo,
 } from "../shared/api"
 import type { EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
-import { AssetsChangedEvent, hasUnsavedChanges, parseStateEvent } from "../protocol/editor-events"
+import {
+  AssetsChangedEvent,
+  SceneChange,
+  hasUnsavedChanges,
+  mergeSceneChange,
+  parseStateEvent,
+  sceneChangeOf,
+} from "../protocol/editor-events"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename } from "./paths"
 
@@ -101,6 +108,15 @@ export class EditorStore {
   /** The last assetsChanged event, and how many arrived (panels refetch their listings when it changes) */
   readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
   readonly assetsChangeCount = signal(0)
+  /**
+   * What the scene's latest change touched, for panels that show its objects (the hierarchy, the inspector): they
+   * react to sceneChangeCount changing, then read this. full: refetch everything (another scene was loaded, a change
+   * too big to list, events were missed, or the connection changed), else refetch just entityIds with GetEntity, and
+   * GetHierarchy when scene.revision moved. One change covers one poll's events (several arriving together are
+   * merged); it is null before the first. A save changes no object and is no change.
+   */
+  readonly lastSceneChange = signal<SceneChange | null>(null)
+  readonly sceneChangeCount = signal(0)
   /** How many projectChanged events arrived (project.n2proj was saved: refetch GetProjectInfo) */
   readonly projectChangeCount = signal(0)
 
@@ -109,6 +125,10 @@ export class EditorStore {
   private sceneFetches = 0
   /** GetOpenScene calls still waiting for an answer */
   private sceneFetchesInFlight = 0
+  /** Events were missed and the poll's own events haven't been applied yet: their change is everything */
+  private sceneMissed = false
+  /** The newest scene revision any sceneChanged event named on this connection; null when none (or unreliable) */
+  private lastSeenRevision: number | null = null
 
   constructor(
     private readonly api: StoreApi,
@@ -127,6 +147,10 @@ export class EditorStore {
           // Panels refetch on these counters, and a missed assetsChanged or projectChanged can't be told apart
           this.assetsChangeCount.value++
           this.projectChangeCount.value++
+          // The events of this same poll come next and must not narrow this to their ids: onEvents sees the flag
+          this.sceneMissed = true
+          this.lastSeenRevision = null // another host's revisions can't be compared with these
+          this.recordSceneChange({ full: true, entityIds: [] })
         })
         void this.refreshScene()
         consoleOptions.onMissedEvents?.()
@@ -297,6 +321,9 @@ export class EditorStore {
         this.scene.value = null
         this.sceneFetches++ // an answer still on its way is for a connection that is gone
       }
+      this.lastSeenRevision = null
+      this.sceneMissed = false
+      this.recordSceneChange({ full: true, entityIds: [] }) // another host (or none): nothing held is valid
     })
     if (connected) {
       this.console.connect(this.host.value.launch)
@@ -328,11 +355,18 @@ export class EditorStore {
   /** Applies the host's state events; log events are the console's */
   private onEvents(events: EditorEvent[]): void {
     let refetch = false
+    // After missed events everything may have changed, whatever ids this poll's events carry
+    const pending: { change: SceneChange | null } = { change: this.sceneMissed ? { full: true, entityIds: [] } : null }
+    this.sceneMissed = false
     batch(() => {
       for (const event of events) {
         const parsed = parseStateEvent(event)
         if (!parsed) continue
         if (parsed.kind === "sceneChanged") {
+          const objects = sceneChangeOf(parsed, this.lastSeenRevision)
+          if (objects) pending.change = mergeSceneChange(pending.change, objects)
+          // The host's scene revision never goes down while it runs (loading a scene moves it up too)
+          this.lastSeenRevision = Math.max(this.lastSeenRevision ?? 0, parsed.revision)
           const scene = this.scene.value
           if (scene && parsed.path !== "" && scene.path === parsed.path && this.sceneFetchesInFlight === 0) {
             // Same scene file, nothing being fetched: its revisions moved. (A scene with no file can't be told from
@@ -351,6 +385,15 @@ export class EditorStore {
         }
       }
     })
+    if (pending.change) this.recordSceneChange(pending.change)
     if (refetch) void this.refreshScene()
+  }
+
+  /** Publishes a change for the panels */
+  private recordSceneChange(change: SceneChange): void {
+    batch(() => {
+      this.lastSceneChange.value = change
+      this.sceneChangeCount.value++
+    })
   }
 }

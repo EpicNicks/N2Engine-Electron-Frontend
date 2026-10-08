@@ -2,7 +2,7 @@
 // #84/#89). Node only (no Electron), so it is unit tested with a fake child process and with a real one.
 //
 // The host is started as
-//   N2EditorHost --project <dir> --port 0 --token-env N2_EDITOR_TOKEN --exit-on-disconnect
+//   N2EditorHost --project <dir> --port 0 --token-env N2_EDITOR_TOKEN --exit-on-disconnect --exit-on-stdin-eof
 // with a fresh random token in N2_EDITOR_TOKEN in the child's environment only: never in this process's
 // environment, never on the command line, never in a log line or anything sent to the page. Once listening the host
 // prints "N2EditorHost ready port=<port>" to stdout, and the editor connects to that port and says Hello with the
@@ -10,8 +10,9 @@
 // connected; the editor also kills it when it quits.
 //
 // The child's stdin is a pipe the editor keeps open and never writes to. When the editor dies, the pipe closes, so
-// a later engine change can make the host exit on stdin EOF: that covers a launcher that dies before its first
-// Hello, which --exit-on-disconnect can't (a host with a token ignores connections that never said Hello).
+// --exit-on-stdin-eof (opt-in in the engine, so it is passed here) makes the host exit on stdin EOF: that covers a
+// launcher that dies before its first Hello, which --exit-on-disconnect can't (a host with a token ignores
+// connections that never said Hello).
 import { ChildProcess, SpawnOptions, spawn as nodeSpawn } from "child_process"
 import { randomBytes } from "crypto"
 
@@ -71,7 +72,16 @@ export function generateToken(): string {
 
 /** The host's arguments: the token travels in the environment, so only the variable's name is here */
 export function buildHostArgs(projectDir: string): string[] {
-  return ["--project", projectDir, "--port", "0", "--token-env", TokenEnvVariable, "--exit-on-disconnect"]
+  return [
+    "--project",
+    projectDir,
+    "--port",
+    "0",
+    "--token-env",
+    TokenEnvVariable,
+    "--exit-on-disconnect",
+    "--exit-on-stdin-eof",
+  ]
 }
 
 /** The child's environment: a copy of this process's with the token added. The parent's is left as it was. */
