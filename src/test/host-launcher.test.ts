@@ -310,7 +310,7 @@ describe("HostProcess.launch with a real process", () => {
       spawn(process.execPath, [scriptPath, ...args, "--fail"], options)
     await assert.rejects(
       HostProcess.launch({ hostPath: "N2EditorHost", projectDir: dir, spawn: failing }),
-      /exited with code 1 before it was ready:\nProject folder not found/,
+      /exited with code 1 before it was ready:\nProject folder not found/
     )
   })
 

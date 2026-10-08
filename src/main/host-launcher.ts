@@ -140,7 +140,7 @@ export class HostProcess {
     /** The port the host listens on */
     readonly port: number,
     /** The access token for Hello. Main process only: never logged or sent to the page. */
-    readonly token: string,
+    readonly token: string
   ) {}
 
   /** Whether the process has exited */
@@ -222,9 +222,9 @@ export class HostProcess {
       const timer = setTimeout(
         () =>
           fail(
-            `N2EditorHost didn't report it was ready within ${timeoutMs / 1000} s${quoteOutput(stderrLines, stdoutLines)}`,
+            `N2EditorHost didn't report it was ready within ${timeoutMs / 1000} s${quoteOutput(stderrLines, stdoutLines)}`
           ),
-        timeoutMs,
+        timeoutMs
       )
 
       // stdout is read to the end, whatever it holds: a pipe nobody reads fills up, and the host would block writing
@@ -332,7 +332,7 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
     const timer = setTimeout(
       () =>
         finish(new Error(`N2EditorHost --create didn't finish within ${timeoutMs / 1000} s. ${CreateNeedsEngine}.`)),
-      timeoutMs,
+      timeoutMs
     )
 
     const stdout = new LineSplitter()
@@ -341,8 +341,8 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
       if (lines.some((line) => parseReadyLine(line) !== null)) {
         finish(
           new Error(
-            `This N2EditorHost doesn't support --create: it started an editor host instead. ${CreateNeedsEngine}.`,
-          ),
+            `This N2EditorHost doesn't support --create: it started an editor host instead. ${CreateNeedsEngine}.`
+          )
         )
       }
     }
@@ -360,8 +360,8 @@ export function createProjectWithHost(options: CreateOptions): Promise<void> {
         finish(
           new Error(
             `N2EditorHost --create ${describeExit({ code, signal })}${quoteOutput(stderrLines, stdoutLines)}\n` +
-              `(${CreateNeedsEngine}.)`,
-          ),
+              `(${CreateNeedsEngine}.)`
+          )
         )
       }
     })

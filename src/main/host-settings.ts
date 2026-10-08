@@ -20,7 +20,7 @@ export class HostSettings {
   constructor(
     /** settings.json in the app's user data folder */
     private readonly file: string,
-    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
 
   /** Where the host is, and where that came from; with a problem when the path is set but unusable */

@@ -89,7 +89,7 @@ describe("ConsoleStore", () => {
     await timers.fire()
     assert.deepEqual(
       store.entries.value.map((e) => e.message),
-      ["Engine initialized", "Editor server started"],
+      ["Engine initialized", "Editor server started"]
     )
     assert.deepEqual(store.position, { epoch: host.epoch, seq: 2 })
 
@@ -118,7 +118,7 @@ describe("ConsoleStore", () => {
     assert.deepEqual(host.polls[host.polls.length - 1], [host.epoch, 2])
     assert.deepEqual(
       store.entries.value.map((e) => e.message),
-      ["a", "b", "c"],
+      ["a", "b", "c"]
     )
   })
 
@@ -136,7 +136,7 @@ describe("ConsoleStore", () => {
     assert.deepEqual(host.polls[host.polls.length - 1], [0, 0])
     assert.deepEqual(
       store.entries.value.map((e) => e.message),
-      ["first host", "second host starting", "second host ready"],
+      ["first host", "second host starting", "second host ready"]
     )
   })
 
@@ -167,7 +167,7 @@ describe("ConsoleStore", () => {
       [
         ["warn", "7 host log lines were dropped before the editor read them"],
         ["info", "late"],
-      ],
+      ]
     )
   })
 
@@ -179,7 +179,7 @@ describe("ConsoleStore", () => {
     store.note("info", "four")
     assert.deepEqual(
       store.entries.value.map((e) => e.message),
-      ["two", "Three", "four"],
+      ["two", "Three", "four"]
     )
     assert.deepEqual(store.counts.value, { info: 1, warn: 1, error: 1 })
     const ids = store.entries.value.map((e) => e.id)
@@ -188,12 +188,12 @@ describe("ConsoleStore", () => {
     store.toggleLevel("info")
     assert.deepEqual(
       store.visible.value.map((e) => e.message),
-      ["two", "Three"],
+      ["two", "Three"]
     )
     store.search.value = "three"
     assert.deepEqual(
       store.visible.value.map((e) => e.message),
-      ["Three"],
+      ["Three"]
     )
     store.clear()
     assert.deepEqual(store.visible.value, [])
@@ -315,7 +315,7 @@ describe("EditorStore", () => {
     assert.deepEqual(api.events.polls, [[0, 0]])
     assert.deepEqual(
       store.console.entries.value.map((e) => e.message),
-      ["Starting N2EditorHost for C:\\Games\\C", "Engine initialized"],
+      ["Starting N2EditorHost for C:\\Games\\C", "Engine initialized"]
     )
   })
 
@@ -362,7 +362,7 @@ describe("EditorStore", () => {
     const last = store.console.entries.value[store.console.entries.value.length - 1]
     assert.deepEqual(
       [last.level, last.source, last.message],
-      ["error", "editor", "N2EditorHost exited with code 3:\nboom"],
+      ["error", "editor", "N2EditorHost exited with code 3:\nboom"]
     )
     assert.equal(store.view.value, "editor", "the project stays open, to restart its host")
   })

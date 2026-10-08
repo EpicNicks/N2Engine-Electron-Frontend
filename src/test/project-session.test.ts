@@ -12,7 +12,7 @@ class FakeHost {
   constructor(
     readonly port: number,
     readonly token: string,
-    private readonly options: LaunchOptions,
+    private readonly options: LaunchOptions
   ) {}
   pid = 99
   lastOutput = ":\nsome stderr"
@@ -220,7 +220,7 @@ describe("ProjectSession", () => {
     assert.equal(getRoot(), null)
     assert.deepEqual(
       { status: session.state.status, projectPath: session.state.projectPath },
-      { status: "stopped", projectPath: null },
+      { status: "stopped", projectPath: null }
     )
   })
 
@@ -269,7 +269,7 @@ describe("ProjectSession", () => {
     await Promise.all([a, b])
     assert.deepEqual(
       launches.map((l) => l.projectDir),
-      ["real:A", "real:B"],
+      ["real:A", "real:B"]
     )
     assert.equal(session.projectPath, "real:B")
   })

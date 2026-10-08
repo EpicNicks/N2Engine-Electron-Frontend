@@ -71,7 +71,7 @@ invoke<HostState>(Channels.hostGetState).then(
   (state) => {
     if (!hostPushed) applyHostState(state)
   },
-  (e) => console.error("Failed to get the host's state:", e),
+  (e) => console.error("Failed to get the host's state:", e)
 )
 
 // ==================== window.engine ====================

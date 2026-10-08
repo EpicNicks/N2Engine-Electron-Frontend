@@ -51,7 +51,7 @@ export class ConsoleStore {
     const shown = this.shown.value
     const search = this.search.value.toLowerCase()
     return this.entries.value.filter(
-      (entry) => shown[entry.level] && (search === "" || entry.message.toLowerCase().includes(search)),
+      (entry) => shown[entry.level] && (search === "" || entry.message.toLowerCase().includes(search))
     )
   })
   readonly counts = computed(() => {
@@ -77,12 +77,12 @@ export class ConsoleStore {
         onDropped: (count) =>
           this.note(
             "warn",
-            `${count} host log line${count === 1 ? " was" : "s were"} dropped before the editor read them`,
+            `${count} host log line${count === 1 ? " was" : "s were"} dropped before the editor read them`
           ),
         onReset: () => this.note("info", "The host started a new log"),
         onError: (e) => console.warn("PollEvents failed:", e),
       },
-      options,
+      options
     )
   }
 
