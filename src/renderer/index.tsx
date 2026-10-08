@@ -79,6 +79,8 @@ const app: AppState = {
   }),
   inspector: new InspectorState(window.engine, window.project, {
     confirm: confirmDialog,
+    // The file systems of Windows and macOS don't tell res:// paths apart by case
+    caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
     // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
     onError: (what, e) => store.reportError(what, e),
   }),
