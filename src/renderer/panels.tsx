@@ -1,8 +1,9 @@
-// The editor's panels other than the hierarchy (hierarchy-panel.tsx) and the console: the project's files, the
-// inspector (world transform), the engine's health and the script editor. F4-F6 rebuild them on the #6 protocol.
+// The editor's panels other than the hierarchy (hierarchy-panel.tsx), the inspector (inspector-panel.tsx) and the
+// console: the project's files, the engine's health and the script editor. F6 rebuilds the files on the #6 protocol.
 import { useEffect, useState } from "preact/hooks"
-import type { EngineHealthResponse, Vec3 } from "../protocol/protocol.generated"
+import type { EngineHealthResponse } from "../protocol/protocol.generated"
 import type { FileInfo } from "../shared/api"
+import { AssetDragType } from "./drag-types"
 import { basename, extname, toResPath } from "./paths"
 import { Empty, Panel, prompt, showContextMenu, useApp } from "./ui"
 
@@ -83,7 +84,20 @@ function FileNode({ node, depth }: { node: FileInfo; depth: number }) {
     }
   }
   return (
-    <div class="file-item" style={indent} title={node.path} onClick={open}>
+    <div
+      class="file-item"
+      style={indent}
+      title={node.path}
+      onClick={open}
+      // An asset field of the inspector takes it
+      draggable
+      onDragStart={(e) => {
+        if (!e.dataTransfer) return
+        e.dataTransfer.effectAllowed = "copy"
+        e.dataTransfer.setData(AssetDragType, node.path)
+        e.dataTransfer.setData("text/plain", node.name)
+      }}
+    >
       <span class="arrow" />
       <span class="icon">{fileIcon(node.name)}</span>
       <span>{node.name}</span>
@@ -111,90 +125,6 @@ export function FilesPanel() {
           files.map((node) => <FileNode node={node} depth={0} key={node.path} />)
         )}
       </div>
-    </Panel>
-  )
-}
-
-// ==================== Inspector ====================
-
-function VectorRow(props: { label: string; value: Vec3; step: number; onChange: (value: Vec3) => void }) {
-  return (
-    <div class="inspector-row">
-      <label>{props.label}</label>
-      <div class="vector-inputs">
-        {(["x", "y", "z"] as const).map((axis) => (
-          <input
-            key={axis}
-            type="number"
-            step={props.step}
-            aria-label={`${props.label} ${axis}`}
-            value={props.value[axis].toFixed(2)}
-            onChange={(e) => {
-              const n = parseFloat((e.currentTarget as HTMLInputElement).value)
-              if (Number.isFinite(n)) props.onChange({ ...props.value, [axis]: n })
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-export function InspectorPanel() {
-  const { store, scene, hierarchy } = useApp()
-  const selected = scene.selectedId.value
-  const transform = scene.transform.value
-  const entity = selected ? hierarchy.tree.value.nodes.get(selected) : undefined
-
-  let content
-  if (!selected || !store.connected.value) content = <Empty>Select an entity to inspect</Empty>
-  else if (!transform && !scene.noTransform.value) content = <Empty>Loading...</Empty>
-  else {
-    const set = (change: Partial<NonNullable<typeof transform>>) =>
-      transform &&
-      scene.setTransform({ ...transform, ...change }).catch((e) => store.reportError("Failed to set the transform", e))
-    const selectedCount = hierarchy.selection.value.ids.size
-    content = (
-      <>
-        <div class="inspector-section">
-          <h4>Entity</h4>
-          <div class="inspector-row">
-            <label>Name</label>
-            <input type="text" value={entity?.name ?? ""} readOnly />
-          </div>
-        </div>
-        {transform ? (
-          <div class="inspector-section">
-            <h4>Transform</h4>
-            <VectorRow
-              label="Position"
-              value={transform.position}
-              step={0.1}
-              onChange={(position) => set({ position })}
-            />
-            <VectorRow
-              label="Rotation"
-              value={transform.rotation}
-              step={1}
-              onChange={(rotation) => set({ rotation })}
-            />
-            <VectorRow label="Scale" value={transform.scale} step={0.1} onChange={(scale) => set({ scale })} />
-          </div>
-        ) : (
-          <Empty>This object has no transform</Empty>
-        )}
-        <button
-          class="danger"
-          onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
-        >
-          {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
-        </button>
-      </>
-    )
-  }
-  return (
-    <Panel title="Inspector" icon="⚙️" class="inspector-panel">
-      {content}
     </Panel>
   )
 }

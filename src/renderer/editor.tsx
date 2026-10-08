@@ -4,8 +4,10 @@ import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { effect } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
+import { editActions, editMenuItems, editShortcutOf } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
-import { EnginePanel, FilesPanel, InspectorPanel, ScriptEditor } from "./panels"
+import { InspectorPanel } from "./inspector-panel"
+import { EnginePanel, FilesPanel, ScriptEditor } from "./panels"
 import { basename, toResPath } from "./paths"
 import { MenuItem, Splitter, modalOpen, showContextMenu, useApp } from "./ui"
 import type { FileInfo } from "../shared/api"
@@ -81,6 +83,25 @@ function SceneButtons() {
   )
 }
 
+/** The Edit menu: Undo and Redo, once something registers them (edit-actions.ts); no button before */
+function EditButton() {
+  const items = editMenuItems(editActions.value)
+  if (items.length === 0) return null
+  return (
+    <button
+      class="secondary"
+      title="Undo and redo"
+      onClick={(e) => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+        e.stopPropagation()
+        showContextMenu(rect.left, rect.bottom, editMenuItems(editActions.value))
+      }}
+    >
+      Edit
+    </button>
+  )
+}
+
 function Toolbar() {
   const { store, audio } = useApp()
   const host = store.host.value
@@ -111,6 +132,7 @@ function Toolbar() {
       )}
       <div class="separator" />
       <SceneButtons />
+      <EditButton />
       <div class="separator" />
       <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
         {running ? "Restart host" : "Start host"}
@@ -224,7 +246,7 @@ function BottomPanel() {
 }
 
 export function Editor() {
-  const { store, scene, hierarchy } = useApp()
+  const { store, scene, hierarchy, inspector } = useApp()
 
   // The panels follow the connection: a new connection is a new host, with nothing loaded yet
   useEffect(
@@ -233,7 +255,33 @@ export function Editor() {
         if (!store.connected.value) {
           scene.reset()
           hierarchy.reset()
+          inspector.reset()
+        } else {
+          // The component types and the project's assets don't change while the host runs (the assets on a rescan)
+          void inspector.loadTypes()
+          void inspector.loadAssets()
         }
+      }),
+    []
+  )
+  // The inspector shows the selected object (the hierarchy's primary selection)
+  useEffect(
+    () =>
+      effect(() => {
+        const id = scene.selectedId.value
+        if (!store.connected.peek()) return
+        inspector.select(id).catch((e) => store.reportError("Failed to read the object", e))
+      }),
+    []
+  )
+  // Assets were added, changed or removed: the asset names, and a script's fields
+  useEffect(
+    () =>
+      effect(() => {
+        store.assetsChangeCount.value // what this runs on
+        if (!store.connected.peek()) return
+        void inspector.loadAssets()
+        void inspector.refreshLuaFields()
       }),
     []
   )
@@ -244,6 +292,8 @@ export function Editor() {
         store.sceneChangeCount.value // what this runs on
         const change = store.lastSceneChange.peek()
         if (!change || !store.connected.peek()) return
+        // The inspector's components may have changed (this includes the echoes of its own edits)
+        inspector.applyChange(change).catch((e) => store.reportError("Failed to read the object", e))
         hierarchy
           .applyChange(change, store.newestSceneRevision)
           .then(() => {
@@ -267,12 +317,28 @@ export function Editor() {
       // Not under a dialog (its own field's key), and not twice at once
       if (modalOpen() || (e.target as HTMLElement | null)?.closest?.(".modal")) return
       if (!store.scene.value || store.busy.value !== null) return
-      // A name being typed is committed first, so the saved scene has it
+      // A name or a value being typed is committed first, so the saved scene has it
       const target = e.target as HTMLElement | null
-      if (target?.classList?.contains("hierarchy-rename")) target.blur()
+      if (target?.classList?.contains("hierarchy-rename") || target?.closest?.(".inspector-panel")) target.blur()
+      // And what the inspector edited a moment ago is sent
       void hierarchy.renameSettled
+        .then(() => inspector.flush())
         .then(() => store.saveScene())
         .then((saved) => saved && scene.refreshFiles().catch(() => {}))
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
+  // Undo and redo (E6, edit-actions.ts): nothing is registered yet. A text field keeps its own undo.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const shortcut = editShortcutOf(e)
+      const actions = editActions.value
+      if (e.defaultPrevented || shortcut === null || actions === null || modalOpen()) return
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select")) return
+      e.preventDefault()
+      const done = shortcut === "undo" ? actions.undo() : actions.redo()
+      void Promise.resolve(done).catch((err) => store.reportError("Failed to " + shortcut, err))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)

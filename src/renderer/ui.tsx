@@ -7,6 +7,7 @@ import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
 import type { AudioController } from "./audio-controller"
 import type { HierarchyState } from "./hierarchy-state"
+import type { InspectorState } from "./inspector-state"
 import type { UnsavedChoice } from "./store"
 
 /** What every component can reach: the editor's store and the page's other state */
@@ -14,6 +15,7 @@ export interface AppState {
   store: EditorStore
   scene: SceneState
   hierarchy: HierarchyState
+  inspector: InspectorState
   audio: AudioController
 }
 
