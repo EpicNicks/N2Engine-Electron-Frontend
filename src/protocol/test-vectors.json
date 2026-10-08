@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.3.0",
+  "protocolVersion": "1.4.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -138,6 +138,87 @@
       "payload": "11000000656e746974794964203020e29c9320c3a9"
     },
     {
+      "command": "CreateEntityEx",
+      "id": "0x35",
+      "fields": {
+        "name": "name 0 ✓ é",
+        "parentId": "parentId 1 ✓ é",
+        "siblingIndex": -123458,
+        "preset": "preset 3 ✓ é"
+      },
+      "payload": "0d0000006e616d65203020e29c9320c3a911000000706172656e744964203120e29c9320c3a9be1dfeff0f000000707265736574203320e29c9320c3a9"
+    },
+    {
+      "command": "SetEntityParent",
+      "id": "0x36",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "parentId": "parentId 1 ✓ é",
+        "siblingIndex": -123458,
+        "keepWorldTransform": false
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a911000000706172656e744964203120e29c9320c3a9be1dfeff00"
+    },
+    {
+      "command": "SetEntityProperties",
+      "id": "0x37",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "properties": {
+          "list": [
+            1,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9370000007b226c697374223a5b312c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "command": "DuplicateEntity",
+      "id": "0x38",
+      "fields": {
+        "entityId": "entityId 0 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "GetEntity",
+      "id": "0x39",
+      "fields": {
+        "entityId": "entityId 0 ✓ é"
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "SetLocalTransform",
+      "id": "0x3A",
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "position": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0
+        },
+        "rotation": {
+          "x": 1.75,
+          "y": -2.0,
+          "z": 2.25,
+          "w": -2.5
+        },
+        "scale": {
+          "x": -2.0,
+          "y": 2.25,
+          "z": -2.5
+        }
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f000000c000001040000020c0000000c000001040000020c0"
+    },
+    {
       "command": "CreateScript",
       "id": "0x40",
       "fields": {
@@ -234,20 +315,25 @@
         "events": [
           {
             "added": [
-              "added 11 ✓",
-              "added 12 ✓"
+              "added 13 ✓",
+              "added 14 ✓"
             ],
+            "entityIds": [
+              "entityIds 11 ✓",
+              "entityIds 12 ✓"
+            ],
+            "full": true,
             "kind": "kind 4 ✓",
             "level": "level 5 ✓",
             "message": "message 6 ✓",
             "modified": [
-              "modified 13 ✓",
-              "modified 14 ✓"
+              "modified 15 ✓",
+              "modified 16 ✓"
             ],
             "path": "path 10 ✓",
             "removed": [
-              "removed 12 ✓",
-              "removed 13 ✓"
+              "removed 14 ✓",
+              "removed 15 ✓"
             ],
             "revision": 10.5,
             "savedRevision": 11.5,
@@ -256,20 +342,25 @@
           },
           {
             "added": [
-              "added 12 ✓",
-              "added 13 ✓"
+              "added 14 ✓",
+              "added 15 ✓"
             ],
+            "entityIds": [
+              "entityIds 12 ✓",
+              "entityIds 13 ✓"
+            ],
+            "full": false,
             "kind": "kind 5 ✓",
             "level": "level 6 ✓",
             "message": "message 7 ✓",
             "modified": [
-              "modified 14 ✓",
-              "modified 15 ✓"
+              "modified 16 ✓",
+              "modified 17 ✓"
             ],
             "path": "path 11 ✓",
             "removed": [
-              "removed 13 ✓",
-              "removed 14 ✓"
+              "removed 15 ✓",
+              "removed 16 ✓"
             ],
             "revision": 11.5,
             "savedRevision": 12.5,
@@ -278,7 +369,7 @@
           }
         ]
       },
-      "payload": "78563412795634127a5634123a0200005b7b226164646564223a5b22616464656420313120e29c93222c22616464656420313220e29c93225d2c226b696e64223a226b696e64203420e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c226d6f646966696564223a5b226d6f64696669656420313320e29c93222c226d6f64696669656420313420e29c93225d2c2270617468223a227061746820313020e29c93222c2272656d6f766564223a5b2272656d6f76656420313220e29c93222c2272656d6f76656420313320e29c93225d2c227265766973696f6e223a31302e352c2273617665645265766973696f6e223a31312e352c22736571223a352e352c2274696d65223a392e357d2c7b226164646564223a5b22616464656420313220e29c93222c22616464656420313320e29c93225d2c226b696e64223a226b696e64203520e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c226d6f646966696564223a5b226d6f64696669656420313420e29c93222c226d6f64696669656420313520e29c93225d2c2270617468223a227061746820313120e29c93222c2272656d6f766564223a5b2272656d6f76656420313320e29c93222c2272656d6f76656420313420e29c93225d2c227265766973696f6e223a31312e352c2273617665645265766973696f6e223a31322e352c22736571223a362e352c2274696d65223a31302e357d5d"
+      "payload": "78563412795634127a563412bb0200005b7b226164646564223a5b22616464656420313320e29c93222c22616464656420313420e29c93225d2c22656e74697479496473223a5b22656e7469747949647320313120e29c93222c22656e7469747949647320313220e29c93225d2c2266756c6c223a747275652c226b696e64223a226b696e64203420e29c93222c226c6576656c223a226c6576656c203520e29c93222c226d657373616765223a226d657373616765203620e29c93222c226d6f646966696564223a5b226d6f64696669656420313520e29c93222c226d6f64696669656420313620e29c93225d2c2270617468223a227061746820313020e29c93222c2272656d6f766564223a5b2272656d6f76656420313420e29c93222c2272656d6f76656420313520e29c93225d2c227265766973696f6e223a31302e352c2273617665645265766973696f6e223a31312e352c22736571223a352e352c2274696d65223a392e357d2c7b226164646564223a5b22616464656420313420e29c93222c22616464656420313520e29c93225d2c22656e74697479496473223a5b22656e7469747949647320313220e29c93222c22656e7469747949647320313320e29c93225d2c2266756c6c223a66616c73652c226b696e64223a226b696e64203520e29c93222c226c6576656c223a226c6576656c203620e29c93222c226d657373616765223a226d657373616765203720e29c93222c226d6f646966696564223a5b226d6f64696669656420313620e29c93222c226d6f64696669656420313720e29c93225d2c2270617468223a227061746820313120e29c93222c2272656d6f766564223a5b2272656d6f76656420313520e29c93222c2272656d6f76656420313620e29c93225d2c227265766973696f6e223a31312e352c2273617665645265766973696f6e223a31322e352c22736571223a362e352c2274696d65223a31302e357d5d"
     },
     {
       "response": "CameraPosition",
@@ -309,6 +400,44 @@
         "savedRevision": 305419900
       },
       "payload": "0d00000070617468203020e29c9320c3a90d0000006e616d65203120e29c9320c3a90d00000075756964203220e29c9320c3a97b5634127c563412"
+    },
+    {
+      "response": "Hierarchy",
+      "id": "0x0F",
+      "fields": {
+        "revision": 305419896,
+        "nodes": [
+          {
+            "active": false,
+            "activeInHierarchy": true,
+            "components": [
+              "components 9 ✓",
+              "components 10 ✓"
+            ],
+            "id": "id 1 ✓",
+            "index": 5.5,
+            "layer": 9.5,
+            "name": "name 4 ✓",
+            "parentId": "parentId 2 ✓",
+            "tag": "tag 8 ✓"
+          },
+          {
+            "active": true,
+            "activeInHierarchy": false,
+            "components": [
+              "components 10 ✓",
+              "components 11 ✓"
+            ],
+            "id": "id 2 ✓",
+            "index": 6.5,
+            "layer": 10.5,
+            "name": "name 5 ✓",
+            "parentId": "parentId 3 ✓",
+            "tag": "tag 9 ✓"
+          }
+        ]
+      },
+      "payload": "78563412970100005b7b22616374697665223a66616c73652c22616374697665496e486965726172636879223a747275652c22636f6d706f6e656e7473223a5b22636f6d706f6e656e7473203920e29c93222c22636f6d706f6e656e747320313020e29c93225d2c226964223a226964203120e29c93222c22696e646578223a352e352c226c61796572223a392e352c226e616d65223a226e616d65203420e29c93222c22706172656e744964223a22706172656e744964203220e29c93222c22746167223a22746167203820e29c93227d2c7b22616374697665223a747275652c22616374697665496e486965726172636879223a66616c73652c22636f6d706f6e656e7473223a5b22636f6d706f6e656e747320313020e29c93222c22636f6d706f6e656e747320313120e29c93225d2c226964223a226964203220e29c93222c22696e646578223a362e352c226c61796572223a31302e352c226e616d65223a226e616d65203520e29c93222c22706172656e744964223a22706172656e744964203320e29c93222c22746167223a22746167203920e29c93227d5d"
     },
     {
       "response": "EntityCreated",
@@ -357,6 +486,93 @@
         ]
       },
       "payload": "020000000b0000006964203120e29c9320c3a90d0000006e616d65203220e29c9320c3a90b0000006964203220e29c9320c3a90d0000006e616d65203320e29c9320c3a9"
+    },
+    {
+      "response": "EntityData",
+      "id": "0x10",
+      "fields": {
+        "entity": {
+          "components": [
+            {
+              "type": "type 2 ✓",
+              "uuid": "uuid 3 ✓",
+              "values": {
+                "list": [
+                  4,
+                  "two ✓",
+                  true,
+                  null
+                ],
+                "nested": {
+                  "value": 1.5
+                }
+              }
+            },
+            {
+              "type": "type 3 ✓",
+              "uuid": "uuid 4 ✓",
+              "values": {
+                "list": [
+                  5,
+                  "two ✓",
+                  true,
+                  null
+                ],
+                "nested": {
+                  "value": 1.5
+                }
+              }
+            }
+          ],
+          "header": {
+            "active": true,
+            "activeInHierarchy": false,
+            "id": "id 0 ✓",
+            "index": 4.5,
+            "layer": 8.5,
+            "name": "name 3 ✓",
+            "parentId": "parentId 1 ✓",
+            "tag": "tag 7 ✓"
+          },
+          "transform": {
+            "position": {
+              "x": 3.5,
+              "y": 4.5,
+              "z": 5.5
+            },
+            "rotation": {
+              "w": 7.5,
+              "x": 4.5,
+              "y": 5.5,
+              "z": 6.5
+            },
+            "scale": {
+              "x": 5.5,
+              "y": 6.5,
+              "z": 7.5
+            }
+          }
+        },
+        "worldMatrix": [
+          -0.5,
+          1.0,
+          1.5,
+          -2.0,
+          2.5,
+          3.0,
+          -3.5,
+          4.0,
+          4.5,
+          -5.0,
+          5.5,
+          6.0,
+          -6.5,
+          7.0,
+          7.5,
+          -8.0
+        ]
+      },
+      "payload": "050200007b22636f6d706f6e656e7473223a5b7b2274797065223a2274797065203220e29c93222c2275756964223a2275756964203320e29c93222c2276616c756573223a7b226c697374223a5b342c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d2c7b2274797065223a2274797065203320e29c93222c2275756964223a2275756964203420e29c93222c2276616c756573223a7b226c697374223a5b352c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d5d2c22686561646572223a7b22616374697665223a747275652c22616374697665496e486965726172636879223a66616c73652c226964223a226964203020e29c93222c22696e646578223a342e352c226c61796572223a382e352c226e616d65223a226e616d65203320e29c93222c22706172656e744964223a22706172656e744964203120e29c93222c22746167223a22746167203720e29c93227d2c227472616e73666f726d223a7b22706f736974696f6e223a7b2278223a332e352c2279223a342e352c227a223a352e357d2c22726f746174696f6e223a7b2277223a372e352c2278223a342e352c2279223a352e352c227a223a362e357d2c227363616c65223a7b2278223a352e352c2279223a362e352c227a223a372e357d7d7d000000bf0000803f0000c03f000000c00000204000004040000060c000008040000090400000a0c00000b0400000c0400000d0c00000e0400000f040000000c1"
     },
     {
       "response": "ScriptData",
