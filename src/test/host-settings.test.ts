@@ -75,3 +75,19 @@ describe("HostSettings (where N2EditorHost is)", () => {
     assert.equal(fs.existsSync(file), false)
   })
 })
+
+describe("HostSettings renderer", () => {
+  test("opengl and software are passed on; anything else is the host's default", () => {
+    const file = path.join(dir, "settings.json")
+    const settings = new HostSettings(file, {})
+    assert.equal(settings.renderer(), undefined)
+    fs.writeFileSync(file, JSON.stringify({ renderer: "software" }))
+    assert.equal(settings.renderer(), "software")
+    fs.writeFileSync(file, JSON.stringify({ renderer: "opengl" }))
+    assert.equal(settings.renderer(), "opengl")
+    fs.writeFileSync(file, JSON.stringify({ renderer: "--port 1" }))
+    assert.equal(settings.renderer(), undefined)
+    fs.writeFileSync(file, JSON.stringify({ renderer: 3 }))
+    assert.equal(settings.renderer(), undefined)
+  })
+})

@@ -4,20 +4,63 @@
 // size and its CSS size is that divided by devicePixelRatio. It is positioned absolutely, so its size never feeds
 // back into the layout; while a resize is pending, a stale frame is shown unscaled (cropped or bordered) rather than
 // stretched. Frames arrive as RGBA, top row first (engine #69), and are drawn as they are.
-import type { EngineApi } from "../shared/api"
+import type { FrameUpdateResponse } from "../protocol/protocol.generated"
+import type { EngineApi, PlayApi } from "../shared/api"
 import { FrameScheduler } from "./viewport-frames"
 import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 
 /** After the container stops changing size for this long, the new size is sent (on the next animation frame) */
 const ViewportSettleMilliseconds = 100
 
+/**
+ * Where frames come from: the editor host's view (on demand, RenderFrameIfChanged) or the game (RenderFrame, asked for
+ * again as soon as one is shown, at the display's rate). The viewport's size is sent to whichever is shown.
+ */
+export interface FrameTarget {
+  /** "game": the picture is the running game's, not the editor camera's (the gizmo, the picking and the camera don't apply) */
+  kind: "edit" | "game"
+  isConnected(): boolean
+  /** The frame if it changed since sinceRevision (a game's always has) */
+  request(sinceRevision: number): Promise<FrameUpdateResponse>
+  setViewportSize(width: number, height: number): Promise<void>
+}
+
+/** The editor host's view: a frame only when it changed (protocol 1.7.0) */
+export function editTarget(engine: Pick<EngineApi, "isConnected" | "renderFrameIfChanged" | "setViewportSize">): FrameTarget {
+  return {
+    kind: "edit",
+    isConnected: () => engine.isConnected(),
+    request: (since) => engine.renderFrameIfChanged(since),
+    setViewportSize: (width, height) => engine.setViewportSize(width, height),
+  }
+}
+
+/** The running game's picture, every time it is asked for (RenderFrame never says "not modified") */
+export function gameTarget(play: Pick<PlayApi, "state" | "renderFrame" | "setViewportSize">): FrameTarget {
+  let revision = 0
+  return {
+    kind: "game",
+    isConnected: () => {
+      const status = play.state().status
+      return status === "playing" || status === "paused"
+    },
+    request: async () => {
+      const frame = await play.renderFrame()
+      return { revision: ++revision, modified: true, ...frame }
+    },
+    setViewportSize: (width, height) => play.setViewportSize(width, height),
+  }
+}
+
 export interface ViewportHooks {
-  /** A frame was presented: its size is the one the picture (and so the gizmo's maths) has */
+  /** An editor frame was presented: its size is the one the picture (and so the gizmo's maths) has */
   onFrame?(size: PixelSize): void
+  /** A game frame was presented (its size is the viewport's, which the game's input is in) */
+  onGameFrame?(size: PixelSize): void
   /** The canvas was moved, resized or given a new frame size: an overlay on top of it follows */
   onLayout?(): void
   /**
-   * The size the host's viewport has been told (null: none, or the request failed): the host renders and picks at it
+   * The size the editor host's viewport has been told (null: none, or the request failed): the host renders and picks at it
    * from then on, while the picture on screen may still be a frame of the size before (until the next frame arrives)
    */
   onHostSize?(size: PixelSize | null): void
@@ -34,13 +77,13 @@ export class ViewportRenderer {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly container: HTMLElement,
-    private readonly engine: Pick<EngineApi, "isConnected" | "renderFrameIfChanged" | "setViewportSize">,
+    private target: FrameTarget,
     private readonly onError: (e: unknown) => void,
     private readonly hooks: ViewportHooks = {}
   ) {
     this.context = canvas.getContext("2d")!
     this.scheduler = new FrameScheduler({
-      request: (since) => this.engine.renderFrameIfChanged(since),
+      request: (since) => this.target.request(since),
       present: (frame) => {
         if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
           this.canvas.width = frame.width
@@ -51,14 +94,20 @@ export class ViewportRenderer {
         const { buffer, byteOffset, byteLength } = frame.pixels
         const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
         this.context.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
-        this.hooks.onFrame?.({ width: frame.width, height: frame.height })
+        if (this.target.kind === "game") {
+          this.hooks.onGameFrame?.({ width: frame.width, height: frame.height })
+          // A game changes every frame: the next one is asked for as soon as this one is shown
+          this.scheduler.invalidate()
+        } else {
+          this.hooks.onFrame?.({ width: frame.width, height: frame.height })
+        }
       },
       schedule: (callback) => {
         const request = requestAnimationFrame(callback)
         return () => cancelAnimationFrame(request)
       },
       onError: (e) => this.onError(e),
-      isConnected: () => this.engine.isConnected(),
+      isConnected: () => this.target.isConnected(),
     })
     this.resizeObserver = new ResizeObserver(() => {
       this.showCanvasAtDevicePixels()
@@ -83,7 +132,24 @@ export class ViewportRenderer {
 
   private setSentSize(size: PixelSize | null): void {
     this.sentSize = size
-    this.hooks.onHostSize?.(size)
+    // Only the editor host's size is what picking maps to (a game's viewport is its own)
+    if (this.target.kind === "edit") this.hooks.onHostSize?.(size)
+  }
+
+  /**
+   * Shows frames from another source (the game, or the editor view again). Whatever is on screen stays until the first
+   * frame of the new source arrives; the size is sent to it first.
+   */
+  setTarget(target: FrameTarget): void {
+    if (target === this.target) return
+    const running = this.scheduler.isRunning
+    this.stop()
+    this.target = target
+    if (running) this.start()
+  }
+
+  get targetKind(): FrameTarget["kind"] {
+    return this.target.kind
   }
 
   /** The view may have changed (the camera moved, the selected object did): ask for a frame */
@@ -118,7 +184,7 @@ export class ViewportRenderer {
 
   /** Sends the container's device-pixel size to the engine, if it changed (or always, when forced) */
   private syncSize(force: boolean = false): void {
-    if (!this.engine.isConnected()) {
+    if (!this.target.isConnected()) {
       this.setSentSize(null)
       return
     }
@@ -128,10 +194,11 @@ export class ViewportRenderer {
     if (!force && this.sentSize?.width === size.width && this.sentSize?.height === size.height) return
 
     this.setSentSize(size)
-    this.engine.setViewportSize(size.width, size.height).then(
+    const target = this.target
+    target.setViewportSize(size.width, size.height).then(
       () => {
         // The host's frame changed with its size (it says so in an event too; this needn't wait for the poll)
-        this.scheduler.invalidate()
+        if (this.target === target) this.scheduler.invalidate()
       },
       (e) => {
         console.error("Failed to set viewport size:", e)

@@ -74,6 +74,8 @@ export interface ProjectSessionDeps {
   log?: (message: string) => void
   /** How long a stopped host gets to exit (default StopGraceMs) */
   stopGraceMs?: number
+  /** The --renderer to start hosts with (undefined: the host's default); the play child gets the same */
+  renderer?: () => string | undefined
 }
 
 /** Resolves once the host has exited, or after ms (false then) */
@@ -328,6 +330,7 @@ export class ProjectSession {
       host = await this.launch({
         hostPath,
         projectDir: projectPath,
+        renderer: this.deps.renderer?.(),
         readyTimeoutMs: this.deps.settings.readyTimeoutMs(),
         onExit: (exit, h) => this.onExit(h, exit),
         onSpawned: (kill) => (this.killLaunching = kill),

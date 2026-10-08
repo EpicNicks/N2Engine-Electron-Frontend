@@ -47,6 +47,7 @@ function FileNode({ node, depth }: { node: FileInfo; depth: number }) {
           label: "New Script",
           action: async () => {
             if (!store.connected.value) return store.reportError("New script", "Not connected to the editor host")
+            if (store.refusedWhilePlaying("New script")) return
             const name = await prompt("New script", "NewScript")
             if (name) scene.createScript(node.path, name).catch(fail("Failed to create the script"))
           },
@@ -209,11 +210,15 @@ export function ScriptEditor({ path }: { path: string }) {
       class="script-editor"
       spellcheck={false}
       value={tab.text}
+      // A running game is read-only: the child has its scripts already, and an edit would come too late for it
+      readOnly={store.playMode.value !== null}
+      title={store.playMode.value !== null ? `Read only: ${store.playMode.value}` : undefined}
       aria-label={basename(path)}
       onInput={(e) => scene.editScript(path, (e.currentTarget as HTMLTextAreaElement).value)}
       onKeyDown={(e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === "s") {
           e.preventDefault()
+          if (store.refusedWhilePlaying("Save")) return
           scene.saveScript(path).catch((err) => store.reportError("Failed to save", err))
         }
       }}

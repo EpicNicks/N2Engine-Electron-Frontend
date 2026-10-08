@@ -8,6 +8,7 @@ import type { SceneState } from "./scene-state"
 import type { AudioController } from "./audio-controller"
 import type { HierarchyState } from "./hierarchy-state"
 import type { InspectorState } from "./inspector-state"
+import type { PlayController } from "./play-controller"
 import type { ViewportController } from "./viewport-controller"
 import type { UnsavedChoice } from "./store"
 import type { AutosaveChoice } from "./autosave"
@@ -20,6 +21,7 @@ export interface AppState {
   inspector: InspectorState
   viewport: ViewportController
   audio: AudioController
+  play: PlayController
 }
 
 export const AppContext = createContext<AppState | null>(null)

@@ -17,8 +17,11 @@ export interface ConsoleEntry {
   message: string
   /** Milliseconds since the Unix epoch */
   time: number
-  /** The host's log, or the editor's own note (a host session starting, events dropped, the host exiting) */
-  source: "host" | "editor"
+  /**
+   * The edit host's log, the editor's own note (a host session starting, events dropped, the host exiting), or the
+   * game's (the play child's log, while a game runs)
+   */
+  source: "host" | "editor" | "game"
 }
 
 /** How many entries the console keeps; the oldest go first */
@@ -134,6 +137,11 @@ export class ConsoleStore {
   /** Empties the console (the host keeps its log; nothing is read again) */
   clear(): void {
     this.entries.value = []
+  }
+
+  /** Adds entries from elsewhere (the play child's log lines) */
+  addEntries(entries: Array<Omit<ConsoleEntry, "id">>): void {
+    this.append(entries)
   }
 
   /** Adds the editor's own entry */

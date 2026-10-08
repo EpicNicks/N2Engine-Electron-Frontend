@@ -61,6 +61,11 @@ export class AudioPlayer {
     return this.muted
   }
 
+  /** Whether it is started (polling and playing, or waiting for a gesture), and not stopped */
+  get isRunning(): boolean {
+    return this.running
+  }
+
   onStatus(listener: (status: AudioPlayerStatus) => void): void {
     this.listeners.push(listener)
     listener(this.status())

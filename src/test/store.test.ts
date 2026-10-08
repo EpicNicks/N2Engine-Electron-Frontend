@@ -1606,3 +1606,22 @@ describe("EditorStore: autosave recovery", () => {
     assert.equal(store.canEdit.value, false)
   })
 })
+
+describe("EditorStore while a game runs", () => {
+  test("opening and creating scenes is refused with a message, and the host is not asked", async () => {
+    const { api, store } = makeStore()
+    await store.openProject()
+    await Promise.resolve()
+    store.setPlayMode("the game is running")
+    assert.equal(store.canEdit.value, false)
+    const before = api.calls.length
+    assert.equal(await store.openScene("res://scenes/Other.scene"), undefined)
+    assert.match(store.error.value ?? "", /Open scene: not while the game is running/)
+    store.dismissError()
+    assert.equal(await store.newScene(), undefined)
+    assert.match(store.error.value ?? "", /New scene: not while the game is running/)
+    assert.equal(api.calls.length, before)
+    store.setPlayMode(null)
+    assert.equal(store.refusedWhilePlaying("x"), false)
+  })
+})

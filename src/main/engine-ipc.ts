@@ -4,6 +4,7 @@
 // host's access token, which the page never sees).
 import { IpcMain } from "electron"
 import { EngineClient } from "../protocol/engine-client"
+import { checkInputEvents } from "../protocol/input-events"
 import {
   ArgKind,
   Channels,
@@ -30,6 +31,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
   stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
+  inputEvents: "an array of input events",
 }
 
 // How deep and how large a JSON argument may be (shared with the page, whose editors check the same limits)
@@ -113,6 +115,8 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
         return items
       }
       break
+    case "inputEvents":
+      return checkInputEvents(value, where)
     case "jsonObject":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const copy = copyJson(value, 0, { nodes: MaxJsonNodes })

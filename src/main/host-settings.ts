@@ -3,6 +3,9 @@
 // Where N2EditorHost is: the path configured in the editor ("Locate N2EditorHost...", saved here) wins; without one,
 // the N2ENGINE_HOST environment variable names it (#6 §(h): "the configured path, else N2ENGINE_HOST").
 //
+// renderer: "opengl" or "software", passed to every host as --renderer (the play child gets its edit host's); without
+// it the host picks its own default.
+//
 // readyTimeoutMs: how long a launched host may take to print its ready line (default 30 s).
 import * as fs from "fs"
 import * as path from "path"
@@ -70,6 +73,12 @@ export class HostSettings {
   readyTimeoutMs(): number {
     const value = this.read().readyTimeoutMs
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : DefaultReadyTimeoutMs
+  }
+
+  /** settings.json's renderer when it is one the host knows, else undefined (the host's default) */
+  renderer(): string | undefined {
+    const value = this.read().renderer
+    return value === "opengl" || value === "software" ? value : undefined
   }
 
   private read(): Record<string, unknown> {

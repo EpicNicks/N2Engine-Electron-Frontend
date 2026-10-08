@@ -17,6 +17,7 @@ import type {
   FrameUpdateResponse,
   HierarchyResponse,
   HistoryResponse,
+  InputEvent,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
@@ -170,7 +171,7 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray"
+export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray"
 
 /** GetEntityBounds takes at most this many ids (the host refuses more) */
 export const MaxEntityBoundsIds = 4096
@@ -244,6 +245,7 @@ interface ArgKindTypes {
   quat: Quat
   jsonObject: JsonObject
   stringArray: string[]
+  inputEvents: InputEvent[]
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
 type ArgsMatch = {
@@ -415,6 +417,86 @@ export const MaxJsonDepth = 32
 /** How many values (every scalar, array and object counts) a JSON argument may hold (the host's own limit is 200000) */
 export const MaxJsonNodes = 100_000
 
+// ==================== Play mode ====================
+
+/**
+ * The play session (the game running in a second host process, launched by the main process):
+ * - stopped: none (also after the user stopped it);
+ * - starting: the snapshot is being written, the child launched and connected;
+ * - playing, paused: connected and running or paused;
+ * - exited: the child ended on its own (it crashed, or the game quit), see message;
+ * - failed: it couldn't be started (a snapshot or launch failure), see message.
+ */
+export type PlayStatus = "stopped" | "starting" | "playing" | "paused" | "exited" | "failed"
+
+export interface PlayState {
+  status: PlayStatus
+  /** Counts sessions: a higher one is a newer game */
+  launch: number
+  /** The game's frame count and time in seconds, as GetPlayState last said */
+  frame: number
+  time: number
+  /** Why it failed or exited, with the child's last output lines; or a note on why it stopped; null otherwise */
+  message: string | null
+}
+
+export const InitialPlayState: PlayState = Object.freeze({ status: "stopped", launch: 0, frame: 0, time: 0, message: null })
+
+/** PlayState.message of a game that ended by itself with exit code 0 (the game quit): no failure */
+export const GameEndedMessage = "The game ended"
+
+/** An input event as SendInput takes it (protocol 1.10.0); the engine checks key and button names */
+export type PlayInputEvent = InputEvent
+
+/** SendInput takes at most this many events (the host refuses more) */
+export const MaxInputEventsPerBatch = 1024
+
+/** Step runs 1 to this many frames */
+export const MaxStepFrames = 1000
+
+/** What the page may ask of the play child's connection: each is forwarded to the child by the main process */
+export interface PlayCommands {
+  /** The game's picture (RGBA, top row first) at the viewport size; the only frame command a play host answers */
+  renderFrame(): Promise<FrameDataResponse>
+  setViewportSize(width: number, height: number): Promise<void>
+  /** The child's audio stream; null when it has none */
+  getAudio(): Promise<AudioSamples | null>
+  pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse>
+  sendInput(events: PlayInputEvent[]): Promise<void>
+}
+
+export type PlayCommandName = keyof PlayCommands
+
+/** Every forwarded play command and its arguments; the main process refuses any other name */
+export const PlayCommandArgs = {
+  renderFrame: [],
+  setViewportSize: ["int32", "int32"],
+  getAudio: [],
+  pollEvents: ["uint32", "uint32", "uint32"],
+  sendInput: ["inputEvents"],
+} as const satisfies { readonly [K in PlayCommandName]: readonly ArgKind[] }
+
+export const PlayCommandNames = Object.keys(PlayCommandArgs) as PlayCommandName[]
+
+/** window.play: the play session */
+export interface PlayApi extends PlayCommands {
+  /** The last known state (pushed by the main process, so it's synchronous) */
+  state(): PlayState
+  onStateChange(listener: (state: PlayState) => void): void
+  /**
+   * Plays the open scene as it is in the editor host's memory, unsaved edits included: writes a snapshot, launches
+   * the child, connects. Resolves once it is playing; rejects with the reason when it couldn't start.
+   */
+  start(): Promise<void>
+  /** Shuts the child down (kills it after a grace period); not an error when none is running */
+  stop(): Promise<void>
+  setPaused(paused: boolean): Promise<void>
+  /** Runs 1 to MaxStepFrames frames; only while paused */
+  step(frames: number): Promise<void>
+  /** Asks the child for its state (GetPlayState): the pause flag, frame and time */
+  refresh(): Promise<PlayState>
+}
+
 export const ProjectTextExtensions: readonly string[] = [".scene", ".lua", ".json", ".txt"]
 
 /** A command of the application menu (macOS), which the page runs: see main/app-menu.ts */
@@ -450,6 +532,18 @@ export const Channels = {
   hostStop: "host:stop",
   hostLocation: "host:location",
   hostLocate: "host:locate",
+
+  /** () → IpcResult<PlayState> */
+  playGetState: "play:getState",
+  /** main → page: PlayState */
+  playState: "play:state",
+  playStart: "play:start",
+  playStop: "play:stop",
+  playSetPaused: "play:setPaused",
+  playStep: "play:step",
+  playRefresh: "play:refresh",
+  /** (name: PlayCommandName, args: unknown[]) → IpcResult */
+  playCall: "play:call",
 
   projectOpenDialog: "project:openDialog",
   projectOpenFolder: "project:openFolder",

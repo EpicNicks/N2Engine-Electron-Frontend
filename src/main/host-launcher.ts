@@ -3,6 +3,7 @@
 //
 // The host is started as
 //   N2EditorHost --project <dir> --port 0 --token-env N2_EDITOR_TOKEN --exit-on-disconnect --exit-on-stdin-eof
+// and a play child (engine #102, play-session.ts) the same way plus --renderer <the edit host's> and --play <file>
 // with a fresh random token in N2_EDITOR_TOKEN in the child's environment only: never in this process's
 // environment, never on the command line, never in a log line or anything sent to the page. Once listening the host
 // prints "N2EditorHost ready port=<port>" to stdout, and the editor connects to that port and says Hello with the
@@ -70,18 +71,22 @@ export function generateToken(): string {
   return randomBytes(32).toString("hex")
 }
 
+/** What else a host is started with */
+export interface HostArgOptions {
+  /** --renderer: opengl or software. The play child needs the edit host's, or it shows another picture (or none). */
+  renderer?: string
+  /** --play: the snapshot (or res:// scene) the host plays as a game, instead of serving an edit session */
+  playFile?: string
+}
+
 /** The host's arguments: the token travels in the environment, so only the variable's name is here */
-export function buildHostArgs(projectDir: string): string[] {
-  return [
-    "--project",
-    projectDir,
-    "--port",
-    "0",
-    "--token-env",
-    TokenEnvVariable,
-    "--exit-on-disconnect",
-    "--exit-on-stdin-eof",
-  ]
+export function buildHostArgs(projectDir: string, options: HostArgOptions = {}): string[] {
+  const args = ["--project", projectDir]
+  if (options.renderer) args.push("--renderer", options.renderer)
+  args.push("--port", "0", "--token-env", TokenEnvVariable)
+  if (options.playFile) args.push("--play", options.playFile)
+  args.push("--exit-on-disconnect", "--exit-on-stdin-eof")
+  return args
 }
 
 /** The child's environment: a copy of this process's with the token added. The parent's is left as it was. */
@@ -101,6 +106,10 @@ export interface HostExit {
 export interface LaunchOptions {
   hostPath: string
   projectDir: string
+  /** --renderer (the edit host's and its play child's must match) */
+  renderer?: string
+  /** --play <file>: starts a play host (a game) instead of an edit host */
+  playFile?: string
   /** Defaults to generateToken() */
   token?: string
   readyTimeoutMs?: number
@@ -195,7 +204,7 @@ export class HostProcess {
     return new Promise((resolve, reject) => {
       let child: ChildProcess
       try {
-        child = spawn(options.hostPath, buildHostArgs(options.projectDir), {
+        child = spawn(options.hostPath, buildHostArgs(options.projectDir, options), {
           env: buildChildEnv(options.env ?? process.env, token),
           // stdin: a pipe kept open and never written to (see the top of this file)
           stdio: ["pipe", "pipe", "pipe"],

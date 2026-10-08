@@ -2,7 +2,8 @@
 // and the mute setting, remembered in localStorage.
 import { computed, signal } from "@preact/signals-core"
 import { AudioPlayer, AudioPlayerStatus } from "./audio-player"
-import type { EngineApi } from "../shared/api"
+import type { EngineApi, PlayApi } from "../shared/api"
+import type { AudioSource } from "./audio-player"
 
 const MutedStorageKey = "audioMuted"
 
@@ -52,10 +53,15 @@ export class AudioController {
   )
 
   private readonly player: AudioPlayer
+  private readonly editor: AudioSource
+  /** Where the audio comes from: the editor host's, or the game's while one is live (useGame) */
+  private source: AudioSource
 
   constructor(engine: Pick<EngineApi, "getAudio" | "isConnected">) {
     // Polls GetAudio through window.engine and plays it with Web Audio (see audio-player.ts)
-    this.player = new AudioPlayer({ getAudio: () => engine.getAudio(), isConnected: () => engine.isConnected() })
+    this.editor = { getAudio: () => engine.getAudio(), isConnected: () => engine.isConnected() }
+    this.source = this.editor
+    this.player = new AudioPlayer({ getAudio: () => this.source.getAudio(), isConnected: () => this.source.isConnected() })
     this.player.setMuted(this.muted.value)
     this.player.onStatus((status) => {
       const previous = this.status.value?.state
@@ -72,6 +78,22 @@ export class AudioController {
 
   stop(): void {
     this.player.stop()
+  }
+
+  /**
+   * Plays the game's audio (the play child has a stream of its own) instead of the editor host's, or the editor host's
+   * again (null). The player starts over on the new source: its buffer holds nothing of the other one.
+   */
+  useGame(play: Pick<PlayApi, "getAudio" | "state"> | null): void {
+    this.player.stop()
+    this.source = play
+      ? {
+          getAudio: () => play.getAudio(),
+          isConnected: () => play.state().status === "playing" || play.state().status === "paused",
+        }
+      : this.editor
+    // The game's audio starts with the game; the editor host's again only when it is there to ask
+    if (play || this.editor.isConnected()) this.player.start()
   }
 
   /** The toolbar button: mutes or unmutes, or resumes audio the autoplay policy suspended (a click is a gesture) */

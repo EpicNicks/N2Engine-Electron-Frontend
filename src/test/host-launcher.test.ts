@@ -499,3 +499,27 @@ describe("probeHostCapabilities (N2EditorHost --help)", () => {
     await assert.rejects(c, /Couldn't start nope/)
   })
 })
+
+describe("a play child's command line", () => {
+  test("it has the edit host's project and renderer, a fresh token variable, --play, and both exit flags", () => {
+    assert.deepEqual(buildHostArgs("C:\p", { renderer: "software", playFile: "C:\p\.n2\play\Main-1.scene" }), [
+      "--project",
+      "C:\p",
+      "--renderer",
+      "software",
+      "--port",
+      "0",
+      "--token-env",
+      "N2_EDITOR_TOKEN",
+      "--play",
+      "C:\p\.n2\play\Main-1.scene",
+      "--exit-on-disconnect",
+      "--exit-on-stdin-eof",
+    ])
+  })
+
+  test("an edit host without a renderer setting is started as before", () => {
+    assert.ok(!buildHostArgs("C:\p", {}).includes("--renderer"))
+    assert.ok(!buildHostArgs("C:\p", {}).includes("--play"))
+  })
+})
