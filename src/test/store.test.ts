@@ -165,7 +165,7 @@ describe("ConsoleStore", () => {
     assert.deepEqual(
       store.entries.value.map((e) => [e.level, e.message]),
       [
-        ["warn", "7 host log lines were dropped before the editor read them"],
+        ["warn", "7 host events were dropped before the editor read them"],
         ["info", "late"],
       ]
     )
@@ -264,12 +264,15 @@ class FakeApi implements StoreApi {
     pollEvents: (epoch: number, afterSeq: number, maxEvents: number) => this.events.poll(epoch, afterSeq, maxEvents),
     getOpenScene: async (): Promise<SceneInfoResponse> => {
       this.calls.push("getOpenScene")
+      if (this.sceneGate) await this.sceneGate
       if (!this.openScene) throw new Error("No scene is loaded")
       return { ...this.openScene }
     },
   }
   /** What GetOpenScene answers; null: an error (no scene, or a host before protocol 1.3) */
   openScene: SceneInfoResponse | null = null
+  /** While set, GetOpenScene waits for it */
+  sceneGate: Promise<void> | null = null
 
   host = {
     state: () => this.hostState,
@@ -431,6 +434,69 @@ describe("EditorStore", () => {
     api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 0, savedRevision: 0, path: "" })
     await timers.fire()
     assert.equal(store.sceneLabel.value, "Other")
+  })
+
+  test("a matching sceneChanged doesn't cancel a fetch in flight, and an older revision is ignored", async () => {
+    const { api, store, timers } = makeStore()
+    const a = "res://assets/scenes/a.scene"
+    api.openScene = { path: a, name: "a", uuid: "u", revision: 3, savedRevision: 3 }
+    await store.openProject()
+    await settle()
+
+    // A resync is waiting on the host when an event for the same scene arrives
+    let release = (): void => undefined
+    api.sceneGate = new Promise<void>((resolve) => (release = resolve))
+    api.openScene = { path: a, name: "renamed", uuid: "u", revision: 6, savedRevision: 3 }
+    const fetching = store.refreshScene()
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a })
+    await timers.fire()
+    api.sceneGate = null
+    release()
+    await fetching
+    await settle()
+    assert.equal(store.scene.peek()?.name, "renamed")
+    assert.equal(store.scene.peek()?.revision, 6)
+
+    // An event older than what is known changes nothing
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 2, savedRevision: 2, path: a })
+    await timers.fire()
+    assert.equal(store.scene.peek()?.revision, 6)
+  })
+
+  test("an answer that arrives after the connection dropped is discarded", async () => {
+    const { api, store } = makeStore()
+    api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }
+    let release = (): void => undefined
+    api.sceneGate = new Promise<void>((resolve) => (release = resolve))
+    await store.openProject()
+    await settle()
+    api.pushConnection(false)
+    release()
+    await settle()
+    assert.equal(store.scene.peek(), null)
+  })
+
+  test("missed events bump the assets and project counters, and the caller's hooks still run", async () => {
+    const api = new FakeApi()
+    const timers = new FakeTimers()
+    const seen: string[] = []
+    const store = new EditorStore(api, {
+      timers,
+      now: () => 0,
+      onEvents: (events) => seen.push(`events ${events.length}`),
+      onMissedEvents: () => seen.push("missed"),
+    })
+    api.events.add("one")
+    await store.openProject()
+    await timers.fire()
+    assert.ok(seen.includes("events 1"))
+    const assets = store.assetsChangeCount.peek()
+    const project = store.projectChangeCount.peek()
+    api.events.restart("another host")
+    await timers.fire()
+    assert.ok(seen.includes("missed"))
+    assert.equal(store.assetsChangeCount.peek(), assets + 1)
+    assert.equal(store.projectChangeCount.peek(), project + 1)
   })
 
   test("the scene is forgotten when the connection drops", async () => {

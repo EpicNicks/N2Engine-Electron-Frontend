@@ -22,18 +22,23 @@ const KindDescriptions: Record<ArgKind, string> = {
 /** How deeply nested a JSON argument may be (the page's merge patches are a few levels; this stops runaway input) */
 export const MaxJsonDepth = 32
 
+/** How many values (every scalar, array and object counts) a JSON argument may hold, shared references counted per use */
+export const MaxJsonNodes = 100_000
+
 /**
  * A fresh copy of the value if it is plain JSON (null, booleans, finite numbers, strings, arrays and plain
- * objects), else undefined. Class instances, functions, undefined, NaN and cycles (by the depth limit) are refused.
+ * objects), else undefined. Class instances, functions, undefined, NaN and cycles (by the depth limit) are refused, as is more than MaxJsonNodes values.
  */
-function copyJson(value: unknown, depth: number): { value: unknown } | undefined {
+function copyJson(value: unknown, depth: number, budget: { nodes: number }): { value: unknown } | undefined {
+  // Shared references (a DAG, not a cycle) copy once per use, so the depth limit alone doesn't bound the work
+  if (--budget.nodes < 0) return undefined
   if (value === null || typeof value === "boolean" || typeof value === "string") return { value }
   if (typeof value === "number") return Number.isFinite(value) ? { value } : undefined
   if (depth >= MaxJsonDepth || typeof value !== "object") return undefined
   if (Array.isArray(value)) {
     const items: unknown[] = []
     for (const item of value) {
-      const copy = copyJson(item, depth + 1)
+      const copy = copyJson(item, depth + 1, budget)
       if (!copy) return undefined
       items.push(copy.value)
     }
@@ -44,7 +49,7 @@ function copyJson(value: unknown, depth: number): { value: unknown } | undefined
   // fromEntries defines own properties, so a "__proto__" key stays data instead of setting the prototype
   const entries: Array<[string, unknown]> = []
   for (const [key, field] of Object.entries(value)) {
-    const copy = copyJson(field, depth + 1)
+    const copy = copyJson(field, depth + 1, budget)
     if (!copy) return undefined
     entries.push([key, copy.value])
   }
@@ -79,7 +84,7 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       break
     case "jsonObject":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-        const copy = copyJson(value, 0)
+        const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
         if (copy) return copy.value
       }
       break

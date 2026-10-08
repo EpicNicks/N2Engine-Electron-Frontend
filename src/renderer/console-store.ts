@@ -86,10 +86,7 @@ export class ConsoleStore {
           onEvents?.(events)
         },
         onDropped: (count) => {
-          this.note(
-            "warn",
-            `${count} host log line${count === 1 ? " was" : "s were"} dropped before the editor read them`
-          )
+          this.note("warn", `${count} host event${count === 1 ? " was" : "s were"} dropped before the editor read them`)
           onMissedEvents?.()
         },
         onReset: () => {

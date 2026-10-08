@@ -107,6 +107,8 @@ export class EditorStore {
   readonly console: ConsoleStore
   /** Counts scene fetches, so a slow answer can't replace a newer one */
   private sceneFetches = 0
+  /** GetOpenScene calls still waiting for an answer */
+  private sceneFetchesInFlight = 0
 
   constructor(
     private readonly api: StoreApi,
@@ -115,9 +117,20 @@ export class EditorStore {
     this.host = signal(api.host.state())
     this.console = new ConsoleStore((epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents), {
       ...consoleOptions,
-      onEvents: (events) => this.onEvents(events),
+      onEvents: (events) => {
+        this.onEvents(events)
+        consoleOptions.onEvents?.(events)
+      },
       // Events were dropped, or another host's log began: what they carried may have been missed
-      onMissedEvents: () => void this.refreshScene(),
+      onMissedEvents: () => {
+        batch(() => {
+          // Panels refetch on these counters, and a missed assetsChanged or projectChanged can't be told apart
+          this.assetsChangeCount.value++
+          this.projectChangeCount.value++
+        })
+        void this.refreshScene()
+        consoleOptions.onMissedEvents?.()
+      },
     })
     api.host.onStateChange((state) => this.onHostState(state))
     api.engine.onConnectionChange((connected) => this.onConnection(connected))
@@ -280,7 +293,10 @@ export class EditorStore {
     batch(() => {
       this.connected.value = connected
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
-      if (!connected) this.scene.value = null
+      if (!connected) {
+        this.scene.value = null
+        this.sceneFetches++ // an answer still on its way is for a connection that is gone
+      }
     })
     if (connected) {
       this.console.connect(this.host.value.launch)
@@ -295,14 +311,18 @@ export class EditorStore {
     const fetch = ++this.sceneFetches
     let scene: SceneInfoResponse | null = null
     if (this.api.engine.isConnected()) {
+      this.sceneFetchesInFlight++
       try {
         scene = await this.api.engine.getOpenScene()
       } catch (e) {
         // An error answer means no scene (or a host before protocol 1.3); a dropped connection is reported elsewhere
         console.debug("GetOpenScene failed:", e)
+      } finally {
+        this.sceneFetchesInFlight--
       }
     }
-    if (fetch === this.sceneFetches) this.scene.value = scene
+    // Not for a connection that dropped while waiting, or when a newer fetch started
+    if (fetch === this.sceneFetches && this.api.engine.isConnected()) this.scene.value = scene
   }
 
   /** Applies the host's state events; log events are the console's */
@@ -314,10 +334,10 @@ export class EditorStore {
         if (!parsed) continue
         if (parsed.kind === "sceneChanged") {
           const scene = this.scene.value
-          if (scene && parsed.path !== "" && scene.path === parsed.path) {
-            // Same scene file: its revisions moved. (A scene with no file can't be told from another one without
-            // fetching.) A newer fetch in flight (sceneFetches) is superseded by this.
-            this.sceneFetches++
+          if (scene && parsed.path !== "" && scene.path === parsed.path && this.sceneFetchesInFlight === 0) {
+            // Same scene file, nothing being fetched: its revisions moved. (A scene with no file can't be told from
+            // another one without fetching, and a fetch in flight must not be cancelled: its answer is the truth.)
+            if (parsed.revision < scene.revision) continue // older than what is known
             this.scene.value = { ...scene, revision: parsed.revision, savedRevision: parsed.savedRevision }
           } else {
             // Another scene was loaded (or none was known): its name and uuid come from GetOpenScene

@@ -69,12 +69,7 @@ export function generateToken(): string {
   return randomBytes(32).toString("hex")
 }
 
-/**
- * The host's arguments: the token travels in the environment, so only the variable's name is here.
- *
- * TODO: add --exit-on-stdin-eof (the stdin pipe above) once the engine has it. That flag is in a separate engine PR
- * that is not merged yet: a host that doesn't know it would refuse to start, so it must not be passed before then.
- */
+/** The host's arguments: the token travels in the environment, so only the variable's name is here */
 export function buildHostArgs(projectDir: string): string[] {
   return ["--project", projectDir, "--port", "0", "--token-env", TokenEnvVariable, "--exit-on-disconnect"]
 }

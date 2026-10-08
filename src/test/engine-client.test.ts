@@ -499,8 +499,8 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     savedRevision: 5,
   }
   const project = {
-    rootPath: "C:\Games\A",
-    userDataPath: "C:\Users\me\AppData\N2\A",
+    rootPath: "C:\\Games\\A",
+    userDataPath: "C:\\Users\\me\\AppData\\N2\\A",
     project: {
       formatVersion: 1,
       name: "A",

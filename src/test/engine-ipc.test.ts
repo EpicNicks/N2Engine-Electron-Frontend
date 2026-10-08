@@ -1,7 +1,14 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { IpcMain, WebContents } from "electron"
-import { EngineHost, EngineHostOptions, MaxJsonDepth, MaxUnusedViewBytes, ownedViews } from "../main/engine-ipc"
+import {
+  EngineHost,
+  EngineHostOptions,
+  MaxJsonDepth,
+  MaxJsonNodes,
+  MaxUnusedViewBytes,
+  ownedViews,
+} from "../main/engine-ipc"
 import { Commands } from "../protocol/codec"
 import { FrameReader } from "../protocol/framing"
 import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
@@ -294,6 +301,23 @@ describe("EngineHost (the main process's engine IPC)", () => {
     client.calls.length = 0
     assert.equal((await ipc.invoke(Channels.engineCall, editor, "setProjectSettings", [deep])).ok, false)
     assert.equal(client.calls.length, 0)
+  })
+
+  test("a patch of shared references is refused by its node count, quickly", async () => {
+    const { ipc, client, editor } = setup()
+    // Each level holds the level below twice: 2^30 values to copy, though only 31 objects and 30 levels deep
+    let shared: Record<string, unknown> = { leaf: 1 }
+    for (let i = 0; i < MaxJsonDepth - 2; i++) shared = { a: shared, b: shared }
+    const started = Date.now()
+    const result = await ipc.invoke(Channels.engineCall, editor, "setProjectSettings", [shared])
+    assert.equal(result.ok, false)
+    assert.ok(Date.now() - started < 2000)
+    assert.equal(client.calls.length, 0)
+
+    // A big but honest patch still goes through
+    const wide: Record<string, number> = {}
+    for (let i = 0; i < MaxJsonNodes / 2; i++) wide["k" + i] = i
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "setProjectSettings", [wide])).ok, true)
   })
 
   test("refuses calls from anything but the editor page (its window, main frame and URL)", async () => {
