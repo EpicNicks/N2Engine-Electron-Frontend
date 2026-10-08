@@ -9,8 +9,9 @@ This is not a reflection of the final design so much as a repo of the ongoing te
 The editor launches the engine's editor host (`N2EditorHost`, from the [N2Engine](https://github.com/EpicNicks/N2Engine) repo) itself, one host per open project. Build the engine first, then:
 
 1. Tell the editor where `N2EditorHost` is, in either of two ways:
-   - set `N2_EDITOR_HOST` to the executable's path before starting the editor (this wins), or
-   - on the welcome screen, press **Locate N2EditorHost...** and pick it. The path is saved in `settings.json` in the editor's user data folder (`%APPDATA%\n2enginewebfrontend` on Windows), and **Change...** picks another.
+   - on the welcome screen, press **Locate N2EditorHost...** and pick it. The path is saved in `settings.json` in the editor's user data folder (`%APPDATA%
+2enginewebfrontend` on Windows), and **Change...** picks another. A configured path wins; or
+   - set `N2ENGINE_HOST` to the executable's path before starting the editor. It is used when no path is configured.
 
 2. Install and start the editor:
 
@@ -37,7 +38,7 @@ N2EditorHost --project <dir> --port 0 --token-env N2_EDITOR_TOKEN --exit-on-disc
 
 (`src/main/host-launcher.ts`, `src/main/project-session.ts`):
 
-- **The port.** With `--port 0` the OS picks a free port. The host prints `N2EditorHost ready port=<port>` on stdout once it listens. The editor reads stdout line by line, joins lines split across chunks, strips the `\r` of Windows line endings, and ignores fields it doesn't know (the engine's `docs/logging-and-editor.html`, "The ready line"). Then it connects and says Hello. If the host exits first, or isn't ready within 30 s, opening fails with the host's last stderr lines (or stdout, if stderr is empty), and the host is killed. stdout is read until it ends, so the host never blocks on a full pipe.
+- **The port.** With `--port 0` the OS picks a free port. The host prints `N2EditorHost ready port=<port>` on stdout once it listens. The editor reads stdout line by line, joins lines split across chunks, strips the `\r` of Windows line endings, and ignores fields it doesn't know (the engine's `docs/logging-and-editor.html`, "The ready line"). Then it connects and says Hello. If the host exits first, or isn't ready within 30 s (`readyTimeoutMs` in `settings.json` changes that), opening fails with the host's last stderr lines (or stdout, if stderr is empty), and the host is killed. stdout is read until it ends, so the host never blocks on a full pipe.
 - **The token.** Each launch gets a new random token (32 bytes, hex). It is put in `N2_EDITOR_TOKEN` in the child's environment only. It is never in the editor's own environment, on a command line (which other local processes can read), in a log line, or in anything sent to the page. The host reads the variable and removes it from its own environment. An `N2_EDITOR_TOKEN` the editor itself inherited is removed at startup, so nothing inherits it.
 - **Its lifetime.** `--exit-on-disconnect` makes the host exit when the editor's session ends, so a connected host can't outlive the editor, even if the editor is killed. The editor also kills the host itself in all of these cases: opening another project, closing the project, reloading the page (which goes back to the welcome screen), closing the window, `before-quit`, SIGINT/SIGTERM, and the process's `exit`. Killing also covers a host that is still starting. A failed connection or Hello kills the host too.
 - **A host that ends on its own** (it crashed, or its session ended) is shown in the toolbar and the console with its exit code and last output lines. **Start host** launches a new one for the open project. **Stop host** sends `Shutdown` and kills the host if it hasn't exited after 3 s. **Restart host** stops it and launches a new one.

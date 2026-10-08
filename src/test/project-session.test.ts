@@ -93,6 +93,7 @@ function setup() {
         if (hostPath === null) throw new Error("N2EditorHost isn't set")
         return hostPath
       },
+      readyTimeoutMs: () => 1234,
     },
     engine,
     publish: (state) => states.push(state),
@@ -131,6 +132,7 @@ describe("ProjectSession", () => {
     assert.equal(opened, "real:C:\\Games\\A")
     assert.equal(launches[0].hostPath, "C:\\engine\\N2EditorHost.exe")
     assert.equal(launches[0].projectDir, "real:C:\\Games\\A")
+    assert.equal(launches[0].readyTimeoutMs, 1234, "the ready timeout from settings.json")
     assert.deepEqual(engine.connections, [[5001, "token-1"]])
     assert.deepEqual(recent, ["real:C:\\Games\\A"])
     assert.deepEqual(statuses(states), ["starting", "running"])
@@ -231,7 +233,7 @@ describe("ProjectSession", () => {
     const session = new ProjectSession({
       files: { open: (d: string) => d, close: () => {}, rootPath: null },
       recent: { add: () => {} },
-      settings: { require: () => "host" },
+      settings: { require: () => "host", readyTimeoutMs: () => 30000 },
       engine: new FakeEngine(),
       publish: (s) => states.push(s),
       launch: (options) =>

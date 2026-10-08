@@ -10,9 +10,9 @@ function HostLocationLine() {
 
   let text: string
   if (location.path === null) {
-    text = "N2EditorHost isn't set. Locate it to open projects, or start the editor with N2_EDITOR_HOST set."
+    text = "N2EditorHost isn't set. Locate it to open projects, or start the editor with N2ENGINE_HOST set."
   } else {
-    const from = location.source === "env" ? " (from N2_EDITOR_HOST)" : ""
+    const from = location.source === "env" ? " (from N2ENGINE_HOST)" : ""
     text = location.problem ? `${location.problem}${from}` : `N2EditorHost: ${location.path}${from}`
   }
   const bad = location.path === null || location.problem !== null
@@ -20,11 +20,9 @@ function HostLocationLine() {
   return (
     <div class={bad ? "host-location problem" : "host-location"}>
       <span title={location.path ?? undefined}>{text}</span>
-      {location.source !== "env" && (
-        <button class="link" onClick={() => store.locateHost()}>
-          {location.path === null ? "Locate N2EditorHost..." : "Change..."}
-        </button>
-      )}
+      <button class="link" onClick={() => store.locateHost()}>
+        {location.source === "setting" ? "Change..." : "Locate N2EditorHost..."}
+      </button>
     </div>
   )
 }

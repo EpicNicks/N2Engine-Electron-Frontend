@@ -39,12 +39,30 @@ describe("HostSettings (where N2EditorHost is)", () => {
     assert.equal(settings.require(), host)
   })
 
-  test(`${HostPathEnv} wins over the saved path`, () => {
+  test(`the configured path wins over ${HostPathEnv}`, () => {
     const file = path.join(dir, "settings.json")
     const host = exe()
-    fs.writeFileSync(file, JSON.stringify({ hostPath: "elsewhere" }))
-    const settings = new HostSettings(file, { [HostPathEnv]: host })
+    fs.writeFileSync(file, JSON.stringify({ hostPath: host }))
+    const settings = new HostSettings(file, { [HostPathEnv]: path.join(dir, "elsewhere.exe") })
+    assert.deepEqual(settings.locate(), { path: host, source: "setting", problem: null })
+  })
+
+  test(`without a configured path, ${HostPathEnv} names the host`, () => {
+    const host = exe()
+    const settings = new HostSettings(path.join(dir, "settings.json"), { [HostPathEnv]: host })
     assert.deepEqual(settings.locate(), { path: host, source: "env", problem: null })
+    assert.equal(HostPathEnv, "N2ENGINE_HOST")
+  })
+
+  test("readyTimeoutMs comes from settings.json, else 30 s", () => {
+    const file = path.join(dir, "settings.json")
+    assert.equal(new HostSettings(file, {}).readyTimeoutMs(), 30000)
+    fs.writeFileSync(file, JSON.stringify({ readyTimeoutMs: 90000 }))
+    assert.equal(new HostSettings(file, {}).readyTimeoutMs(), 90000)
+    for (const bad of [0, -5, "60000", null]) {
+      fs.writeFileSync(file, JSON.stringify({ readyTimeoutMs: bad }))
+      assert.equal(new HostSettings(file, {}).readyTimeoutMs(), 30000, JSON.stringify(bad))
+    }
   })
 
   test("a path that isn't a file is reported, and can't be saved", () => {
@@ -52,7 +70,7 @@ describe("HostSettings (where N2EditorHost is)", () => {
     const missing = path.join(dir, "gone.exe")
     const settings = new HostSettings(file, { [HostPathEnv]: missing })
     assert.equal(settings.locate().problem, `Not found: ${missing}`)
-    assert.throws(() => settings.require(), /Not found: .*gone\.exe \(from N2_EDITOR_HOST\)/)
+    assert.throws(() => settings.require(), /Not found: .*gone\.exe \(from N2ENGINE_HOST\)/)
     assert.throws(() => new HostSettings(file, {}).setHostPath(dir), /Not a file/)
     assert.equal(fs.existsSync(file), false)
   })

@@ -22,7 +22,7 @@ export interface EngineConnection {
 export interface ProjectSessionDeps {
   files: Pick<ProjectFiles, "open" | "close" | "rootPath">
   recent: Pick<RecentProjects, "add">
-  settings: Pick<HostSettings, "require">
+  settings: Pick<HostSettings, "require" | "readyTimeoutMs">
   engine: EngineConnection
   /** Tells the page the host's state changed */
   publish(state: HostState): void
@@ -156,6 +156,7 @@ export class ProjectSession {
       host = await this.launch({
         hostPath,
         projectDir: projectPath,
+        readyTimeoutMs: this.deps.settings.readyTimeoutMs(),
         onExit: (exit, h) => this.onExit(h, exit),
         onSpawned: (kill) => (this.killLaunching = kill),
       })

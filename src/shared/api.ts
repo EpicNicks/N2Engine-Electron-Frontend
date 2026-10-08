@@ -130,7 +130,7 @@ export interface EngineApi extends EngineCommands {
   onConnectionChange(listener: (connected: boolean) => void): void
 }
 
-/** Where N2EditorHost is (HostSettings): from N2_EDITOR_HOST, the saved setting, or not set */
+/** Where N2EditorHost is (HostSettings): the configured path, else N2ENGINE_HOST, or not set */
 export interface HostLocation {
   path: string | null
   source: "env" | "setting" | null
