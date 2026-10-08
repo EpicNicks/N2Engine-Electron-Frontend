@@ -147,11 +147,16 @@ describe("partial updates", () => {
     })
   })
 
-  test("a new scriptUUID is sent alone: scriptData written for the old script is dropped", () => {
+  test("a new scriptUUID is sent without scriptData: what was written for the old script is dropped", () => {
     const values = { scriptUUID: U1, scriptData: { speed: 1 } }
     assert.deepEqual(planRequests(values, { scriptUUID: U2, scriptData: { speed: 2, jump: true } }), {
       requests: [{ scriptUUID: U2 }],
       droppedScriptData: ["speed", "jump"],
+    })
+    // The rest of the edit goes with the script
+    assert.deepEqual(planRequests(values, { scriptUUID: U2, scriptData: { speed: 2 }, isActive: false }), {
+      requests: [{ scriptUUID: U2, isActive: false }],
+      droppedScriptData: ["speed"],
     })
     // The same script again (an echo) with data is an ordinary data edit
     assert.deepEqual(planRequests(values, { scriptUUID: U1, scriptData: { speed: 2 } }), {

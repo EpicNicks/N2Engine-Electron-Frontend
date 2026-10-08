@@ -200,15 +200,15 @@ export interface RequestPlan {
 /**
  * What to send for an edit of a component whose stored values are `values`: only what changed, and never a new
  * scriptUUID together with scriptData (the engine refuses it: the data would be checked against the old script), so the
- * script change goes alone and the data written for the script it replaces is dropped. Echo keys (uuid, scriptPath) are
+ * script change goes without it and the data written for the script it replaces is dropped. Echo keys (uuid, scriptPath) are
  * never sent.
  */
 export function planRequests(values: JsonObject, patch: JsonObject): RequestPlan {
   const { uuid: _uuid, scriptPath: _scriptPath, ...own } = patch
   const changed = pruneUnchanged(values, own)
   if ("scriptUUID" in changed && "scriptData" in changed) {
-    const dropped = isObject(changed.scriptData) ? Object.keys(changed.scriptData) : []
-    return { requests: [{ scriptUUID: changed.scriptUUID }], droppedScriptData: dropped }
+    const { scriptData, ...rest } = changed
+    return { requests: [rest], droppedScriptData: isObject(scriptData) ? Object.keys(scriptData) : [] }
   }
   return { requests: Object.keys(changed).length > 0 ? [changed] : [], droppedScriptData: [] }
 }
