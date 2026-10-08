@@ -226,9 +226,10 @@ export function NumberInput(props: {
     }
   }, [props.value])
 
-  const finish = () => {
+  // The text is read from the box itself: the last keystroke may not have been rendered yet
+  const finish = (typed: string) => {
     typing.current = false
-    const parsed = parseNumberText(props.field, text)
+    const parsed = parseNumberText(props.field, typed)
     if (!parsed.ok) {
       setBad(true)
       props.onInvalid(parsed.error)
@@ -251,9 +252,9 @@ export function NumberInput(props: {
         typing.current = true
         setText((e.currentTarget as HTMLInputElement).value)
       }}
-      onBlur={() => typing.current && finish()}
+      onBlur={(e) => typing.current && finish((e.currentTarget as HTMLInputElement).value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") finish()
+        if (e.key === "Enter") finish((e.currentTarget as HTMLInputElement).value)
         else if (e.key === "Escape") {
           typing.current = false
           setText(formatNumber(props.value))
@@ -406,10 +407,10 @@ function JsonEditor({ field, value, disabled, commit, invalid }: EditorProps) {
       setBad(false)
     }
   }, [shown])
-  const finish = () => {
+  const finish = (typed: string) => {
     typing.current = false
-    if (text === shown) return setBad(false)
-    const parsed = parseJsonText(field, text)
+    if (typed === shown) return setBad(false)
+    const parsed = parseJsonText(field, typed)
     if (!parsed.ok) {
       setBad(true)
       return invalid(parsed.error)
@@ -429,11 +430,11 @@ function JsonEditor({ field, value, disabled, commit, invalid }: EditorProps) {
         typing.current = true
         setText((e.currentTarget as HTMLTextAreaElement).value)
       }}
-      onBlur={() => typing.current && finish()}
+      onBlur={(e) => typing.current && finish((e.currentTarget as HTMLTextAreaElement).value)}
       onKeyDown={(e) => {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
           e.preventDefault()
-          finish()
+          finish((e.currentTarget as HTMLTextAreaElement).value)
         } else if (e.key === "Escape") {
           typing.current = false
           setText(shown)

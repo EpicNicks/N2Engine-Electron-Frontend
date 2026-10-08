@@ -2,7 +2,7 @@
 // hierarchy, inspector and engine, with splitters between them.
 import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
-import { effect } from "@preact/signals-core"
+import { effect, untracked } from "@preact/signals-core"
 import { ConsolePanel } from "./console-panel"
 import { editActions, editMenuItems, editShortcutOf } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
@@ -255,11 +255,13 @@ export function Editor() {
         if (!store.connected.value) {
           scene.reset()
           hierarchy.reset()
-          inspector.reset()
+          untracked(() => inspector.reset())
         } else {
           // The component types and the project's assets don't change while the host runs (the assets on a rescan)
-          void inspector.loadTypes()
-          void inspector.loadAssets()
+          untracked(() => {
+            void inspector.loadTypes()
+            void inspector.loadAssets()
+          })
         }
       }),
     []
@@ -270,7 +272,8 @@ export function Editor() {
       effect(() => {
         const id = scene.selectedId.value
         if (!store.connected.peek()) return
-        inspector.select(id).catch((e) => store.reportError("Failed to read the object", e))
+        // select reads and writes the inspector's own signals: this effect runs on the selection alone
+        untracked(() => inspector.select(id)).catch((e) => store.reportError("Failed to read the object", e))
       }),
     []
   )
@@ -280,8 +283,10 @@ export function Editor() {
       effect(() => {
         store.assetsChangeCount.value // what this runs on
         if (!store.connected.peek()) return
-        void inspector.loadAssets()
-        void inspector.refreshLuaFields()
+        untracked(() => {
+          void inspector.loadAssets()
+          void inspector.refreshLuaFields()
+        })
       }),
     []
   )
@@ -293,9 +298,10 @@ export function Editor() {
         const change = store.lastSceneChange.peek()
         if (!change || !store.connected.peek()) return
         // The inspector's components may have changed (this includes the echoes of its own edits)
-        inspector.applyChange(change).catch((e) => store.reportError("Failed to read the object", e))
-        hierarchy
-          .applyChange(change, store.newestSceneRevision)
+        untracked(() => inspector.applyChange(change)).catch((e) => store.reportError("Failed to read the object", e))
+        // untracked: applyChange reads the hierarchy's response, which it then replaces: without this the effect would
+        // run again on every answer, and read the hierarchy again for ever
+        untracked(() => hierarchy.applyChange(change, store.newestSceneRevision))
           .then(() => {
             // The inspector's object may have changed (a transform, say): read it again
             const id = scene.selectedId.peek()
