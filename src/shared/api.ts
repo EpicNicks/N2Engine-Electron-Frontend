@@ -6,13 +6,11 @@ import type {
   CameraPositionResponse,
   EngineHealthResponse,
   EntityDataResponse,
-  EntityInfo,
   EventsResponse,
   FrameDataResponse,
   HierarchyResponse,
   ProjectInfoResponse,
   SceneInfoResponse,
-  SceneDataResponse,
   ServerInfoResponse,
   Quat,
   Vec3,
@@ -31,12 +29,6 @@ export interface EngineCommands {
 
   setCameraPosition(x: number, y: number, z: number): Promise<void>
   getCameraPosition(): Promise<CameraPositionResponse>
-
-  createScene(name: string): Promise<SceneDataResponse>
-  loadScene(sceneJson: string): Promise<void>
-  saveScene(): Promise<SceneDataResponse>
-  deleteScene(sceneName: string): Promise<void>
-  getCurrentScene(): Promise<SceneDataResponse | null>
 
   /** Scenes of the project (protocol 1.3): a scene is a .scene file, a path like res://assets/scenes/main.scene */
   openScene(path: string): Promise<SceneInfoResponse>
@@ -64,7 +56,7 @@ export interface EngineCommands {
 
   createEntity(name: string): Promise<string>
   destroyEntity(entityId: string): Promise<void>
-  getAllEntities(): Promise<EntityInfo[]>
+
   setEntityTransform(entityId: string, position: Vec3, rotation: Vec3, scale: Vec3): Promise<void>
   getEntityTransform(entityId: string): Promise<{ position: Vec3; rotation: Vec3; scale: Vec3 }>
 
@@ -116,11 +108,7 @@ export const EngineCommandArgs = {
   getAudio: [],
   setCameraPosition: ["number", "number", "number"],
   getCameraPosition: [],
-  createScene: ["string"],
-  loadScene: ["string"],
-  saveScene: [],
-  deleteScene: ["string"],
-  getCurrentScene: [],
+
   openScene: ["string"],
   saveSceneToFile: ["string"],
   newScene: ["string", "string"],
@@ -134,7 +122,7 @@ export const EngineCommandArgs = {
   pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],
   destroyEntity: ["string"],
-  getAllEntities: [],
+
   setEntityTransform: ["string", "vec3", "vec3", "vec3"],
   getEntityTransform: ["string"],
   getHierarchy: [],

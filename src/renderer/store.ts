@@ -21,7 +21,7 @@ import {
   sceneChangeOf,
 } from "../protocol/editor-events"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
-import { basename, normalizeScenePath } from "./paths"
+import { basename, normalizeScenePath, scenePathProblem } from "./paths"
 
 /** Questions the store asks the user (the page's dialogs; a fake in tests) */
 export interface Dialogs {
@@ -231,12 +231,15 @@ export class EditorStore {
     await this.refreshRecent()
   }
 
-  restartHost(): Promise<void> {
-    return this.run("Restarting the editor host...", () => this.api.host.restart())
+  async restartHost(): Promise<void> {
+    // The host holds the scene's unsaved changes, and a new host starts from the file
+    if (!(await this.confirmDiscard("restart the host"))) return
+    await this.run("Restarting the editor host...", () => this.api.host.restart())
   }
 
-  stopHost(): Promise<void> {
-    return this.run("Stopping the editor host...", () => this.api.host.stop())
+  async stopHost(): Promise<void> {
+    if (!(await this.confirmDiscard("stop the host"))) return
+    await this.run("Stopping the editor host...", () => this.api.host.stop())
   }
 
   /** Picks the N2EditorHost executable */
@@ -360,6 +363,11 @@ export class EditorStore {
    * not go on. Resolves whether to go on; always true when there are none.
    */
   async confirmDiscard(action: string): Promise<boolean> {
+    // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
+    if (this.api.engine.isConnected()) {
+      await this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e))
+      await this.refreshScene()
+    }
     const scene = this.scene.value
     if (!scene || !this.sceneDirty.value) return true
     const choice = await this.api.dialogs.unsaved(
@@ -382,10 +390,22 @@ export class EditorStore {
    * the loaded one, after asking about unsaved changes. undefined when not done.
    */
   async newScene(defaultPath = "res://scenes/Untitled.scene"): Promise<SceneInfoResponse | undefined> {
-    const input = await this.api.dialogs.prompt("New scene (a res:// path)", defaultPath)
-    const path = input === null ? "" : normalizeScenePath(input)
-    if (path === "" || !(await this.confirmDiscard("create the scene"))) return undefined
+    // The unsaved changes first: a "no" there shouldn't come after the user has typed a path
+    if (!(await this.confirmDiscard("create the scene"))) return undefined
+    const path = this.checkedScenePath(await this.api.dialogs.prompt("New scene (a res:// path)", defaultPath))
+    if (path === "") return undefined
     return this.sceneAction("Creating scene...", () => this.api.engine.newScene(path, ""))
+  }
+
+  /** What was typed as a scene path, as the host takes it; "" when cancelled or empty, or when it can't be one (error says why) */
+  private checkedScenePath(input: string | null): string {
+    if (input === null) return ""
+    const problem = scenePathProblem(input)
+    if (problem) {
+      this.error.value = problem
+      return ""
+    }
+    return normalizeScenePath(input)
   }
 
   /** Writes the loaded scene to its file; a scene with no file asks for a path first (saveSceneAs) */
@@ -405,7 +425,7 @@ export class EditorStore {
       "Save scene as (a res:// path)",
       scene.path || `res://scenes/${name}.scene`
     )
-    const path = input === null ? "" : normalizeScenePath(input)
+    const path = this.checkedScenePath(input)
     if (path === "") return undefined
     return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(path))
   }
@@ -419,6 +439,7 @@ export class EditorStore {
     if (result && this.api.engine.isConnected()) {
       this.sceneFetches++ // a GetOpenScene still on its way is older than this
       this.scene.value = result
+      void this.console.pollNow().catch(() => {}) // the panels hear of it now, not in 100 ms
     }
     return result
   }

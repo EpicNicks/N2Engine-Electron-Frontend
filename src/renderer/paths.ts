@@ -57,3 +57,21 @@ export function normalizeScenePath(input: string): string {
   if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) path = "res://" + path.replace(/^\/+/, "")
   return /\.scene$/i.test(path) ? path : path + ".scene"
 }
+
+/**
+ * Why what the user typed can't be a scene's path, in words for them; null when it can (the host still checks the
+ * rest). Empty is not a problem here: it means "cancel".
+ */
+export function scenePathProblem(input: string): string | null {
+  const path = input.trim().replaceAll("\\", "/")
+  if (path === "") return null
+  if (/^[a-z]:(\/|$)/i.test(path) || path.startsWith("//")) {
+    return "A scene's path is a res:// path (res:// is the project's assets folder), not a file on disk"
+  }
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(path)
+  if (scheme && scheme[1].toLowerCase() !== "res") return "A scene's path starts with res://"
+  const rest = scheme ? path.slice(scheme[0].length) : path
+  const name = rest.slice(rest.lastIndexOf("/") + 1)
+  if (name === "" || /^\.scene$/i.test(name)) return "The path needs a file name, like res://scenes/Level1.scene"
+  return null
+}

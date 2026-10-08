@@ -248,6 +248,11 @@ export function ContextMenu() {
   )
 }
 
+/** Whether a dialog (prompt, confirm, unsaved changes) is open: keys meant for the editor mustn't act then */
+export function modalOpen(): boolean {
+  return promptRequest.value !== null || confirmRequest.value !== null || unsavedRequest.value !== null
+}
+
 // ==================== Unsaved changes ====================
 
 interface UnsavedRequest {

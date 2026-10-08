@@ -148,10 +148,12 @@ export function InspectorPanel() {
 
   let content
   if (!selected || !store.connected.value) content = <Empty>Select an entity to inspect</Empty>
-  else if (!transform) content = <Empty>Loading...</Empty>
+  else if (!transform && !scene.noTransform.value) content = <Empty>Loading...</Empty>
   else {
-    const set = (change: Partial<typeof transform>) =>
+    const set = (change: Partial<NonNullable<typeof transform>>) =>
+      transform &&
       scene.setTransform({ ...transform, ...change }).catch((e) => store.reportError("Failed to set the transform", e))
+    const selectedCount = hierarchy.selection.value.ids.size
     content = (
       <>
         <div class="inspector-section">
@@ -161,22 +163,31 @@ export function InspectorPanel() {
             <input type="text" value={entity?.name ?? ""} readOnly />
           </div>
         </div>
-        <div class="inspector-section">
-          <h4>Transform</h4>
-          <VectorRow
-            label="Position"
-            value={transform.position}
-            step={0.1}
-            onChange={(position) => set({ position })}
-          />
-          <VectorRow label="Rotation" value={transform.rotation} step={1} onChange={(rotation) => set({ rotation })} />
-          <VectorRow label="Scale" value={transform.scale} step={0.1} onChange={(scale) => set({ scale })} />
-        </div>
+        {transform ? (
+          <div class="inspector-section">
+            <h4>Transform</h4>
+            <VectorRow
+              label="Position"
+              value={transform.position}
+              step={0.1}
+              onChange={(position) => set({ position })}
+            />
+            <VectorRow
+              label="Rotation"
+              value={transform.rotation}
+              step={1}
+              onChange={(rotation) => set({ rotation })}
+            />
+            <VectorRow label="Scale" value={transform.scale} step={0.1} onChange={(scale) => set({ scale })} />
+          </div>
+        ) : (
+          <Empty>This object has no transform</Empty>
+        )}
         <button
           class="danger"
           onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
         >
-          Delete Entity
+          {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
         </button>
       </>
     )

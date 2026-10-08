@@ -79,6 +79,14 @@ const app: AppState = {
   audio: new AudioController(window.engine),
 }
 
+// Closing or reloading the window with unsaved scene changes asks first (the main process shows the question)
+window.addEventListener("beforeunload", (e) => {
+  if (store.view.value === "editor" && store.sceneDirty.value) {
+    e.preventDefault()
+    e.returnValue = ""
+  }
+})
+
 // The engine's audio plays while connected
 effect(() => {
   if (store.connected.value) app.audio.start()

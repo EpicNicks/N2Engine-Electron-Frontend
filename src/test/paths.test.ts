@@ -1,6 +1,6 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import { basename, extname, join, normalizeScenePath, toResPath } from "../renderer/paths"
+import { basename, extname, join, normalizeScenePath, scenePathProblem, toResPath } from "../renderer/paths"
 
 describe("renderer paths", () => {
   test("basename", () => {
@@ -44,5 +44,21 @@ describe("scene paths", () => {
     assert.equal(normalizeScenePath("res://a.scene.scene"), "res://a.scene.scene")
     assert.equal(normalizeScenePath("user://x"), "user://x.scene", "the host refuses it")
     assert.equal(normalizeScenePath("   "), "")
+  })
+})
+
+describe("scenePathProblem", () => {
+  test("a file path, a bare res://, a folder and another scheme are problems; the rest isn't", () => {
+    assert.match(scenePathProblem("C:\\a\\b.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("c:/a/b.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("\\\\server\\share\\a.scene") ?? "", /res:\/\/ path/)
+    assert.match(scenePathProblem("res://") ?? "", /file name/)
+    assert.match(scenePathProblem("res://scenes/") ?? "", /file name/)
+    assert.match(scenePathProblem("res://.scene") ?? "", /file name/)
+    assert.match(scenePathProblem("user://x.scene") ?? "", /starts with res:\/\//)
+    assert.equal(scenePathProblem("res://scenes/a.scene"), null)
+    assert.equal(scenePathProblem("scenes/a"), null)
+    assert.equal(scenePathProblem("a"), null)
+    assert.equal(scenePathProblem("  "), null, "empty is cancel")
   })
 })

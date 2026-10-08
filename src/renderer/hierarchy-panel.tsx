@@ -99,11 +99,16 @@ export function HierarchyPanel() {
   ]
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if ((e.target as HTMLElement).tagName === "INPUT") return
+    // Only the name being typed keeps its keys (the active checkbox, say, doesn't take them from the list)
+    if ((e.target as HTMLElement).classList.contains("hierarchy-rename")) return
     const ctrl = e.ctrlKey || e.metaKey
+    const isDelete = e.key === "Delete"
+    const isDuplicate = ctrl && e.key.toLowerCase() === "d"
+    // A held key would repeat the action on whatever is selected next
+    if (e.repeat && (isDelete || isDuplicate)) return void e.preventDefault()
     if (e.key === "F2") hierarchy.beginRename()
-    else if (e.key === "Delete") void remove()
-    else if (ctrl && e.key.toLowerCase() === "d") void duplicate()
+    else if (isDelete) void remove()
+    else if (isDuplicate) void duplicate()
     else if (e.key === "ArrowDown") hierarchy.step(1, e.shiftKey)
     else if (e.key === "ArrowUp") hierarchy.step(-1, e.shiftKey)
     else if (e.key === "ArrowRight") hierarchy.expandPrimary()
@@ -159,6 +164,7 @@ export function HierarchyPanel() {
         <div
           class={classes.join(" ")}
           key={row.id}
+          data-id={row.id}
           style={{ paddingLeft: `${row.depth * 14 + 4}px` }}
           draggable={renaming !== row.id}
           title={`${node.components.join(", ") || "No components"}\nTag: ${node.tag || "(none)"}, layer ${node.layer}`}
@@ -216,6 +222,14 @@ export function HierarchyPanel() {
         </div>
       )
     })
+
+  // The primary row stays in view when the arrow keys move it
+  const primary = selection.primary
+  useEffect(() => {
+    if (primary === null) return
+    const rows = list.current?.querySelectorAll<HTMLElement>(".hierarchy-item")
+    for (const row of rows ?? []) if (row.dataset.id === primary) row.scrollIntoView({ block: "nearest" })
+  }, [primary])
 
   const canCreate = connected && sceneInfo !== null
   return (

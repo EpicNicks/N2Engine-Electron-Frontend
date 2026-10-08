@@ -7,7 +7,7 @@ import { ConsolePanel } from "./console-panel"
 import { HierarchyPanel } from "./hierarchy-panel"
 import { EnginePanel, FilesPanel, InspectorPanel, ScriptEditor } from "./panels"
 import { basename, toResPath } from "./paths"
-import { MenuItem, Splitter, showContextMenu, useApp } from "./ui"
+import { MenuItem, Splitter, modalOpen, showContextMenu, useApp } from "./ui"
 import type { FileInfo } from "../shared/api"
 import { ViewportRenderer } from "./viewport-renderer"
 
@@ -52,7 +52,7 @@ function SceneButtons() {
       scenes.length === 0
         ? [{ label: "No scenes in the project", action: () => {}, disabled: true }]
         : scenes.map((path) => ({
-            label: path === loaded?.path ? `${path} (open)` : path,
+            label: path.toLowerCase() === loaded?.path.toLowerCase() ? `${path} (open)` : path,
             action: () => void store.openScene(path),
           }))
     showContextMenu(rect.left, rect.bottom, items)
@@ -249,7 +249,10 @@ export function Editor() {
           .then(() => {
             // The inspector's object may have changed (a transform, say): read it again
             const id = scene.selectedId.peek()
-            if (id !== null && (change.full || change.entityIds.includes(id))) return scene.refreshTransform()
+            // Not for an object that is gone: the hierarchy has dropped it from the selection by now
+            if (id !== null && hierarchy.tree.peek().nodes.has(id) && (change.full || change.entityIds.includes(id))) {
+              return scene.refreshTransform()
+            }
           })
           .catch((e) => store.reportError("Failed to read the scene", e))
       }),
@@ -258,11 +261,18 @@ export function Editor() {
   // Ctrl+S saves the scene (the script editor handles the key first, for its file)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return
+      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s")
+        return
       e.preventDefault()
-      if (store.scene.value && store.busy.value === null) {
-        void store.saveScene().then((saved) => saved && scene.refreshFiles().catch(() => {}))
-      }
+      // Not under a dialog (its own field's key), and not twice at once
+      if (modalOpen() || (e.target as HTMLElement | null)?.closest?.(".modal")) return
+      if (!store.scene.value || store.busy.value !== null) return
+      // A name being typed is committed first, so the saved scene has it
+      const target = e.target as HTMLElement | null
+      if (target?.classList?.contains("hierarchy-rename")) target.blur()
+      void hierarchy.renameSettled
+        .then(() => store.saveScene())
+        .then((saved) => saved && scene.refreshFiles().catch(() => {}))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)

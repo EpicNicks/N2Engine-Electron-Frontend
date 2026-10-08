@@ -987,6 +987,50 @@ describe("EditorStore", () => {
       assert.deepEqual(engineCalls(api), [])
     })
 
+    test("cancelling at the unsaved-changes question never asks for a path", async () => {
+      const { api, store } = await withScene(true)
+      api.unsavedAnswers.push("cancel")
+      assert.equal(await store.newScene(), undefined)
+      assert.equal(api.asked.length, 1)
+      assert.match(api.asked[0], /^unsaved /)
+      assert.deepEqual(engineCalls(api), [])
+    })
+
+    test("an edit the console hasn't polled yet still counts as unsaved changes", async () => {
+      const { api, store } = await withScene(false)
+      // The host's scene changed, and no sceneChanged event has been read yet
+      api.openScene = { path: a, name: "a", uuid: "u1", revision: 9, savedRevision: 3 }
+      assert.equal(store.sceneDirty.value, false)
+      api.unsavedAnswers.push("cancel")
+      assert.equal(await store.openScene("res://scenes/b.scene"), undefined)
+      assert.match(api.asked[0], /^unsaved Discard and open the scene: a has unsaved changes\.$/)
+    })
+
+    test("restarting or stopping the host asks about unsaved changes, and a cancel keeps it running", async () => {
+      const { api, store } = await withScene(true)
+      api.unsavedAnswers.push("cancel", "cancel")
+      await store.restartHost()
+      await store.stopHost()
+      assert.ok(!api.calls.includes("restart") && !api.calls.includes("stop"))
+      assert.match(api.asked[0], /Discard and restart the host/)
+      assert.match(api.asked[1], /Discard and stop the host/)
+      api.unsavedAnswers.push("discard")
+      await store.stopHost()
+      assert.ok(api.calls.includes("stop"))
+    })
+
+    test("a path that can't be a scene's says why and sends nothing", async () => {
+      const { api, store } = await withScene(false)
+      for (const typed of ["C:\\Games\\P\\assets\\a.scene", "res://", "res://scenes/", "file:///x.scene"]) {
+        store.dismissError()
+        api.promptAnswers.push(typed)
+        assert.equal(await store.newScene(), undefined, typed)
+        assert.ok(store.error.value, typed)
+      }
+      assert.match(store.error.value ?? "", /starts with res:\/\//)
+      assert.deepEqual(engineCalls(api), [])
+    })
+
     test("the host's refusal (a file that exists, say) is shown and the scene stays", async () => {
       const { api, store } = await withScene(false)
       api.promptAnswers.push("res://scenes/a.scene")

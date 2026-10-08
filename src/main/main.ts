@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, ipcMain, session } from "electron"
+import { app, BrowserWindow, dialog, screen, ipcMain, session } from "electron"
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
@@ -97,6 +97,22 @@ function createWindow(): void {
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault())
   mainWindow.webContents.on("will-redirect", (event) => event.preventDefault())
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
+
+  // The page vetoes closing or reloading with unsaved scene changes (beforeunload, index.tsx); this is where the user
+  // answers: preventDefault here lets the page go.
+  const win = mainWindow
+  win.webContents.on("will-prevent-unload", (event) => {
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "warning",
+      buttons: ["Discard changes", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      title: "Unsaved changes",
+      message: "The open scene has unsaved changes.",
+      detail: "Closing or reloading the editor now discards them.",
+    })
+    if (choice === 0) event.preventDefault()
+  })
 
   mainWindow.on("closed", () => {
     mainWindow = null
