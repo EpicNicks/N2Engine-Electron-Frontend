@@ -28,6 +28,8 @@ function RenameInput({ id, name }: { id: string; name: string }) {
   const finish = (commit: boolean) => {
     if (finished.current) return
     finished.current = true
+    // The keys (F2, Delete, ...) work on the list: keep the focus there once the field is gone
+    input.current?.closest<HTMLElement>(".hierarchy-list")?.focus()
     if (commit) {
       hierarchy
         .commitRename(id, input.current?.value ?? name)
@@ -118,24 +120,25 @@ export function HierarchyPanel() {
   }
 
   const onDragOver = (e: DragEvent, overId: string | null, position: DropPosition) => {
+    // A row's drag doesn't go on to the list behind it, which would take it for the empty space
+    if (overId !== null) e.stopPropagation()
     const target = dropAt(overId, position)
     if (target === null) {
       if (indicator.value !== null) indicator.value = null
       return
     }
     e.preventDefault()
-    e.stopPropagation()
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move"
     if (drop?.id !== overId || drop?.position !== position) indicator.value = { id: overId, position }
   }
 
   const onDrop = (e: DragEvent, overId: string | null, position: DropPosition) => {
+    if (overId !== null) e.stopPropagation()
     const target = dropAt(overId, position)
     const ids = dragging.value
     clearDrag()
     if (target === null) return
     e.preventDefault()
-    e.stopPropagation()
     hierarchy.move(ids, target).catch(fail("Failed to move"))
   }
 
