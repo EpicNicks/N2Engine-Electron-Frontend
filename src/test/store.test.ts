@@ -499,6 +499,86 @@ describe("EditorStore", () => {
     assert.equal(store.projectChangeCount.peek(), project + 1)
   })
 
+  test("sceneChanged's entityIds and full reach the panels as one merged change per poll", async () => {
+    const { api, store, timers } = makeStore()
+    const a = "res://assets/scenes/a.scene"
+    api.openScene = { path: a, name: "a", uuid: "u1", revision: 3, savedRevision: 3 }
+    await store.openProject()
+    await settle()
+    const base = store.sceneChangeCount.peek() // connecting counts as a full change
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+
+    // An edit that names its objects: only those
+    api.events.events.push({ seq: 1, kind: "sceneChanged", revision: 4, savedRevision: 3, path: a, entityIds: ["u1", "u2"] })
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 1)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u1", "u2"] })
+    assert.equal(store.scene.peek()?.revision, 4) // the revision still moves, and the hierarchy is refetched on it
+
+    // Two events in one poll are one change, with the ids once
+    api.events.events.push(
+      { seq: 2, kind: "sceneChanged", revision: 5, savedRevision: 3, path: a, entityIds: ["u2", "u3"] },
+      { seq: 3, kind: "sceneChanged", revision: 6, savedRevision: 3, path: a, entityIds: ["u4"] }
+    )
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 2)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u2", "u3", "u4"] })
+
+    // A save touches no object: no change
+    api.events.events.push({ seq: 4, kind: "sceneChanged", revision: 6, savedRevision: 6, path: a })
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 2)
+    assert.equal(store.sceneDirty.value, false)
+
+    // An event with neither, past the known revision, is a change too big to list: everything
+    api.events.events.push({ seq: 5, kind: "sceneChanged", revision: 7, savedRevision: 6, path: a })
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 3)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+
+    // Another scene loaded: everything, and a lower revision doesn't make the next event look like a save
+    const b = "res://assets/scenes/b.scene"
+    api.openScene = { path: b, name: "b", uuid: "u2", revision: 0, savedRevision: 0 }
+    api.events.events.push({ seq: 6, kind: "sceneChanged", revision: 0, savedRevision: 0, path: b, full: true })
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 4)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+    api.events.events.push({ seq: 7, kind: "sceneChanged", revision: 3, savedRevision: 0, path: b })
+    await timers.fire()
+    assert.equal(store.sceneChangeCount.peek(), base + 5)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+
+    // A full event absorbs the ids that came with it in the same poll
+    api.events.events.push(
+      { seq: 8, kind: "sceneChanged", revision: 4, savedRevision: 0, path: b, entityIds: ["u9"] },
+      { seq: 9, kind: "sceneChanged", revision: 0, savedRevision: 0, path: a, full: true }
+    )
+    await timers.fire()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+  })
+
+  test("missed events and a dropped connection are a full scene change", async () => {
+    const api = new FakeApi()
+    const timers = new FakeTimers()
+    const store = new EditorStore(api, { timers, now: () => 0 })
+    api.events.add("one")
+    await store.openProject()
+    await timers.fire()
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 1, savedRevision: 0, path: "", entityIds: ["u1"] })
+    await timers.fire()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u1"] })
+
+    api.events.restart("another host")
+    await timers.fire()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+
+    api.events.events.push({ seq: 2, kind: "sceneChanged", revision: 2, savedRevision: 0, path: "", entityIds: ["u2"] })
+    await timers.fire()
+    assert.deepEqual(store.lastSceneChange.peek(), { full: false, entityIds: ["u2"] })
+    api.pushConnection(false)
+    assert.deepEqual(store.lastSceneChange.peek(), { full: true, entityIds: [] })
+  })
+
   test("the scene is forgotten when the connection drops", async () => {
     const { api, store } = makeStore()
     api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }

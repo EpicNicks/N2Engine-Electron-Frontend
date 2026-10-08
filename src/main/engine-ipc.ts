@@ -15,7 +15,9 @@ const KindDescriptions: Record<ArgKind, string> = {
   number: "a finite number",
   int32: "a 32-bit integer",
   uint32: "an unsigned 32-bit integer",
+  bool: "a boolean",
   vec3: "an {x, y, z} of finite numbers",
+  quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
 }
 
@@ -76,10 +78,19 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
     case "uint32":
       if (Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 0xffffffff) return value
       break
+    case "bool":
+      if (typeof value === "boolean") return value
+      break
     case "vec3":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const { x, y, z } = value as Record<string, unknown>
         if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z)) return { x, y, z }
+      }
+      break
+    case "quat":
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const { x, y, z, w } = value as Record<string, unknown>
+        if (isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z) && isFiniteNumber(w)) return { x, y, z, w }
       }
       break
     case "jsonObject":

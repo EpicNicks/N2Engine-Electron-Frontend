@@ -5,13 +5,16 @@
 import type {
   CameraPositionResponse,
   EngineHealthResponse,
+  EntityDataResponse,
   EntityInfo,
   EventsResponse,
   FrameDataResponse,
+  HierarchyResponse,
   ProjectInfoResponse,
   SceneInfoResponse,
   SceneDataResponse,
   ServerInfoResponse,
+  Quat,
   Vec3,
 } from "../protocol/protocol.generated"
 import type { AudioSamples } from "../audio-stream"
@@ -64,6 +67,35 @@ export interface EngineCommands {
   getAllEntities(): Promise<EntityInfo[]>
   setEntityTransform(entityId: string, position: Vec3, rotation: Vec3, scale: Vec3): Promise<void>
   getEntityTransform(entityId: string): Promise<{ position: Vec3; rotation: Vec3; scale: Vec3 }>
+
+  /**
+   * The loaded scene's objects as one flat depth-first list (a parent before its children), and the scene revision
+   * it was read at (protocol 1.4). Refetch it when a sceneChanged event moves the revision. Error with no scene.
+   */
+  getHierarchy(): Promise<HierarchyResponse>
+  /**
+   * Makes an object with a transform (protocol 1.4). preset: empty/Empty, Cube, Sphere, Quad, Light or
+   * DirectionalLight, PointLight, SpotLight. An empty name is the preset's own. parentId empty: a root of the scene.
+   * siblingIndex: its place among its siblings, -1 (or past the last) for the last. Answers the new object's id.
+   */
+  createEntityEx(name: string, parentId: string, siblingIndex: number, preset: string): Promise<string>
+  /**
+   * Moves an object under another (empty parentId: a root) at siblingIndex among its new siblings (-1 or past the
+   * last: the last); also reorders within one parent. keepWorldTransform true keeps where it is in the world (its
+   * local transform changes), false keeps its local transform. Error for a parent that is the object or under it.
+   */
+  setEntityParent(entityId: string, parentId: string, siblingIndex: number, keepWorldTransform: boolean): Promise<void>
+  /**
+   * Changes an object's own properties: any of name (string), active (boolean), tag (string), layer (integer 0 to
+   * 31). An unknown key or a bad value is an Error and nothing changes.
+   */
+  setEntityProperties(entityId: string, properties: JsonObject): Promise<void>
+  /** Copies an object and everything under it, right after the original among its siblings; answers the copy's id */
+  duplicateEntity(entityId: string): Promise<string>
+  /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
+  getEntity(entityId: string): Promise<EntityDataResponse>
+  /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
+  setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -72,7 +104,7 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "string" | "number" | "int32" | "uint32" | "vec3" | "jsonObject"
+export type ArgKind = "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject"
 
 /** A plain JSON object (not an array): what a merge patch is */
 export type JsonObject = { [key: string]: unknown }
@@ -105,6 +137,13 @@ export const EngineCommandArgs = {
   getAllEntities: [],
   setEntityTransform: ["string", "vec3", "vec3", "vec3"],
   getEntityTransform: ["string"],
+  getHierarchy: [],
+  createEntityEx: ["string", "string", "int32", "string"],
+  setEntityParent: ["string", "string", "int32", "bool"],
+  setEntityProperties: ["string", "jsonObject"],
+  duplicateEntity: ["string"],
+  getEntity: ["string"],
+  setLocalTransform: ["string", "vec3", "quat", "vec3"],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]
@@ -115,7 +154,9 @@ interface ArgKindTypes {
   number: number
   int32: number
   uint32: number
+  bool: boolean
   vec3: Vec3
+  quat: Quat
   jsonObject: JsonObject
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }

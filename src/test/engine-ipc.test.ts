@@ -129,6 +129,13 @@ class FakeClient {
   getProjectInfo = (...args: unknown[]) => this.record("getProjectInfo", args)
   setProjectSettings = (...args: unknown[]) => this.record("setProjectSettings", args)
   setStartupScene = (...args: unknown[]) => this.record("setStartupScene", args)
+  getHierarchy = (...args: unknown[]) => this.record("getHierarchy", args)
+  createEntityEx = (...args: unknown[]) => this.record("createEntityEx", args)
+  setEntityParent = (...args: unknown[]) => this.record("setEntityParent", args)
+  setEntityProperties = (...args: unknown[]) => this.record("setEntityProperties", args)
+  duplicateEntity = (...args: unknown[]) => this.record("duplicateEntity", args)
+  getEntity = (...args: unknown[]) => this.record("getEntity", args)
+  setLocalTransform = (...args: unknown[]) => this.record("setLocalTransform", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -282,6 +289,83 @@ describe("EngineHost (the main process's engine IPC)", () => {
       const result = await ipc.invoke(Channels.engineCall, editor, name, args)
       assert.equal(result.ok, false, `${name}(${String(args.length)} args) is refused`)
     }
+    assert.equal(client.calls.length, 0)
+  })
+
+  test("the hierarchy commands are forwarded with checked arguments", async () => {
+    const { ipc, client, editor } = setup()
+    const v = { x: 1, y: 2, z: 3 }
+    const q = { x: 0, y: 0, z: 0, w: 1 }
+    const calls: Array<[string, unknown[]]> = [
+      ["getHierarchy", []],
+      ["createEntityEx", ["Cube", "", -1, "Cube"]],
+      ["createEntityEx", ["", "parent-uuid", 2, "empty"]],
+      ["setEntityParent", ["id", "", 0, true]],
+      ["setEntityParent", ["id", "parent", -1, false]],
+      ["setEntityProperties", ["id", { name: "Hero", active: false, tag: "Player", layer: 3 }]],
+      ["duplicateEntity", ["id"]],
+      ["getEntity", ["id"]],
+      ["setLocalTransform", ["id", v, q, v]],
+    ]
+    for (const [name, args] of calls) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.deepEqual(result, { ok: true, value: { name } }, name)
+    }
+    assert.deepEqual(client.calls, calls)
+
+    const bad: Array<[string, unknown[]]> = [
+      ["getHierarchy", ["x"]],
+      ["createEntityEx", ["Cube", "", -1]], // too few
+      ["createEntityEx", ["Cube", "", 1.5, "Cube"]], // not an integer
+      ["createEntityEx", ["Cube", "", 2 ** 31, "Cube"]],
+      ["createEntityEx", ["Cube", "", "-1", "Cube"]],
+      ["createEntityEx", ["Cube", null, -1, "Cube"]],
+      ["createEntityEx", ["Cube", "", -1, ["Cube"]]],
+      ["setEntityParent", ["id", "", 0, "true"]], // a boolean, not a string
+      ["setEntityParent", ["id", "", 0, 1]],
+      ["setEntityParent", ["id", "", 0]],
+      ["setEntityProperties", ["id"]],
+      ["setEntityProperties", ["id", null]],
+      ["setEntityProperties", ["id", [1]]],
+      ["setEntityProperties", ["id", "{}"]],
+      ["setEntityProperties", ["id", { layer: NaN }]],
+      ["duplicateEntity", []],
+      ["duplicateEntity", [5]],
+      ["getEntity", [{}]],
+      ["setLocalTransform", ["id", v, v, v]], // a vec3 where a quaternion is expected
+      ["setLocalTransform", ["id", v, { x: 0, y: 0, z: 0 }, v]],
+      ["setLocalTransform", ["id", v, { x: 0, y: 0, z: 0, w: NaN }, v]],
+      ["setLocalTransform", ["id", v, { x: 0, y: 0, z: 0, w: Infinity }, v]],
+      ["setLocalTransform", ["id", v, [0, 0, 0, 1], v]],
+      ["setLocalTransform", ["id", v, null, v]],
+    ]
+    client.calls.length = 0
+    for (const [name, args] of bad) {
+      const result = await ipc.invoke(Channels.engineCall, editor, name, args)
+      assert.equal(result.ok, false, `${name}(${JSON.stringify(args)}) is refused`)
+    }
+    assert.equal(client.calls.length, 0)
+
+    // Only x, y, z and w of a quaternion are passed on
+    const ok = await ipc.invoke(Channels.engineCall, editor, "setLocalTransform", ["id", v, { ...q, extra: 1 }, v])
+    assert.equal(ok.ok, true)
+    assert.deepEqual(client.calls[0], ["setLocalTransform", ["id", v, q, v]])
+  })
+
+  test("entity properties are a fresh plain copy, and a patch of shared references is refused quickly", async () => {
+    const { ipc, client, editor } = setup()
+    const properties = { name: "Hero" }
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "setEntityProperties", ["id", properties])).ok, true)
+    const passed = client.calls[0][1][1] as Record<string, unknown>
+    assert.notEqual(passed, properties)
+    assert.deepEqual(passed, properties)
+
+    let shared: Record<string, unknown> = { leaf: 1 }
+    for (let i = 0; i < MaxJsonDepth - 2; i++) shared = { a: shared, b: shared }
+    client.calls.length = 0
+    const started = Date.now()
+    assert.equal((await ipc.invoke(Channels.engineCall, editor, "setEntityProperties", ["id", shared])).ok, false)
+    assert.ok(Date.now() - started < 2000)
     assert.equal(client.calls.length, 0)
   })
 
