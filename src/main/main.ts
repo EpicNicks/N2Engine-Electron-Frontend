@@ -11,9 +11,11 @@ import { EditorPage } from "./ipc"
 import { PlaySession } from "./play-session"
 import { registerPlayIpc } from "./play-ipc"
 import { registerProjectIpc } from "./project-ipc"
+import { registerRemoteIpc } from "./remote-ipc"
 import { ProjectFiles } from "./project-files"
 import { ProjectSession } from "./project-session"
 import { RecentProjects } from "./recent-projects"
+import { RecentRemotes } from "./recent-remotes"
 
 // The editor generates a fresh access token for each host it launches and puts it in that child's environment only
 // (host-launcher.ts). A token inherited from whatever started the editor is removed before anything starts, so no
@@ -49,6 +51,7 @@ function publishPlayState(state: PlayState): void {
 const userData = app.getPath("userData")
 const files = new ProjectFiles()
 const recent = new RecentProjects(path.join(userData, "recent-projects.json"))
+const recentRemotes = new RecentRemotes(path.join(userData, "recent-remotes.json"))
 const settings = new HostSettings(path.join(userData, "settings.json"))
 
 const engine = new EngineHost(new EngineClient(), page, {
@@ -65,6 +68,7 @@ const projectSession = new ProjectSession({
   recent,
   settings,
   engine,
+  recentRemotes,
   publish: publishHostState,
   renderer: () => settings.renderer(),
   log: (message) => console.log(message),
@@ -78,6 +82,11 @@ const play = new PlaySession({
     },
     writePlaySnapshot: (scenePath) => engine.client.writePlaySnapshot(scenePath),
   },
+  // Play launches a local host process of the project's folder: a remote engine has neither
+  unavailable: () =>
+    projectSession.isRemote
+      ? "Play mode needs a local engine: it launches a second N2EditorHost on this machine, from the project's folder"
+      : null,
   projectPath: () => projectSession.projectPath,
   hostPath: () => settings.require(),
   // What the edit host was launched with, not what settings.json says now: a changed setting mustn't split the two
@@ -94,6 +103,7 @@ engine.client.onClose(() => {
 registerPlayIpc(ipcMain, { page, session: play })
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
+registerRemoteIpc(ipcMain, { page, session: projectSession, recent: recentRemotes })
 
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay()

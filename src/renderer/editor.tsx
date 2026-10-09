@@ -89,7 +89,9 @@ function PlayButtons() {
         onClick={() => void play.start()}
         disabled={!play.canPlay.value}
         title={
-          store.scene.value
+          store.remote.value
+            ? "Play mode needs a local engine: it launches a second N2EditorHost on this machine, from the project's folder"
+            : store.scene.value
             ? "Play the open scene as it is now, unsaved changes included, in a game of its own"
             : "Open a scene to play it"
         }
@@ -197,14 +199,24 @@ function Toolbar() {
       <div class="separator" />
       <PlayButtons />
       <div class="separator" />
-      <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
-        {running ? "Restart host" : "Start host"}
-      </button>
-      <button onClick={() => store.stopHost()} disabled={busy !== null || !running}>
-        Stop host
-      </button>
-      <button class="secondary" onClick={() => store.closeProject()} disabled={busy !== null}>
-        Close project
+      {/* A remote engine's host isn't the editor's to start, stop or restart: only the tunnel is */}
+      {!store.remote.value && (
+        <>
+          <button onClick={() => store.restartHost()} disabled={busy !== null} title="Launch a new editor host">
+            {running ? "Restart host" : "Start host"}
+          </button>
+          <button onClick={() => store.stopHost()} disabled={busy !== null || !running}>
+            Stop host
+          </button>
+        </>
+      )}
+      <button
+        class="secondary"
+        onClick={() => store.closeProject()}
+        disabled={busy !== null}
+        title={store.remote.value ? "Closes the SSH tunnel; the remote host keeps running" : undefined}
+      >
+        {store.remote.value ? "Disconnect" : "Close project"}
       </button>
       <div class="separator" />
       <button onClick={() => audio.toggle()} title="Mute or unmute the engine's audio">

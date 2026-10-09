@@ -355,15 +355,23 @@ export type CreateProjectResult =
  * - exited: it ended on its own (crashed, or its session ended), see message;
  * - failed: it couldn't be launched or connected to, see message.
  */
+export type HostMode = "local" | "remote"
+
 export type HostStatus = "stopped" | "starting" | "running" | "exited" | "failed"
 
 export interface HostState {
   status: HostStatus
+  /**
+   * local: N2EditorHost launched by the editor for a project folder. remote: a host that is already running elsewhere,
+   * reached through an SSH tunnel (window.remote); the "host" process is then the tunnel's ssh, which is never the
+   * host: ending it doesn't end the host, and the editor can't start, stop or restart it.
+   */
+  mode: HostMode
   /** Counts launches: a higher one is a newer host process (the console starts a new log for it) */
   launch: number
-  /** The project the host is (or was) for */
+  /** The project the host is (or was) for; in remote mode the remote's name (user@host:port) */
   projectPath: string | null
-  /** Why it failed or exited, with its last output lines; null otherwise */
+  /** Why it failed or exited, with its last output lines (the tunnel's ssh stderr in remote mode); null otherwise */
   message: string | null
 }
 
@@ -405,6 +413,34 @@ export interface ProjectApi {
   removeRecent(projectPath: string): Promise<void>
   /** Closes the open project and stops its host */
   close(): Promise<void>
+}
+
+/**
+ * What the user types for a remote engine, without the access token. These are what the editor remembers (recent
+ * remotes); the token is asked each time and never saved.
+ */
+export interface RemoteSettings {
+  /** user@host */
+  target: string
+  /** ssh's -p; omitted: ssh's default */
+  sshPort?: number
+  /** ssh's -i, a private key file; omitted: the ssh agent and the default keys */
+  identityFile?: string
+  /** The port the remote N2EditorHost listens on */
+  hostPort: number
+}
+
+/** window.remote: remote engine mode (the editor connects to a host that is already running, through an SSH tunnel) */
+export interface RemoteApi {
+  /**
+   * Opens the tunnel (the system's ssh, BatchMode), connects to the host through it with the token and says Hello.
+   * Resolves with the remote's name (user@host:port) once connected; rejects with why not (ssh's stderr tail when the
+   * tunnel failed). The token goes to the main process and nowhere else: it isn't saved, logged or sent back.
+   */
+  connect(settings: RemoteSettings, token: string): Promise<string>
+  /** Recently used remotes, newest first (no tokens) */
+  getRecent(): Promise<RemoteSettings[]>
+  removeRecent(settings: RemoteSettings): Promise<void>
 }
 
 /** An asset the host listed (ListAssets), or a sub-asset of a model: what an asset field can hold */
@@ -536,6 +572,10 @@ export const Channels = {
   hostStop: "host:stop",
   hostLocation: "host:location",
   hostLocate: "host:locate",
+  /** (settings: RemoteSettings, token: string) → IpcResult<string> */
+  remoteConnect: "remote:connect",
+  remoteGetRecent: "remote:getRecent",
+  remoteRemoveRecent: "remote:removeRecent",
 
   /** () → IpcResult<PlayState> */
   playGetState: "play:getState",

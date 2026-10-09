@@ -48,7 +48,7 @@ describe("RecentRemotes", () => {
         "junk",
         null,
         { target: "ok@h", hostPort: 0 },
-      ])
+      ]),
     )
     assert.deepEqual(new RecentRemotes(file).list(), [{ target: "ok@host", hostPort: 5 }])
   })

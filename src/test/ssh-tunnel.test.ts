@@ -120,14 +120,17 @@ describe("remote settings validation", () => {
         token: "leak",
         extra: 1,
       }),
-      { target: "dev@host", hostPort: 7000 }
+      { target: "dev@host", hostPort: 7000 },
     )
-    assert.deepEqual(parseRemoteSettings({ target: "dev@host", sshPort: 2222, identityFile: "/k/id", hostPort: 7000 }), {
-      target: "dev@host",
-      sshPort: 2222,
-      identityFile: "/k/id",
-      hostPort: 7000,
-    })
+    assert.deepEqual(
+      parseRemoteSettings({ target: "dev@host", sshPort: 2222, identityFile: "/k/id", hostPort: 7000 }),
+      {
+        target: "dev@host",
+        sshPort: 2222,
+        identityFile: "/k/id",
+        hostPort: 7000,
+      },
+    )
   })
 
   test("parseRemoteSettings refuses what isn't valid", () => {
@@ -213,7 +216,7 @@ describe("pickFreePort, tryConnect and waitForForward", () => {
   test("waitForForward gives up after the timeout", async () => {
     await assert.rejects(
       waitForForward(5000, { timeoutMs: 20, intervalMs: 5, connect: async () => false }),
-      /wasn't ready within 0.02 s/
+      /wasn't ready within 0.02 s/,
     )
   })
 
@@ -279,7 +282,7 @@ describe("SshTunnel.open", () => {
     spawned.calls[0].child.exit(255)
     await assert.rejects(
       opening,
-      /ssh exited with code 255 before the tunnel was up:\ndev@cloud: Permission denied \(publickey\)\./
+      /ssh exited with code 255 before the tunnel was up:\ndev@cloud: Permission denied \(publickey\)\./,
     )
   })
 
@@ -308,7 +311,7 @@ describe("SshTunnel.open", () => {
           throw new Error("EACCES")
         },
       }),
-      /Couldn't start ssh: EACCES/
+      /Couldn't start ssh: EACCES/,
     )
   })
 
@@ -320,7 +323,7 @@ describe("SshTunnel.open", () => {
         spawn: spawned.spawn,
         pickPort: async () => 5000,
       }),
-      /can't start with '-'/
+      /can't start with '-'/,
     )
     assert.equal(spawned.calls.length, 0)
   })
@@ -336,7 +339,10 @@ describe("SshTunnel.open", () => {
 
   test("once open, a tunnel's death is reported with ssh's last stderr lines, and kill() after it does nothing", async () => {
     const exits: Array<[unknown, SshTunnel]> = []
-    const { spawned, opening } = open({ connect: async () => true, onExit: (exit, tunnel) => exits.push([exit, tunnel]) })
+    const { spawned, opening } = open({
+      connect: async () => true,
+      onExit: (exit, tunnel) => exits.push([exit, tunnel]),
+    })
     const tunnel = await opening
     const child = spawned.calls[0].child
     for (let i = 1; i <= 12; i++) child.stderr.write(`line ${i}\n`)

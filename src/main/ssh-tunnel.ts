@@ -239,7 +239,7 @@ export class SshTunnel {
     private readonly child: ChildProcess,
     /** The port on 127.0.0.1 that reaches the remote host */
     readonly localPort: number,
-    readonly settings: RemoteSettings
+    readonly settings: RemoteSettings,
   ) {}
 
   get exited(): boolean {
@@ -310,7 +310,7 @@ export class SshTunnel {
     let closed = false
     child.on("error", (e) => {
       failure = new Error(
-        `Couldn't start ${sshPath}: ${e.message}${(e as NodeJS.ErrnoException).code === "ENOENT" ? " (is the OpenSSH client installed?)" : ""}`
+        `Couldn't start ${sshPath}: ${e.message}${(e as NodeJS.ErrnoException).code === "ENOENT" ? " (is the OpenSSH client installed?)" : ""}`,
       )
       abort.abort(failure)
     })

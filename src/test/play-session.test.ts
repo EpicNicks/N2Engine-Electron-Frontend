@@ -184,6 +184,15 @@ function setup(overrides: Partial<PlaySessionDeps> = {}) {
 }
 
 describe("PlaySession", () => {
+  test("a remote engine can not be played: refused with the reason, before a snapshot or a child", async () => {
+    const t = setup({ unavailable: () => "Play mode needs a local engine" })
+    await assert.rejects(t.session.start(), /Play mode needs a local engine/)
+    assert.deepEqual(t.snapshots, [])
+    assert.equal(t.launches.length, 0)
+    assert.equal(t.session.state.status, "stopped")
+    assert.deepEqual(t.statuses(), [])
+  })
+
   test("starts: snapshot from the open scene, a child with the edit host's project and renderer, a second connection", async () => {
     const t = setup()
     await t.session.start()

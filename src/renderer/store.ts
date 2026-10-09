@@ -9,6 +9,8 @@ import type {
   HostState,
   OpenProjectResult,
   ProjectApi,
+  RemoteApi,
+  RemoteSettings,
   ServerInfo,
 } from "../shared/api"
 import type { EditResultResponse, EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
@@ -71,6 +73,8 @@ export interface StoreApi {
     | "discardAutosave"
   >
   host: HostApi
+  /** Remote engine mode (window.remote) */
+  remote: RemoteApi
   project: Pick<
     ProjectApi,
     "openDialog" | "openRecent" | "openFolder" | "pickNewFolder" | "create" | "getRecent" | "removeRecent" | "close"
@@ -89,8 +93,26 @@ export function createUnavailableReason(location: HostLocation | null): string |
 
 export type View = "welcome" | "editor"
 
+/** Which way the welcome screen opens an engine: launching a local N2EditorHost, or connecting to a remote one */
+export type WelcomeMode = "local" | "remote"
+
 /** A short description of the host's state, for the toolbar */
 export function describeHost(host: HostState, connected: boolean): string {
+  if (host.mode === "remote") {
+    switch (host.status) {
+      case "starting":
+        return "Opening the SSH tunnel..."
+      case "running":
+        // The tunnel is up but the remote host dropped the connection (it ended, or the editor session did)
+        return connected ? "Connected (remote)" : "Disconnected from the remote host"
+      case "exited":
+        return "The SSH tunnel ended"
+      case "failed":
+        return "The SSH tunnel failed"
+      default:
+        return "Not connected"
+    }
+  }
   switch (host.status) {
     case "starting":
       return "Starting the editor host..."
@@ -112,6 +134,15 @@ export class EditorStore {
   readonly view = computed<View>(() => (this.projectPath.value ? "editor" : "welcome"))
 
   readonly recent = signal<readonly string[]>([])
+  /** The welcome screen's mode (not remembered between runs) */
+  readonly welcomeMode = signal<WelcomeMode>("local")
+  /** Recently used remote engines (no tokens), newest first */
+  readonly recentRemotes = signal<readonly RemoteSettings[]>([])
+  /**
+   * The editor is connected to a remote engine through an SSH tunnel: no project picker, no Start, Stop or Restart
+   * (the host isn't the editor's), and no play mode (it needs a local host)
+   */
+  readonly remote = computed(() => this.host.value.mode === "remote")
   readonly host: Signal<HostState>
   readonly hostLocation = signal<HostLocation | null>(null)
   readonly connected = signal(false)
@@ -243,7 +274,30 @@ export class EditorStore {
 
   /** Loads what the welcome screen shows: recent projects and where the host is */
   async load(): Promise<void> {
-    await Promise.all([this.refreshRecent(), this.refreshHostLocation()])
+    await Promise.all([this.refreshRecent(), this.refreshRecentRemotes(), this.refreshHostLocation()])
+  }
+
+  async refreshRecentRemotes(): Promise<void> {
+    try {
+      this.recentRemotes.value = await this.api.remote.getRecent()
+    } catch (e) {
+      console.error("Failed to read recent remotes:", e)
+    }
+  }
+
+  /**
+   * Connects to a remote engine: the main process opens the SSH tunnel and says Hello with the token, which goes no
+   * further (it isn't kept here, saved or logged). The editor shows once connected; a failure is shown as the error.
+   */
+  async connectRemote(settings: RemoteSettings, token: string): Promise<void> {
+    const name = await this.run("Connecting to the remote engine...", () => this.api.remote.connect(settings, token))
+    if (name !== undefined) this.projectPath.value = name
+    await this.refreshRecentRemotes()
+  }
+
+  async removeRecentRemote(settings: RemoteSettings): Promise<void> {
+    await this.run(null, () => this.api.remote.removeRecent(settings))
+    await this.refreshRecentRemotes()
   }
 
   async refreshRecent(): Promise<void> {
@@ -291,13 +345,15 @@ export class EditorStore {
   }
 
   async closeProject(): Promise<void> {
-    if (!(await this.confirmDiscard("close the project"))) return
+    // A remote engine is disconnected from (the tunnel is closed; its host keeps running)
+    const what = this.remote.value ? "disconnect" : "close the project"
+    if (!(await this.confirmDiscard(what))) return
     // Closing drops the text files open in the editor too
     const files = this.unsavedFiles()
-    if (files.length > 0 && !(await this.api.dialogs.confirm(`${files.join(", ")} has unsaved changes.`, "Discard and close the project"))) {
+    if (files.length > 0 && !(await this.api.dialogs.confirm(`${files.join(", ")} has unsaved changes.`, `Discard and ${what}`))) {
       return
     }
-    await this.run("Closing project...", () => this.api.project.close())
+    await this.run(this.remote.value ? "Disconnecting..." : "Closing project...", () => this.api.project.close())
     this.projectPath.value = null
     await this.refreshRecent()
   }
@@ -396,7 +452,12 @@ export class EditorStore {
     if (state.projectPath === null && this.projectPath.value !== null) this.projectPath.value = null
     if (state.status === previous.status && state.launch === previous.launch) return
     if (state.status === "starting") {
-      this.console.note("info", `Starting N2EditorHost for ${state.projectPath ?? "the project"}`)
+      this.console.note(
+        "info",
+        state.mode === "remote"
+          ? `Opening an SSH tunnel to ${state.projectPath ?? "the remote engine"}`
+          : `Starting N2EditorHost for ${state.projectPath ?? "the project"}`
+      )
     } else if ((state.status === "exited" || state.status === "failed") && state.message) {
       this.console.note("error", state.message)
     }

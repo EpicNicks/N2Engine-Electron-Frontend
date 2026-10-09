@@ -80,6 +80,7 @@ const store = new EditorStore({
   engine: window.engine,
   host: window.host,
   project: window.project,
+  remote: window.remote,
   dialogs: { prompt, confirm: confirmDialog, unsaved: unsavedDialog, autosave: autosaveDialog, dismissAutosave: dismissAutosaveDialog },
 })
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
@@ -127,7 +128,8 @@ const play = new PlayController({
     await hierarchy.renameSettled
     await app.inspector.flush()
   },
-  canStart: () => store.connected.value && store.scene.value !== null && store.busy.value === null,
+  // Not on a remote engine: a game is a second host process on this machine
+  canStart: () => !store.remote.value && store.connected.value && store.scene.value !== null && store.busy.value === null,
   addLog: (entries) => store.console.addEntries(entries),
   note: (level, message) => store.console.note(level, message),
   onError: (what, e) => store.reportError(what, e),
