@@ -1,10 +1,12 @@
 // Remote engine mode, phase 1 (frontend issue #21): the editor reaches an N2EditorHost that is already running on
 // another machine through a tunnel made by the system's ssh:
 //
-//   ssh -N -L 127.0.0.1:<localPort>:127.0.0.1:<hostPort> -p <port> -i <identity> -- user@host
+//   ssh -N -L 127.0.0.1:0:127.0.0.1:<hostPort> -p <port> -i <identity> -- user@host
 //
-// The remote host stays bound to loopback; only sshd is exposed. The editor then connects to 127.0.0.1:<localPort>
-// and says Hello with the host's access token, as it does with a local host. The token is never part of anything in
+// The remote host stays bound to loopback; only sshd is exposed. ssh picks the local port (0) and says which in an
+// "Allocated port <n> for local forward" line once it is authenticated and listening; only then does the editor connect
+// to 127.0.0.1:<n> and say Hello with the host's access token, as it does with a local host. (Probing a port would
+// trust whatever listens there, and another local process could have taken it while ssh was still authenticating.) The token is never part of anything in
 // this file: not an argument, not the environment, not a log line (the session passes it to the engine connection).
 //
 // Everything that decides what ssh is started with is here, in small pure functions, because an address typed by a
@@ -12,7 +14,8 @@
 // every value is validated first (a value starting with "-" is refused, and "--" ends ssh's options before the
 // destination). Node only (no Electron), so it is unit tested with fakes.
 import { ChildProcess, SpawnOptions, spawn as nodeSpawn } from "child_process"
-import * as net from "net"
+import * as fs from "fs"
+import * as path from "path"
 import { HostExit, LineSplitter, describeExit } from "./host-launcher"
 
 /** What the user types for a remote engine, without the token (these are saved as recent remotes) */
@@ -30,9 +33,10 @@ export interface RemoteSettings {
 const MaxFieldLength = 256
 
 const UserPattern = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/
-// A host name or an IPv4 address, or an IPv6 address (hex digits, colons and dots; no brackets needed for ssh)
-const HostNamePattern = /^[A-Za-z0-9][A-Za-z0-9.-]*$/
-const Ipv6Pattern = /^[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*$/
+// A host name (an ssh_config alias may have underscores) or an IPv4 address, or an IPv6 address (hex digits, at least
+// two colons and dots; no brackets needed for ssh)
+const HostNamePattern = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/
+const Ipv6Pattern = /^(?=(?:[^:]*:){2,})[0-9A-Fa-f:.]+$/
 
 /** Why this isn't a user@host ssh may be given, or null. A leading "-" is refused so it can't be read as an option. */
 export function targetProblem(target: unknown): string | null {
@@ -43,7 +47,13 @@ export function targetProblem(target: unknown): string | null {
   if (at < 1 || at !== target.lastIndexOf("@") || at === target.length - 1) return "Enter the SSH address as user@host"
   const user = target.slice(0, at)
   const host = target.slice(at + 1)
+  if (user.includes("\\")) {
+    return "Domain users (DOMAIN\\user) aren't supported: use the user name alone, or set it in your ssh config"
+  }
   if (!UserPattern.test(user)) return "The SSH user has characters ssh addresses don't"
+  if (/^[^:]+:\d*$/.test(host)) {
+    return "Put the port in the SSH port field, not after the host (user@host, not user@host:22)"
+  }
   if (!(HostNamePattern.test(host) || Ipv6Pattern.test(host))) return "The SSH host has characters host names don't"
   return null
 }
@@ -107,10 +117,8 @@ export const SshServerAliveIntervalSeconds = 15
 const QuotedLines = 8
 
 /** The options ssh is started with; throws for settings parseRemoteSettings would refuse */
-export function buildSshArgs(settings: RemoteSettings, localPort: number): string[] {
+export function buildSshArgs(settings: RemoteSettings): string[] {
   const clean = parseRemoteSettings(settings)
-  const portCheck = portProblem(localPort, "The local port")
-  if (portCheck) throw new Error(portCheck)
   const args = [
     "-N",
     // Never ask anything: a password, a passphrase or an unknown host key can't be answered (ssh has no terminal)
@@ -118,14 +126,26 @@ export function buildSshArgs(settings: RemoteSettings, localPort: number): strin
     "BatchMode=yes",
     "-o",
     "ExitOnForwardFailure=yes",
+    // A ControlMaster or ControlPersist in the user's config could hand this to a master that outlives it, leaving the
+    // forward orphaned after the editor killed "ssh"
+    "-o",
+    "ControlMaster=no",
+    "-o",
+    "ControlPath=none",
+    // The "Allocated port" line below is how the editor learns the forward is up: a LogLevel in the user's config
+    // (QUIET, ERROR) must not hide it
+    "-o",
+    "LogLevel=INFO",
     "-o",
     `ConnectTimeout=${SshConnectTimeoutSeconds}`,
     "-o",
     `ServerAliveInterval=${SshServerAliveIntervalSeconds}`,
     "-o",
     "ServerAliveCountMax=3",
+    // Local port 0: ssh itself picks a free port and says which, once it has authenticated and is listening on it
+    // (no port is chosen here and given up again for another process to take before ssh binds it)
     "-L",
-    `127.0.0.1:${localPort}:127.0.0.1:${clean.hostPort}`,
+    `127.0.0.1:0:127.0.0.1:${clean.hostPort}`,
   ]
   if (clean.sshPort !== undefined) args.push("-p", String(clean.sshPort))
   if (clean.identityFile !== undefined) args.push("-i", clean.identityFile, "-o", "IdentitiesOnly=yes")
@@ -134,57 +154,57 @@ export function buildSshArgs(settings: RemoteSettings, localPort: number): strin
   return args
 }
 
-/** A free TCP port on loopback: asks the OS for one and gives it back (another process could take it before ssh does) */
-export function pickFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.unref()
-    server.on("error", reject)
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      const port = typeof address === "object" && address !== null ? address.port : 0
-      server.close(() => (port > 0 ? resolve(port) : reject(new Error("The OS gave no free port"))))
-    })
-  })
+/**
+ * The port from ssh's "Allocated port 50123 for local forward to 127.0.0.1:7777" line (printed at LogLevel INFO once
+ * the forward listens, which is after authentication), or null if the line isn't one
+ */
+export function parseAllocatedPort(line: string): number | null {
+  const match = /^Allocated port (\d{1,5}) for local forward to /.exec(line.replace(/\r$/, ""))
+  if (!match) return null
+  const port = Number(match[1])
+  return port >= 1 && port <= 65535 ? port : null
 }
 
-/** Whether something accepts a TCP connection on 127.0.0.1:port (the connection is closed at once) */
-export function tryConnect(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host: "127.0.0.1", port })
-    const done = (ok: boolean): void => {
-      socket.destroy()
-      resolve(ok)
+/**
+ * The ssh to run: on Windows the OpenSSH that ships with the system when it is there (a Git for Windows ssh found
+ * first on the PATH is another program with its own known_hosts and keys), else "ssh" from the PATH
+ */
+export function resolveSshPath(
+  platform: string = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  exists: (file: string) => boolean = fs.existsSync,
+): string {
+  if (platform === "win32") {
+    const root = env.SystemRoot ?? env.windir
+    if (root) {
+      const system = path.win32.join(root, "System32", "OpenSSH", "ssh.exe")
+      if (exists(system)) return system
     }
-    socket.once("connect", () => done(true))
-    socket.once("error", () => done(false))
-  })
-}
-
-export interface WaitForForwardOptions {
-  timeoutMs: number
-  /** Default 100 */
-  intervalMs?: number
-  /** Default tryConnect */
-  connect?: (port: number) => Promise<boolean>
-  /** Aborting stops the wait, which rejects with the signal's reason */
-  signal?: AbortSignal
-}
-
-/** Resolves once something accepts connections on 127.0.0.1:port; rejects after timeoutMs, or when the signal aborts */
-export async function waitForForward(port: number, options: WaitForForwardOptions): Promise<void> {
-  const connect = options.connect ?? tryConnect
-  const intervalMs = options.intervalMs ?? 100
-  const deadline = Date.now() + options.timeoutMs
-  for (;;) {
-    options.signal?.throwIfAborted()
-    if (await connect(port)) return
-    options.signal?.throwIfAborted()
-    if (Date.now() >= deadline) {
-      throw new Error(`The SSH tunnel wasn't ready within ${options.timeoutMs / 1000} s`)
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs))
   }
+  return "ssh"
+}
+
+let resolvedSshPath: string | null = null
+
+/** resolveSshPath(), asked once */
+function defaultSshPath(): string {
+  return (resolvedSshPath ??= resolveSshPath())
+}
+
+/** An actionable hint for an ssh failure it recognises (appended to the message), or "" */
+export function sshHint(lines: readonly string[], sshPath: string, settings: RemoteSettings): string {
+  if (lines.some((line) => line.includes("Host key verification failed"))) {
+    const ssh = /\s/.test(sshPath) ? `"${sshPath}"` : sshPath
+    const port = settings.sshPort !== undefined ? ` -p ${settings.sshPort}` : ""
+    return (
+      `\nssh doesn't trust this host's key (it is new, or it changed), and the editor can't answer ssh's question. ` +
+      `If the key is the one you expect, run this once in a terminal and answer yes, then connect again:\n` +
+      `  ${ssh}${port} ${settings.target}\n` +
+      `Use this same ssh: Windows' OpenSSH and Git's ssh keep separate known_hosts files. ` +
+      `If the key changed and you didn't expect it, don't accept it.`
+    )
+  }
+  return ""
 }
 
 /** child_process.spawn, or a fake in tests */
@@ -192,25 +212,21 @@ export type SpawnFunction = (command: string, args: readonly string[], options: 
 
 export interface TunnelOptions {
   settings: RemoteSettings
-  /** Defaults to "ssh" (the system's: OpenSSH, found on the PATH) */
+  /** Defaults to resolveSshPath(): the system's OpenSSH on Windows when present, else "ssh" from the PATH */
   sshPath?: string
-  /** Defaults to how long ssh's connect timeout plus a margin takes */
+  /** How long ssh gets to authenticate and set up the forward; defaults to its connect timeout plus a margin */
   readyTimeoutMs?: number
-  /** Defaults to pickFreePort */
-  pickPort?: () => Promise<number>
-  /** Defaults to tryConnect */
-  connect?: (port: number) => Promise<boolean>
-  /** Default 100 */
-  pollIntervalMs?: number
   env?: NodeJS.ProcessEnv
   spawn?: SpawnFunction
+  /** Aborting (the editor is quitting) ends ssh at once, or stops it from being spawned: open rejects */
+  signal?: AbortSignal
   /** Called once ssh has exited, if open resolved */
   onExit?: (exit: HostExit, tunnel: SshTunnel) => void
   /** Called as soon as ssh is spawned, with a function that kills it: a tunnel still opening can be ended */
   onSpawned?: (kill: () => void) => void
 }
 
-/** How long the forward gets to accept connections: ssh's own connect timeout, then a margin for authentication */
+/** How long ssh gets to connect and authenticate, and print that the forward listens */
 export const DefaultTunnelReadyTimeoutMs = (SshConnectTimeoutSeconds + 10) * 1000
 
 /** Keeps the last n lines */
@@ -226,20 +242,22 @@ export function quoteStderr(lines: readonly string[]): string {
 }
 
 /**
- * A running ssh tunnel. SshTunnel.open starts ssh, waits until the local end accepts connections and resolves with the
- * tunnel; it rejects (and kills ssh) when ssh exits first, can't be started or the forward isn't up in time, with
- * ssh's last stderr lines.
+ * A running ssh tunnel. SshTunnel.open starts ssh and resolves once ssh itself has said its forward is listening (it
+ * authenticated, and it holds the local port: nothing else could have taken it), never on the strength of something
+ * accepting connections on a port. It rejects (and kills ssh) when ssh exits first, can't be started, says nothing in
+ * time or the signal aborts, with ssh's last stderr lines.
  */
 export class SshTunnel {
   private exitInfo: HostExit | null = null
   private readonly exitListeners: Array<(exit: HostExit) => void> = []
-  private readonly stderrLines: string[] = []
 
   private constructor(
     private readonly child: ChildProcess,
-    /** The port on 127.0.0.1 that reaches the remote host */
+    /** The port on 127.0.0.1 that reaches the remote host, as ssh allocated it */
     readonly localPort: number,
     readonly settings: RemoteSettings,
+    /** ssh's last stderr lines, shared with the open() that reads them */
+    private readonly stderrLines: string[],
   ) {}
 
   get exited(): boolean {
@@ -274,83 +292,117 @@ export class SshTunnel {
     }
   }
 
-  static async open(options: TunnelOptions): Promise<SshTunnel> {
+  static open(options: TunnelOptions): Promise<SshTunnel> {
     const spawn = options.spawn ?? nodeSpawn
-    const sshPath = options.sshPath ?? "ssh"
-    const localPort = await (options.pickPort ?? pickFreePort)()
-    const args = buildSshArgs(options.settings, localPort)
-
-    let child: ChildProcess
-    try {
-      child = spawn(sshPath, args, {
-        env: options.env ?? process.env,
-        // ssh asks nothing (BatchMode) and prints nothing we need on stdout: only stderr is read
-        stdio: ["ignore", "ignore", "pipe"],
-        windowsHide: true,
-      })
-    } catch (e) {
-      throw new Error(`Couldn't start ${sshPath}: ${e instanceof Error ? e.message : String(e)}`)
-    }
-    options.onSpawned?.(() => {
+    const sshPath = options.sshPath ?? defaultSshPath()
+    return new Promise<SshTunnel>((resolve, reject) => {
+      const cancelled = (): Error => new Error("Cancelled: the tunnel was closed while it opened")
+      let args: string[]
       try {
-        child.kill()
-      } catch {
-        // already gone
-      }
-    })
-
-    const stderrLines: string[] = []
-    let tunnel: SshTunnel | null = null
-    const stderr = new LineSplitter()
-    child.stderr?.on("data", (chunk: Buffer) => pushLast(tunnel ? tunnel.stderrLines : stderrLines, stderr.push(chunk)))
-    child.stderr?.on("end", () => pushLast(tunnel ? tunnel.stderrLines : stderrLines, stderr.end()))
-
-    const abort = new AbortController()
-    let failure: Error | null = null
-    let closed = false
-    child.on("error", (e) => {
-      failure = new Error(
-        `Couldn't start ${sshPath}: ${e.message}${(e as NodeJS.ErrnoException).code === "ENOENT" ? " (is the OpenSSH client installed?)" : ""}`,
-      )
-      abort.abort(failure)
-    })
-    // "close", not "exit": by then stderr is read to the end, so a failure quotes all of it
-    child.on("close", (code, signal) => {
-      closed = true
-      const exit: HostExit = { code, signal }
-      if (!tunnel) {
-        failure ??= new Error(`ssh ${describeExit(exit)} before the tunnel was up${quoteStderr(stderrLines)}`)
-        abort.abort(failure)
+        args = buildSshArgs(options.settings)
+      } catch (e) {
+        reject(e)
         return
       }
-      tunnel.exitInfo = exit
-      tunnel.exitListeners.splice(0).forEach((listener) => listener(exit))
-      options.onExit?.(exit, tunnel)
-    })
+      // Checked right before spawning: the editor may have quit while the caller was getting here
+      if (options.signal?.aborted) {
+        reject(cancelled())
+        return
+      }
+      let child: ChildProcess
+      try {
+        child = spawn(sshPath, args, {
+          env: options.env ?? process.env,
+          // ssh asks nothing (BatchMode) and prints nothing we need on stdout: only stderr is read
+          stdio: ["ignore", "ignore", "pipe"],
+          windowsHide: true,
+        })
+      } catch (e) {
+        reject(new Error(`Couldn't start ${sshPath}: ${e instanceof Error ? e.message : String(e)}`))
+        return
+      }
 
-    try {
-      await waitForForward(localPort, {
-        timeoutMs: options.readyTimeoutMs ?? DefaultTunnelReadyTimeoutMs,
-        intervalMs: options.pollIntervalMs,
-        connect: options.connect,
-        signal: abort.signal,
-      })
-    } catch (e) {
-      if (!closed) {
+      const stderrLines: string[] = []
+      let tunnel: SshTunnel | null = null
+      let settled = false
+      let closed = false
+      const kill = (): void => {
+        if (closed) return
         try {
           child.kill()
         } catch {
           // already gone
         }
       }
-      // The reason is ssh's own when it ended first (a bad key, a refused host key, no route); a timeout quotes it too
-      if (failure) throw failure
-      throw new Error(`${e instanceof Error ? e.message : String(e)}${quoteStderr(stderrLines)}`)
-    }
-    // The forward can be up and ssh gone in the same moment: the exit is the news
-    if (failure) throw failure
-    tunnel = new SshTunnel(child, localPort, options.settings)
-    tunnel.stderrLines.push(...stderrLines)
-    return tunnel
+      const onAbort = (): void => fail(cancelled())
+      const timer = setTimeout(
+        () =>
+          fail(
+            new Error(
+              `ssh didn't report its forward within ${(options.readyTimeoutMs ?? DefaultTunnelReadyTimeoutMs) / 1000} s ` +
+                `(it prints "Allocated port <n> for local forward" once it is connected)` +
+                quoteStderr(stderrLines) +
+                sshHint(stderrLines, sshPath, options.settings),
+            ),
+          ),
+        options.readyTimeoutMs ?? DefaultTunnelReadyTimeoutMs,
+      )
+      function fail(error: Error): void {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        options.signal?.removeEventListener("abort", onAbort)
+        kill()
+        reject(error)
+      }
+      options.signal?.addEventListener("abort", onAbort, { once: true })
+
+      options.onSpawned?.(kill)
+
+      const onLines = (lines: string[]): void => {
+        const rest: string[] = []
+        for (const line of lines) {
+          const port = settled ? null : parseAllocatedPort(line)
+          if (port === null) {
+            rest.push(line)
+            continue
+          }
+          // ssh authenticated and listens on the port: now (and not before) the editor may connect
+          settled = true
+          clearTimeout(timer)
+          options.signal?.removeEventListener("abort", onAbort)
+          tunnel = new SshTunnel(child, port, options.settings, stderrLines)
+          resolve(tunnel)
+        }
+        pushLast(stderrLines, rest)
+      }
+      const stderr = new LineSplitter()
+      child.stderr?.on("data", (chunk: Buffer) => onLines(stderr.push(chunk)))
+      child.stderr?.on("end", () => onLines(stderr.end()))
+
+      child.on("error", (e) =>
+        fail(
+          new Error(
+            `Couldn't start ${sshPath}: ${e.message}${(e as NodeJS.ErrnoException).code === "ENOENT" ? " (is the OpenSSH client installed?)" : ""}`,
+          ),
+        ),
+      )
+      // "close", not "exit": by then stderr is read to the end, so a failure quotes all of it
+      child.on("close", (code, signal) => {
+        closed = true
+        const exit: HostExit = { code, signal }
+        if (!tunnel) {
+          fail(
+            new Error(
+              `ssh ${describeExit(exit)} before the tunnel was up${quoteStderr(stderrLines)}${sshHint(stderrLines, sshPath, options.settings)}`,
+            ),
+          )
+          return
+        }
+        tunnel.exitInfo = exit
+        tunnel.exitListeners.splice(0).forEach((listener) => listener(exit))
+        options.onExit?.(exit, tunnel)
+      })
+    })
   }
 }

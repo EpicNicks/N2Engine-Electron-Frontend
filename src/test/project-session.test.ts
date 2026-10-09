@@ -633,6 +633,20 @@ describe("ProjectSession remote mode", () => {
     assert.ok(!(session.state.message ?? "").includes("wrong"))
   })
 
+  test("a tunnel that is gone right after Hello is not a connection: it fails and tears down", async () => {
+    const { session, engine, tunnels, remembered } = remoteSetup()
+    const connectTo = engine.connectTo.bind(engine)
+    engine.connectTo = async (port, token) => {
+      const state = await connectTo(port, token)
+      tunnels[0].end({ code: 255, signal: null })
+      return state
+    }
+    await assert.rejects(session.connectRemote(remote, "t"), /exited with code 255 right after the editor connected/)
+    assert.equal(session.state.status, "failed")
+    assert.deepEqual(remembered, [])
+    assert.ok(engine.closes > 0)
+  })
+
   test("a tunnel that dies while connecting is reported as that", async () => {
     const { session, engine, tunnels } = remoteSetup()
     engine.failNext = "Connection closed"
@@ -739,6 +753,24 @@ describe("ProjectSession remote mode", () => {
     await assert.rejects(again, CancelledError)
     await assert.rejects(session.connectRemote(remote, "t"), CancelledError)
     assert.equal(opened.length, 1, "nothing is opened after shutdown")
+  })
+
+  test("shutdown aborts the signal the tunnel is opened with, so one still being spawned never starts", async () => {
+    let signal: AbortSignal | undefined
+    const { session } = remoteSetup({
+      openTunnel: (options) =>
+        new Promise((_, reject) => {
+          signal = options.signal
+          signal?.addEventListener("abort", () => reject(new Error("Cancelled: the tunnel was closed while it opened")))
+        }),
+    })
+    const connecting = session.connectRemote(remote, "t")
+    await tick()
+    assert.equal(signal?.aborted, false)
+    session.shutdown()
+    assert.equal(signal?.aborted, true)
+    await assert.rejects(connecting, CancelledError)
+    assert.equal(session.state.status, "stopped")
   })
 
   test("a tunnel that opens just as the editor quits is killed", async () => {

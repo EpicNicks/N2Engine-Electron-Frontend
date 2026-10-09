@@ -911,7 +911,10 @@ describe("EditorStore", () => {
     api.unsavedAnswers = ["cancel"]
     await store.closeProject()
     assert.equal(store.view.value, "editor")
-    assert.ok(api.asked.some((q) => q.startsWith("unsaved Discard and disconnect")))
+    assert.ok(
+      api.asked.some((q) => q.startsWith("unsaved Disconnect without saving: a has unsaved changes. They stay in the remote host's memory")),
+      "the question says the changes stay in the host"
+    )
     api.unsavedAnswers = ["discard"]
     await store.closeProject()
     assert.equal(store.view.value, "welcome")

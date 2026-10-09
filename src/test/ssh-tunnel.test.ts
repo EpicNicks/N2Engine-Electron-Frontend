@@ -2,7 +2,6 @@ import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
-import * as net from "node:net"
 import { ChildProcess, SpawnOptions } from "node:child_process"
 import {
   RemoteSettings,
@@ -11,13 +10,13 @@ import {
   buildSshArgs,
   describeRemote,
   identityProblem,
+  parseAllocatedPort,
   parseRemoteSettings,
-  pickFreePort,
   portProblem,
   quoteStderr,
+  resolveSshPath,
+  sshHint,
   targetProblem,
-  tryConnect,
-  waitForForward,
 } from "../main/ssh-tunnel"
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
@@ -66,6 +65,8 @@ describe("remote settings validation", () => {
       "me_1@host-2.local",
       "root@fe80::1",
       "x@2001:db8::1",
+      "dev@my_alias",
+      "dev@build_box.internal",
     ]) {
       assert.equal(targetProblem(target), null, target)
     }
@@ -93,6 +94,16 @@ describe("remote settings validation", () => {
     assert.notEqual(targetProblem(42), null)
     assert.notEqual(targetProblem(undefined), null)
     assert.notEqual(targetProblem("a@" + "h".repeat(300)), null)
+  })
+
+  test("host:port forms are refused with a pointer to the port field", () => {
+    for (const target of ["dev@1.2.3.4:22", "dev@cloud.example.com:2222", "dev@host:"]) {
+      assert.match(targetProblem(target) ?? "", /Put the port in the SSH port field/, target)
+    }
+  })
+
+  test("domain users are refused, and the message says so", () => {
+    assert.match(targetProblem("CORP\\alice@host") ?? "", /Domain users \(DOMAIN\\user\) aren't supported/)
   })
 
   test("a host name that starts with - is refused after the @ too", () => {
@@ -149,13 +160,19 @@ describe("remote settings validation", () => {
 })
 
 describe("buildSshArgs", () => {
-  test("forwards a loopback port to the host's loopback port, never asks anything, and ends the options before the target", () => {
-    assert.deepEqual(buildSshArgs(remote, 50123), [
+  test("lets ssh pick the loopback port, never asks anything, keeps a ControlMaster out, and ends the options before the target", () => {
+    assert.deepEqual(buildSshArgs(remote), [
       "-N",
       "-o",
       "BatchMode=yes",
       "-o",
       "ExitOnForwardFailure=yes",
+      "-o",
+      "ControlMaster=no",
+      "-o",
+      "ControlPath=none",
+      "-o",
+      "LogLevel=INFO",
       "-o",
       "ConnectTimeout=15",
       "-o",
@@ -163,14 +180,14 @@ describe("buildSshArgs", () => {
       "-o",
       "ServerAliveCountMax=3",
       "-L",
-      "127.0.0.1:50123:127.0.0.1:7777",
+      "127.0.0.1:0:127.0.0.1:7777",
       "--",
       "dev@cloud.example.com",
     ])
   })
 
   test("the ssh port and identity file are separate arguments", () => {
-    const args = buildSshArgs({ ...remote, sshPort: 2222, identityFile: "C:\\keys\\my key" }, 50123)
+    const args = buildSshArgs({ ...remote, sshPort: 2222, identityFile: "C:\\keys\\my key" })
     assert.deepEqual(args.slice(args.indexOf("-p"), args.indexOf("--")), [
       "-p",
       "2222",
@@ -183,57 +200,85 @@ describe("buildSshArgs", () => {
   })
 
   test("refuses settings an address could inject options with", () => {
-    assert.throws(() => buildSshArgs({ target: "-oProxyCommand=x@y", hostPort: 1 }, 5000), /can't start with '-'/)
-    assert.throws(() => buildSshArgs(remote, 0), /local port/)
+    assert.throws(() => buildSshArgs({ target: "-oProxyCommand=x@y", hostPort: 1 }), /can't start with '-'/)
   })
 
   test("nothing in the arguments looks like a token (the token is never given to this module)", () => {
-    const args = buildSshArgs(remote, 5000).join(" ")
+    const args = buildSshArgs(remote).join(" ")
     assert.ok(!/token/i.test(args))
   })
 })
 
-describe("pickFreePort, tryConnect and waitForForward", () => {
-  test("pickFreePort gives a port nothing listens on, and tryConnect sees a listener", async () => {
-    const port = await pickFreePort()
-    assert.ok(port >= 1 && port <= 65535)
-    assert.equal(await tryConnect(port), false)
-    const server = net.createServer((socket) => socket.destroy())
-    await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve))
-    try {
-      assert.equal(await tryConnect(port), true)
-    } finally {
-      await new Promise((resolve) => server.close(resolve))
+describe("parseAllocatedPort", () => {
+  test("reads ssh's line, with or without a carriage return", () => {
+    assert.equal(parseAllocatedPort("Allocated port 50123 for local forward to 127.0.0.1:7777"), 50123)
+    assert.equal(parseAllocatedPort("Allocated port 50123 for local forward to 127.0.0.1:7777\r"), 50123)
+  })
+
+  test("anything else isn't it", () => {
+    for (const line of [
+      "",
+      "Allocated port 0 for local forward to 127.0.0.1:7777",
+      "Allocated port 99999 for local forward to x",
+      "Allocated port 5 for remote forward to x",
+      "debug1: Allocated port 50123 for local forward to 127.0.0.1:7777",
+      "Warning: Permanently added 'host' to the list of known hosts.",
+    ]) {
+      assert.equal(parseAllocatedPort(line), null, line)
     }
   })
+})
 
-  test("waitForForward polls until the connection works", async () => {
-    let tries = 0
-    await waitForForward(5000, { timeoutMs: 1000, intervalMs: 1, connect: async () => ++tries >= 4 })
-    assert.equal(tries, 4)
-  })
-
-  test("waitForForward gives up after the timeout", async () => {
-    await assert.rejects(
-      waitForForward(5000, { timeoutMs: 20, intervalMs: 5, connect: async () => false }),
-      /wasn't ready within 0.02 s/,
+describe("resolveSshPath", () => {
+  test("on Windows, the system's OpenSSH when it exists", () => {
+    const system = "C:\\Windows\\System32\\OpenSSH\\ssh.exe"
+    assert.equal(
+      resolveSshPath("win32", { SystemRoot: "C:\\Windows" }, (f) => f === system),
+      system,
+    )
+    assert.equal(
+      resolveSshPath("win32", { windir: "C:\\Windows" }, (f) => f === system),
+      system,
     )
   })
 
-  test("waitForForward stops when aborted, with the reason", async () => {
-    const abort = new AbortController()
-    let tries = 0
-    const waiting = waitForForward(5000, {
-      timeoutMs: 10000,
-      intervalMs: 1,
-      signal: abort.signal,
-      connect: async () => {
-        if (++tries === 3) abort.abort(new Error("ssh ended"))
-        return false
-      },
+  test("else ssh from the PATH", () => {
+    assert.equal(
+      resolveSshPath("win32", { SystemRoot: "C:\\Windows" }, () => false),
+      "ssh",
+    )
+    assert.equal(
+      resolveSshPath("win32", {}, () => true),
+      "ssh",
+    )
+    assert.equal(
+      resolveSshPath("linux", { SystemRoot: "C:\\Windows" }, () => true),
+      "ssh",
+    )
+    assert.equal(
+      resolveSshPath("darwin", {}, () => true),
+      "ssh",
+    )
+  })
+})
+
+describe("sshHint", () => {
+  test("an unknown host key says which ssh to run once, with the port and target", () => {
+    const hint = sshHint(["Host key verification failed."], "C:\\Windows\\System32\\OpenSSH\\ssh.exe", {
+      ...remote,
+      sshPort: 2222,
     })
-    await assert.rejects(waiting, /ssh ended/)
-    assert.equal(tries, 3)
+    assert.match(hint, /C:\\Windows\\System32\\OpenSSH\\ssh\.exe -p 2222 dev@cloud\.example\.com/)
+    assert.match(hint, /Windows' OpenSSH and Git's ssh keep separate known_hosts/)
+    assert.match(
+      sshHint(["Host key verification failed."], "C:\\Program Files\\ssh.exe", remote),
+      /"C:\\Program Files\\ssh\.exe" dev@/,
+    )
+  })
+
+  test("other failures have no hint", () => {
+    assert.equal(sshHint(["Permission denied (publickey)."], "ssh", remote), "")
+    assert.equal(sshHint([], "ssh", remote), "")
   })
 })
 
@@ -244,39 +289,56 @@ describe("quoteStderr", () => {
   })
 })
 
+const allocated = "Allocated port 50123 for local forward to 127.0.0.1:7777\n"
+
 describe("SshTunnel.open", () => {
   const open = (extra: Partial<Parameters<typeof SshTunnel.open>[0]> = {}) => {
     const spawned = fakeSpawn()
     const options = {
       settings: remote,
       spawn: spawned.spawn,
-      pickPort: async () => 50123,
-      pollIntervalMs: 1,
+      sshPath: "ssh",
       env: { SSH_AUTH_SOCK: "/agent" } as NodeJS.ProcessEnv,
       ...extra,
     }
     return { spawned, opening: SshTunnel.open(options) }
   }
 
-  test("spawns ssh without a shell, with the arguments as an array, and resolves once the forward accepts connections", async () => {
-    let up = false
-    const { spawned, opening } = open({ connect: async (port) => (port === 50123 ? up : false) })
+  test("spawns ssh without a shell, with the arguments as an array, and resolves only once ssh says its forward listens", async () => {
+    const { spawned, opening } = open()
+    let resolved = false
+    void opening.then(() => (resolved = true))
     await settle()
     const [call] = spawned.calls
     assert.equal(call.command, "ssh")
-    assert.deepEqual(call.args, buildSshArgs(remote, 50123))
+    assert.deepEqual(call.args, buildSshArgs(remote))
     assert.ok(!call.options.shell, "no shell")
     assert.deepEqual(call.options.stdio, ["ignore", "ignore", "pipe"])
     assert.deepEqual(call.options.env, { SSH_AUTH_SOCK: "/agent" })
-    up = true
+    // Chatter, and a banner that isn't the line: not ready
+    call.child.stderr.write("Warning: Permanently added 'cloud' to the list of known hosts.\n")
+    await settle()
+    assert.equal(resolved, false, "nothing but ssh's own line makes it ready")
+    call.child.stderr.write(allocated)
     const tunnel = await opening
-    assert.equal(tunnel.localPort, 50123)
+    assert.equal(tunnel.localPort, 50123, "the port ssh allocated")
     assert.equal(tunnel.pid, 777)
     assert.equal(tunnel.exited, false)
+    assert.ok(!tunnel.lastOutput.includes("Allocated"), "the line isn't an error to quote")
+    assert.match(tunnel.lastOutput, /known hosts/)
+  })
+
+  test("a line split across chunks is still read", async () => {
+    const { spawned, opening } = open()
+    await settle()
+    spawned.calls[0].child.stderr.write("Allocated port 50")
+    await settle()
+    spawned.calls[0].child.stderr.write("123 for local forward to 127.0.0.1:7777\r\n")
+    assert.equal((await opening).localPort, 50123)
   })
 
   test("ssh ending first fails with its exit and stderr", async () => {
-    const { spawned, opening } = open({ connect: async () => false })
+    const { spawned, opening } = open()
     await settle()
     spawned.calls[0].child.stderr.write("dev@cloud: Permission denied (publickey).\n")
     spawned.calls[0].child.exit(255)
@@ -286,16 +348,34 @@ describe("SshTunnel.open", () => {
     )
   })
 
-  test("a forward that never comes up times out, kills ssh and quotes what it said", async () => {
-    const { spawned, opening } = open({ connect: async () => false, readyTimeoutMs: 30 })
+  test("an unknown host key adds the hint with the ssh that was run", async () => {
+    const { spawned, opening } = open({ sshPath: "C:\\Windows\\System32\\OpenSSH\\ssh.exe" })
+    await settle()
+    spawned.calls[0].child.stderr.write("Host key verification failed.\n")
+    spawned.calls[0].child.exit(255)
+    await assert.rejects(
+      opening,
+      /Host key verification failed\.\nssh doesn't trust this host's key[^]*C:\\Windows\\System32\\OpenSSH\\ssh\.exe dev@cloud\.example\.com/,
+    )
+  })
+
+  test("ssh that never says its forward is up times out, is killed and quotes what it said", async () => {
+    const { spawned, opening } = open({ readyTimeoutMs: 30 })
     await settle()
     spawned.calls[0].child.stderr.write("Warning: something\n")
-    await assert.rejects(opening, /wasn't ready within 0.03 s:\nWarning: something/)
+    await assert.rejects(opening, /didn't report its forward within 0.03 s[^]*Allocated port[^]*:\nWarning: something/)
     assert.equal(spawned.calls[0].child.killed, 1)
   })
 
+  test("a port that merely accepts connections is not enough: no listener is probed", async () => {
+    // Another process listening where ssh was meant to be would be trusted by a probe; here only ssh's line counts
+    const { spawned, opening } = open({ readyTimeoutMs: 20 })
+    await assert.rejects(opening, /didn't report its forward/)
+    assert.equal(spawned.calls.length, 1)
+  })
+
   test("a missing ssh says so", async () => {
-    const { spawned, opening } = open({ connect: async () => false })
+    const { spawned, opening } = open()
     await settle()
     const error = Object.assign(new Error("spawn ssh ENOENT"), { code: "ENOENT" })
     spawned.calls[0].child.emit("error", error)
@@ -306,7 +386,7 @@ describe("SshTunnel.open", () => {
     await assert.rejects(
       SshTunnel.open({
         settings: remote,
-        pickPort: async () => 5000,
+        sshPath: "ssh",
         spawn: () => {
           throw new Error("EACCES")
         },
@@ -318,19 +398,47 @@ describe("SshTunnel.open", () => {
   test("refuses invalid settings before spawning anything", async () => {
     const spawned = fakeSpawn()
     await assert.rejects(
-      SshTunnel.open({
-        settings: { target: "-oProxyCommand=x@y", hostPort: 1 },
-        spawn: spawned.spawn,
-        pickPort: async () => 5000,
-      }),
+      SshTunnel.open({ settings: { target: "-oProxyCommand=x@y", hostPort: 1 }, spawn: spawned.spawn }),
       /can't start with '-'/,
     )
     assert.equal(spawned.calls.length, 0)
   })
 
+  test("an already aborted signal spawns nothing", async () => {
+    const spawned = fakeSpawn()
+    const abort = new AbortController()
+    abort.abort()
+    await assert.rejects(
+      SshTunnel.open({ settings: remote, spawn: spawned.spawn, signal: abort.signal }),
+      /^Error: Cancelled:/,
+    )
+    assert.equal(spawned.calls.length, 0, "no orphan ssh after quitting")
+  })
+
+  test("aborting while ssh connects kills it and rejects as cancelled", async () => {
+    const abort = new AbortController()
+    const { spawned, opening } = open({ signal: abort.signal })
+    await settle()
+    abort.abort()
+    await assert.rejects(opening, /Cancelled: the tunnel was closed while it opened/)
+    assert.equal(spawned.calls[0].child.killed, 1)
+  })
+
+  test("aborting after the tunnel is up does nothing to it", async () => {
+    const abort = new AbortController()
+    const { spawned, opening } = open({ signal: abort.signal })
+    await settle()
+    spawned.calls[0].child.stderr.write(allocated)
+    const tunnel = await opening
+    abort.abort()
+    await settle()
+    assert.equal(tunnel.exited, false)
+    assert.equal(spawned.calls[0].child.killed, 0)
+  })
+
   test("onSpawned's kill ends a tunnel that is still opening", async () => {
     let kill: (() => void) | null = null
-    const { spawned, opening } = open({ connect: async () => false, onSpawned: (k) => (kill = k) })
+    const { spawned, opening } = open({ onSpawned: (k) => (kill = k) })
     await settle()
     kill!()
     await assert.rejects(opening, /ssh was ended by SIGTERM before the tunnel was up/)
@@ -339,12 +447,11 @@ describe("SshTunnel.open", () => {
 
   test("once open, a tunnel's death is reported with ssh's last stderr lines, and kill() after it does nothing", async () => {
     const exits: Array<[unknown, SshTunnel]> = []
-    const { spawned, opening } = open({
-      connect: async () => true,
-      onExit: (exit, tunnel) => exits.push([exit, tunnel]),
-    })
-    const tunnel = await opening
+    const { spawned, opening } = open({ onExit: (exit, tunnel) => exits.push([exit, tunnel]) })
+    await settle()
     const child = spawned.calls[0].child
+    child.stderr.write(allocated)
+    const tunnel = await opening
     for (let i = 1; i <= 12; i++) child.stderr.write(`line ${i}\n`)
     child.stderr.write("Timeout, server cloud not responding.\n")
     child.exit(255)
@@ -363,7 +470,9 @@ describe("SshTunnel.open", () => {
   })
 
   test("kill() ends a running tunnel", async () => {
-    const { spawned, opening } = open({ connect: async () => true })
+    const { spawned, opening } = open()
+    await settle()
+    spawned.calls[0].child.stderr.write(allocated)
     const tunnel = await opening
     const exited = new Promise<void>((resolve) => tunnel.onExit(() => resolve()))
     tunnel.kill()

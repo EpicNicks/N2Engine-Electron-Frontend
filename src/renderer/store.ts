@@ -347,7 +347,15 @@ export class EditorStore {
   async closeProject(): Promise<void> {
     // A remote engine is disconnected from (the tunnel is closed; its host keeps running)
     const what = this.remote.value ? "disconnect" : "close the project"
-    if (!(await this.confirmDiscard(what))) return
+    // The scene's unsaved changes stay in the remote host's memory (it autosaves when the editor disconnects): nothing
+    // is discarded, and the question says so
+    const kept = this.remote.value
+      ? {
+          note: " They stay in the remote host's memory (it autosaves when the editor disconnects), so disconnecting doesn't discard them.",
+          label: "Disconnect without saving",
+        }
+      : undefined
+    if (!(await this.confirmDiscard(what, kept))) return
     // Closing drops the text files open in the editor too
     const files = this.unsavedFiles()
     if (files.length > 0 && !(await this.api.dialogs.confirm(`${files.join(", ")} has unsaved changes.`, `Discard and ${what}`))) {
@@ -507,7 +515,7 @@ export class EditorStore {
    */
   unsavedFiles: () => string[] = () => []
 
-  async confirmDiscard(action: string): Promise<boolean> {
+  async confirmDiscard(action: string, kept?: { note: string; label: string }): Promise<boolean> {
     // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
     if (this.api.engine.isConnected()) {
       await this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e))
@@ -516,8 +524,8 @@ export class EditorStore {
     const scene = this.scene.value
     if (!scene || !this.sceneDirty.value) return true
     const choice = await this.api.dialogs.unsaved(
-      `${scene.name || "Untitled"} has unsaved changes.`,
-      `Discard and ${action}`
+      `${scene.name || "Untitled"} has unsaved changes.${kept?.note ?? ""}`,
+      kept?.label ?? `Discard and ${action}`
     )
     if (choice === "cancel") return false
     if (choice === "discard") return true

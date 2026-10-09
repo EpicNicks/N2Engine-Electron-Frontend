@@ -112,6 +112,8 @@ export class ProjectSession {
   private launchCancelled = false
   /** Set by shutdown(): nothing is ever spawned again */
   private disposed = false
+  /** Aborted by shutdown(): a tunnel being opened is killed, or never spawned */
+  private readonly shutdownSignal = new AbortController()
   /**
    * Bumped by closeProject (and so by a page reload) and shutdown: operations queued before that spawn nothing.
    * Each operation runs with the generation it was queued in (running).
@@ -270,11 +272,12 @@ export class ProjectSession {
       try {
         tunnel = await this.openTunnel({
           settings,
+          signal: this.shutdownSignal.signal,
           onExit: (exit, t) => this.onTunnelExit(t, exit, label),
           onSpawned: (kill) => (this.killLaunching = kill),
         })
       } catch (e) {
-        if (this.launchCancelled) {
+        if (this.launchCancelled || this.disposed) {
           this.setState({ status: "stopped", mode: "local", projectPath: null, message: null })
           throw new CancelledError("Cancelled: the tunnel was closed while it opened")
         }
@@ -301,6 +304,13 @@ export class ProjectSession {
         const message = exited
           ? `The SSH tunnel to ${label} ${describeExit(exited)} before the editor could connect${output}`
           : `The tunnel is up, but connecting to the host through it failed: ${e instanceof Error ? e.message : String(e)}${output}`
+        failed(message)
+        throw new Error(message)
+      }
+      // Hello went through a port ssh holds; if ssh is gone now it isn't a tunnel any more, whatever answered
+      if (tunnel.exit) {
+        const message = `The SSH tunnel to ${label} ${describeExit(tunnel.exit)} right after the editor connected${tunnel.lastOutput}`
+        if (this.tunnel === tunnel) this.killHost()
         failed(message)
         throw new Error(message)
       }
@@ -385,6 +395,7 @@ export class ProjectSession {
    */
   shutdown(): void {
     this.disposed = true
+    this.shutdownSignal.abort()
     this.generation++
     this.killHost()
     this.probeKills.forEach((kill) => kill())
