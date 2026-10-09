@@ -63,6 +63,8 @@ N2_EDITOR_TOKEN=<a long random string> N2EditorHost --project <dir> --port <fixe
 
 Leave `--bind` at its default (loopback): the tunnel reaches it there. Don't pass `--exit-on-disconnect` or `--exit-on-stdin-eof` (they are for a host the editor launches): the host should outlive the editor's session. The host serves the project it was started with.
 
+**Always start a remote host with `--token-env`.** Only a host with an access token ignores a connection that never says Hello. A host started without one treats any connection as a session (with `--exit-on-disconnect`, closing it would stop the host) and accepts whatever token the form sends, so the token is also what keeps a stray local connection to the tunnel's port out.
+
 **Connecting.** Choose **Remote engine** and fill in:
 
 | Field | |
@@ -75,7 +77,7 @@ Leave `--bind` at its default (loopback): the tunnel reaches it there. Don't pas
 
 Everything but the token is remembered as **Recent Remotes** (`recent-remotes.json` in the user data folder, next to `recent-projects.json`); click one to fill the form in. The token is asked every time: it is never saved.
 
-**SSH setup.** The editor runs the system's `ssh` (OpenSSH; it must be on the `PATH`; Windows 10 and later ship it) with `BatchMode=yes`, so it can't ask for anything: use a key without a passphrase or one loaded into an agent, and connect to the machine once with `ssh user@host` first so its host key is in `known_hosts` (host-key checking is ssh's own; an unknown or changed key fails with ssh's message). If connecting fails, the error shows ssh's last stderr lines (`Permission denied (publickey)`, `Host key verification failed`, `connect failed: Connection refused` for a wrong host port, and so on).
+**SSH setup.** The editor runs the system's `ssh` (OpenSSH): on Windows `%SystemRoot%\System32\OpenSSH\ssh.exe` when it exists (Windows 10 and later ship it), else `ssh` from the `PATH`; elsewhere `ssh` from the `PATH`. It runs with `BatchMode=yes`, so it can't ask for anything: use a key without a passphrase or one loaded into an agent. The host's key must already be in `known_hosts` (host-key checking is ssh's own): connect once in a terminal with the same ssh the editor runs, `ssh -p <port> user@host`, and answer yes. Windows' OpenSSH and Git's ssh keep separate `known_hosts` files, so the one on your `PATH` may not be the editor's; when the key isn't trusted the error names the ssh the editor ran and the command to run once. Hosts defined in `~/.ssh/config` work as `user@alias` (aliases may have underscores). The editor adds `-o ControlMaster=no -o ControlPath=none` so a `ControlMaster`/`ControlPersist` setting can't hand the tunnel to a background master that would outlive it. Don't put a `LocalForward` for that host in your ssh config: it is forwarded too, and with `ExitOnForwardFailure` a port clash ends the tunnel. If connecting fails, the error shows ssh's last stderr lines (`Permission denied (publickey)`, `Host key verification failed`, `connect failed: Connection refused` for a wrong host port, and so on).
 
 **What the editor runs.** Without a shell, with the arguments as an array (`src/main/ssh-tunnel.ts`):
 
@@ -84,7 +86,7 @@ ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=15 -o Serv
     -L 127.0.0.1:<free local port>:127.0.0.1:<host port> [-p <ssh port>] [-i <identity file> -o IdentitiesOnly=yes] -- user@host
 ```
 
-The address, ports and identity file are validated first: an address that starts with `-` (or has characters a host name doesn't) is refused, so it can't become an ssh option, and `--` ends ssh's options before the destination. The local port is one the OS reports free just before ssh starts. The editor then waits (up to 25 s) until the local end accepts connections, connects to `127.0.0.1:<local port>` and says Hello with the token, as in local mode. Connecting opens and closes one throwaway connection to that port to see the forward is up; the host ignores a connection that never says Hello.
+The address, ports and identity file are validated first: an address that starts with `-` (or has characters a host name doesn't) is refused, so it can't become an ssh option, and `--` ends ssh's options before the destination. The local port is `0`: ssh picks a free one itself and prints `Allocated port <n> for local forward to ...` (at `LogLevel=INFO`, which the editor sets) once it has authenticated and listens. The editor waits (up to 25 s) for that line and only then connects to `127.0.0.1:<n>` and says Hello with the token, as in local mode. It never probes a port: a connect test would trust whatever listens there, and another local process could have taken a port picked in advance while ssh was still authenticating. After Hello it checks ssh is still running.
 
 **The token.** It goes from the form to the main process and into `Hello`, and nowhere else: not a command line or the environment of ssh, not a log line, not the host state or an error message, and not `recent-remotes.json`. The form clears it as soon as **Connect** is pressed, so a failed attempt asks for it again.
 
@@ -95,6 +97,9 @@ The address, ports and identity file are validated first: an address that starts
 - **Play mode is off.** Play launches a second `N2EditorHost` on the editor's machine, from the project's folder, which a remote engine neither has nor can give; the Play button is disabled with that explanation, and the main process refuses `window.play.start()` too.
 - **Audio and the viewport** go through the same connection and the tunnel, unchanged: the audio stream (48 kHz stereo float32, about 3 Mbit/s) and the viewport's frames need that bandwidth, and the 25 ms `GetAudio` polling is timed from each response, so a link with a round trip near or above the 100 ms jitter buffer can underrun. Not measured yet (see the pull request).
 - Assets, scenes, the hierarchy, the inspector, undo and the console work as before: they only ever asked the host. The editor never touches the remote project's files directly.
+- **Disconnect** with an unsaved scene asks whether to save first; "Disconnect without saving" doesn't lose the changes: they stay in the remote host's memory, which autosaves when the editor disconnects.
+
+**Known limits.** Connecting can't be cancelled while ssh is still connecting (it ends by its own timeout, 25 s at most). Ending the tunnel sends ssh a plain kill (`SIGTERM`, `TerminateProcess` on Windows) with no escalation, as local mode does for its host. Domain users (`DOMAIN\user`) and `user@host:port` aren't accepted in the address (use the SSH port field; put a domain user in your ssh config). There is no identity-file picker, and the ssh agent or key must work without a prompt. Play mode isn't available.
 
 ## The console
 
