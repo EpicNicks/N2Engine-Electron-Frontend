@@ -19,6 +19,7 @@ import {
   PlayCommands,
   PlayState,
   ProjectApi,
+  RemoteApi,
 } from "../shared/api"
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -60,7 +61,7 @@ invoke<ConnectionState>(Channels.engineAttach).then(applyState, (e) => {
 
 // ==================== Host state ====================
 
-let host: HostState = { status: "stopped", launch: 0, projectPath: null, message: null }
+let host: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
 let hostPushed = false
 const hostListeners: Array<(state: HostState) => void> = []
 
@@ -166,6 +167,14 @@ const project: ProjectApi = {
   close: () => invoke(Channels.projectClose),
 }
 
+// ==================== window.remote ====================
+
+const remote: RemoteApi = {
+  connect: (settings, token) => invoke(Channels.remoteConnect, settings, token),
+  getRecent: () => invoke(Channels.remoteGetRecent),
+  removeRecent: (settings) => invoke(Channels.remoteRemoveRecent, settings),
+}
+
 // ==================== window.editMenu ====================
 
 const editListeners: Array<(command: EditCommand) => void> = []
@@ -183,3 +192,4 @@ contextBridge.exposeInMainWorld("editMenu", editMenu)
 contextBridge.exposeInMainWorld("host", hostApi)
 contextBridge.exposeInMainWorld("play", play)
 contextBridge.exposeInMainWorld("project", project)
+contextBridge.exposeInMainWorld("remote", remote)

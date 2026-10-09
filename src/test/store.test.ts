@@ -9,7 +9,14 @@ import type {
   SceneInfoResponse,
 } from "../protocol/protocol.generated"
 import type { AutosaveChoice } from "../renderer/autosave"
-import type { CreateProjectResult, HostLocation, HostState, OpenProjectResult, ServerInfo } from "../shared/api"
+import type {
+  CreateProjectResult,
+  HostLocation,
+  HostState,
+  OpenProjectResult,
+  RemoteSettings,
+  ServerInfo,
+} from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
 import { ConsoleStore, entryFromEvent } from "../renderer/console-store"
 import { EditorStore, StoreApi, UnsavedChoice, createUnavailableReason, describeHost } from "../renderer/store"
@@ -213,7 +220,7 @@ describe("ConsoleStore", () => {
 
 /** The page's API, faked: the main process's pushes are made by the test */
 class FakeApi implements StoreApi {
-  hostState: HostState = { status: "stopped", launch: 0, projectPath: null, message: null }
+  hostState: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
   connectedNow = false
   info: ServerInfo = { protocolVersion: "1.2.0", engineVersion: "1.0.0", capabilities: [], projectLoaded: true }
   recentList = ["C:\\Games\\A", "C:\\Games\\B"]
@@ -424,6 +431,30 @@ class FakeApi implements StoreApi {
       this.calls.push("close")
       this.pushConnection(false)
       this.pushHost({ status: "stopped", projectPath: null })
+    },
+  }
+
+  /** The remote engines the main process remembers; connect's calls and the tokens it was given */
+  remoteRecent: RemoteSettings[] = [{ target: "me@cloud", hostPort: 7000 }]
+  remoteTokens: string[] = []
+  /** A failure for connect to reject with */
+  remoteError: string | null = null
+
+  remote = {
+    connect: async (settings: RemoteSettings, token: string): Promise<string> => {
+      this.calls.push(`remoteConnect ${settings.target}:${settings.hostPort}`)
+      this.remoteTokens.push(token)
+      if (this.remoteError) throw new Error(this.remoteError)
+      const name = `${settings.target}:${settings.hostPort}`
+      this.pushHost({ status: "starting", mode: "remote", launch: this.hostState.launch + 1, projectPath: name, message: null })
+      this.pushConnection(true)
+      this.pushHost({ status: "running" })
+      this.remoteRecent = [settings, ...this.remoteRecent.filter((r) => r.target !== settings.target)]
+      return name
+    },
+    getRecent: async () => [...this.remoteRecent],
+    removeRecent: async (settings: RemoteSettings) => {
+      this.remoteRecent = this.remoteRecent.filter((r) => r.target !== settings.target)
     },
   }
 
@@ -845,6 +876,51 @@ describe("EditorStore", () => {
     assert.ok(store.console.entries.value.some((e) => e.message === "new"))
   })
 
+  test("a remote engine: connecting shows the editor, with the remote's name, and the recent remotes are kept", async () => {
+    const { api, store } = makeStore()
+    await store.load()
+    assert.deepEqual(store.recentRemotes.value, [{ target: "me@cloud", hostPort: 7000 }])
+    assert.equal(store.welcomeMode.value, "local")
+    assert.equal(store.remote.value, false)
+
+    await store.connectRemote({ target: "dev@box", sshPort: 2222, hostPort: 7777 }, "secret")
+    assert.deepEqual(api.remoteTokens, ["secret"])
+    assert.equal(store.view.value, "editor")
+    assert.equal(store.projectPath.value, "dev@box:7777")
+    assert.equal(store.remote.value, true)
+    assert.equal(store.hostSummary.value, "Connected (remote)")
+    assert.deepEqual(store.recentRemotes.value[0], { target: "dev@box", sshPort: 2222, hostPort: 7777 })
+    assert.ok(!JSON.stringify(store.host.value).includes("secret"))
+    assert.ok(!store.console.entries.value.some((e) => e.message.includes("secret")))
+    assert.ok(store.console.entries.value.some((e) => e.message === "Opening an SSH tunnel to dev@box:7777"))
+  })
+
+  test("a remote engine that can't be connected to stays on the welcome screen with the reason", async () => {
+    const { api, store } = makeStore()
+    api.remoteError = "ssh exited with code 255 before the tunnel was up:\nPermission denied (publickey)."
+    await store.connectRemote({ target: "dev@box", hostPort: 7777 }, "secret")
+    assert.equal(store.view.value, "welcome")
+    assert.match(store.error.value ?? "", /Permission denied/)
+    assert.equal(store.busy.value, null)
+  })
+
+  test("closing a remote engine disconnects, asking about unsaved changes as for a project", async () => {
+    const { api, store } = makeStore()
+    await store.connectRemote({ target: "dev@box", hostPort: 7777 }, "t")
+    api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 2, savedRevision: 1 }
+    api.unsavedAnswers = ["cancel"]
+    await store.closeProject()
+    assert.equal(store.view.value, "editor")
+    assert.ok(
+      api.asked.some((q) => q.startsWith("unsaved Disconnect without saving: a has unsaved changes. They stay in the remote host's memory")),
+      "the question says the changes stay in the host"
+    )
+    api.unsavedAnswers = ["discard"]
+    await store.closeProject()
+    assert.equal(store.view.value, "welcome")
+    assert.ok(api.calls.includes("close"))
+  })
+
   test("closing the project goes back to the welcome screen", async () => {
     const { api, store } = makeStore()
     await store.openRecent("C:\\Games\\A")
@@ -1154,12 +1230,18 @@ describe("EditorStore", () => {
   })
 
   test("describeHost", () => {
-    const state = (status: HostState["status"]): HostState => ({ status, launch: 1, projectPath: "p", message: null })
+    const state = (status: HostState["status"]): HostState => ({ status, mode: "local", launch: 1, projectPath: "p", message: null })
     assert.equal(describeHost(state("starting"), false), "Starting the editor host...")
     assert.equal(describeHost(state("running"), false), "Connecting...")
     assert.equal(describeHost(state("running"), true), "Connected")
     assert.equal(describeHost(state("failed"), false), "The editor host failed")
     assert.equal(describeHost(state("stopped"), false), "Editor host stopped")
+    const remote = (status: HostState["status"]): HostState => ({ ...state(status), mode: "remote" })
+    assert.equal(describeHost(remote("starting"), false), "Opening the SSH tunnel...")
+    assert.equal(describeHost(remote("running"), true), "Connected (remote)")
+    assert.equal(describeHost(remote("running"), false), "Disconnected from the remote host")
+    assert.equal(describeHost(remote("exited"), false), "The SSH tunnel ended")
+    assert.equal(describeHost(remote("failed"), false), "The SSH tunnel failed")
   })
 })
 

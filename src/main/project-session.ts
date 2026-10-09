@@ -2,6 +2,10 @@
 // N2EditorHost for it (HostProcess), waits for the ready line and connects with the host's token; opening another,
 // closing it, a page reload and quitting the editor stop the host. Node only (no Electron): the dialogs are in
 // project-ipc.ts, and everything here is unit tested with fakes.
+//
+// Remote mode (frontend issue #21) shares the session: connectRemote opens an SSH tunnel (ssh-tunnel.ts) to a host
+// that is already running and connects through it. That host isn't the editor's: nothing here starts, stops or kills
+// it, and closing the project, a reload or quitting only ends the tunnel's ssh.
 import * as fs from "fs"
 import * as path from "path"
 import type { ConnectionState, CreateProjectResult, HostState, OpenProjectResult } from "../shared/api"
@@ -21,6 +25,8 @@ import {
 import type { HostSettings } from "./host-settings"
 import type { ProjectFiles } from "./project-files"
 import type { RecentProjects } from "./recent-projects"
+import type { RecentRemotes } from "./recent-remotes"
+import { SshTunnel, TunnelOptions, describeRemote, parseRemoteSettings } from "./ssh-tunnel"
 
 /** The project file a folder needs to be a project (engine #90) */
 export const ProjectFileName = "project.n2proj"
@@ -50,6 +56,9 @@ export class CancelledError extends Error {
   }
 }
 
+/** What the session needs of an SshTunnel */
+export type TunnelHandle = Pick<SshTunnel, "localPort" | "exit" | "pid" | "lastOutput" | "onExit" | "kill">
+
 /** What the session needs of EngineHost */
 export interface EngineConnection {
   connectTo(port: number, token: string): Promise<ConnectionState>
@@ -65,6 +74,10 @@ export interface ProjectSessionDeps {
   /** Tells the page the host's state changed */
   publish(state: HostState): void
   launch?: (options: LaunchOptions) => Promise<HostProcess>
+  /** Opens an SSH tunnel for remote mode (default SshTunnel.open) */
+  openTunnel?: (options: TunnelOptions) => Promise<TunnelHandle>
+  /** Remembers the remotes that were connected to (their settings, never a token) */
+  recentRemotes?: Pick<RecentRemotes, "add">
   create?: (options: CreateOptions) => Promise<CreatedProject>
   /** N2EditorHost --help: what the host can do */
   probe?: (options: ProbeOptions) => Promise<HostCapabilities>
@@ -78,8 +91,8 @@ export interface ProjectSessionDeps {
   renderer?: () => string | undefined
 }
 
-/** Resolves once the host has exited, or after ms (false then) */
-function waitForExit(host: HostProcess, ms: number): Promise<boolean> {
+/** Resolves once the host (or tunnel) has exited, or after ms (false then) */
+function waitForExit(host: Pick<HostProcess, "onExit">, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), ms)
     host.onExit(() => {
@@ -91,12 +104,16 @@ function waitForExit(host: HostProcess, ms: number): Promise<boolean> {
 
 export class ProjectSession {
   private host: HostProcess | null = null
+  /** The SSH tunnel of the remote engine the editor is connected to (remote mode); never both this and a host */
+  private tunnel: TunnelHandle | null = null
   /** Kills the child being spawned (a host being launched, or --create), until it settles */
   private killLaunching: (() => void) | null = null
   /** The editor killed the child being spawned itself (cancelLaunch): its failure is a cancellation */
   private launchCancelled = false
   /** Set by shutdown(): nothing is ever spawned again */
   private disposed = false
+  /** Aborted by shutdown(): a tunnel being opened is killed, or never spawned */
+  private readonly shutdownSignal = new AbortController()
   /**
    * Bumped by closeProject (and so by a page reload) and shutdown: operations queued before that spawn nothing.
    * Each operation runs with the generation it was queued in (running).
@@ -105,11 +122,12 @@ export class ProjectSession {
   private running = 0
   /** The --renderer the current (or last) host was launched with: the play child gets the same */
   private launchedRenderer: string | undefined
-  private current: HostState = { status: "stopped", launch: 0, projectPath: null, message: null }
+  private current: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
   // Operations run one at a time, in order: opening a project while another opens waits for it
   private queue: Promise<unknown> = Promise.resolve()
 
   private readonly launch: (options: LaunchOptions) => Promise<HostProcess>
+  private readonly openTunnel: (options: TunnelOptions) => Promise<TunnelHandle>
   private readonly create: (options: CreateOptions) => Promise<CreatedProject>
   private readonly probe: (options: ProbeOptions) => Promise<HostCapabilities>
   private readonly isProject: (dir: string) => boolean
@@ -122,6 +140,7 @@ export class ProjectSession {
 
   constructor(private readonly deps: ProjectSessionDeps) {
     this.launch = deps.launch ?? HostProcess.launch
+    this.openTunnel = deps.openTunnel ?? SshTunnel.open
     this.create = deps.create ?? createProjectWithHost
     this.probe = deps.probe ?? probeHostCapabilities
     this.isProject = deps.isProject ?? ((dir) => fs.existsSync(path.join(dir, ProjectFileName)))
@@ -212,9 +231,99 @@ export class ProjectSession {
     })
   }
 
+  /** Whether the editor is connected (or connecting) to a remote engine through a tunnel it opened */
+  get isRemote(): boolean {
+    return this.current.mode === "remote"
+  }
+
+  private remoteHostError(what: string): Error {
+    return new Error(
+      `The editor can't ${what} a remote engine's host: it didn't start it. Disconnect, then connect again to reopen the tunnel.`
+    )
+  }
+
+  /**
+   * Remote mode: opens an SSH tunnel to a host that is already running (settings are validated here: the page's input
+   * is never passed on unchecked) and connects through it with the token. Any local host or earlier tunnel is stopped
+   * first. Resolves with the remote's name. The token goes to the engine connection and nowhere else: not the tunnel's
+   * arguments or environment, a log line, the state or an error. Failing leaves nothing open.
+   */
+  connectRemote(settingsInput: unknown, token: unknown): Promise<string> {
+    // Checked before anything is stopped
+    let settings: ReturnType<typeof parseRemoteSettings>
+    try {
+      settings = parseRemoteSettings(settingsInput)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+    if (typeof token !== "string" || token === "") return Promise.reject(new Error("Enter the host's access token"))
+    return this.serial(async () => {
+      const label = describeRemote(settings)
+      await this.stopCurrent(false)
+      this.assertCanSpawn()
+      this.deps.files.close()
+      const launch = this.current.launch + 1
+      this.setState({ status: "starting", mode: "remote", launch, projectPath: label, message: null })
+      const failed = (message: string): void =>
+        this.setState({ status: "failed", mode: "local", projectPath: null, message })
+
+      let tunnel: TunnelHandle
+      this.launchCancelled = false
+      try {
+        tunnel = await this.openTunnel({
+          settings,
+          signal: this.shutdownSignal.signal,
+          onExit: (exit, t) => this.onTunnelExit(t, exit, label),
+          onSpawned: (kill) => (this.killLaunching = kill),
+        })
+      } catch (e) {
+        if (this.launchCancelled || this.disposed) {
+          this.setState({ status: "stopped", mode: "local", projectPath: null, message: null })
+          throw new CancelledError("Cancelled: the tunnel was closed while it opened")
+        }
+        failed(e instanceof Error ? e.message : String(e))
+        throw e
+      } finally {
+        this.killLaunching = null
+      }
+      if (this.disposed) {
+        tunnel.kill()
+        throw new CancelledError("Cancelled: the editor is closing")
+      }
+      this.tunnel = tunnel
+      this.deps.log?.(`SSH tunnel to ${label} opened (pid ${tunnel.pid ?? "?"}, local port ${tunnel.localPort})`)
+
+      try {
+        await this.deps.engine.connectTo(tunnel.localPort, token)
+      } catch (e) {
+        // Did ssh die between the forward and Hello? Then its exit says why, not the closed connection
+        const exited = tunnel.exit ?? ((await waitForExit(tunnel, ConnectFailureExitWaitMs)) ? tunnel.exit : null)
+        const output = tunnel.lastOutput
+        if (this.tunnel === tunnel) this.killHost()
+        else tunnel.kill()
+        const message = exited
+          ? `The SSH tunnel to ${label} ${describeExit(exited)} before the editor could connect${output}`
+          : `The tunnel is up, but connecting to the host through it failed: ${e instanceof Error ? e.message : String(e)}${output}`
+        failed(message)
+        throw new Error(message)
+      }
+      // Hello went through a port ssh holds; if ssh is gone now it isn't a tunnel any more, whatever answered
+      if (tunnel.exit) {
+        const message = `The SSH tunnel to ${label} ${describeExit(tunnel.exit)} right after the editor connected${tunnel.lastOutput}`
+        if (this.tunnel === tunnel) this.killHost()
+        failed(message)
+        throw new Error(message)
+      }
+      if (this.tunnel === tunnel) this.setState({ status: "running", message: null })
+      this.deps.recentRemotes?.add(settings)
+      return label
+    })
+  }
+
   /** Stops the open project's host, if any, and launches a new one */
   restartHost(): Promise<void> {
     return this.serial(async () => {
+      if (this.isRemote) throw this.remoteHostError("restart")
       const projectPath = this.deps.files.rootPath
       if (projectPath === null) throw new Error("No project is open")
       await this.start(projectPath)
@@ -226,8 +335,10 @@ export class ProjectSession {
    * still starting is killed at once, without waiting for its launch.
    */
   stopHost(): Promise<void> {
+    if (this.isRemote) return Promise.reject(this.remoteHostError("stop"))
     this.cancelLaunch()
     return this.serial(async () => {
+      if (this.isRemote) throw this.remoteHostError("stop")
       await this.stopCurrent(true)
       this.setState({ status: "stopped", message: null })
     })
@@ -243,7 +354,7 @@ export class ProjectSession {
     return this.serial(async () => {
       this.killHost()
       this.deps.files.close()
-      this.setState({ status: "stopped", projectPath: null, message: null })
+      this.setState({ status: "stopped", mode: "local", projectPath: null, message: null })
     })
   }
 
@@ -253,9 +364,12 @@ export class ProjectSession {
    */
   killHost(): void {
     const host = this.host
+    const tunnel = this.tunnel
     this.host = null
+    this.tunnel = null
     this.deps.engine.close()
     host?.kill()
+    tunnel?.kill()
     this.cancelLaunch()
   }
 
@@ -281,6 +395,7 @@ export class ProjectSession {
    */
   shutdown(): void {
     this.disposed = true
+    this.shutdownSignal.abort()
     this.generation++
     this.killHost()
     this.probeKills.forEach((kill) => kill())
@@ -329,7 +444,7 @@ export class ProjectSession {
     // Checked right before spawning: stopCurrent may have waited for the old host while the editor quit
     this.assertCanSpawn()
     const launch = this.current.launch + 1
-    this.setState({ status: "starting", launch, projectPath, message: null })
+    this.setState({ status: "starting", mode: "local", launch, projectPath, message: null })
 
     let host: HostProcess
     this.launchedRenderer = this.deps.renderer?.()
@@ -378,6 +493,16 @@ export class ProjectSession {
 
   /** Ends the current host: gracefully (Shutdown, then a kill after StopGraceMs) or with a kill */
   private async stopCurrent(graceful: boolean): Promise<void> {
+    const tunnel = this.tunnel
+    if (tunnel) {
+      // Only the tunnel is ours: no Shutdown is ever sent to a remote host (disconnect()), the connection and ssh are
+      // just closed. No longer current: its exit is expected, not reported as the tunnel dying.
+      this.tunnel = null
+      this.deps.engine.close()
+      tunnel.kill()
+      await waitForExit(tunnel, this.stopGraceMs)
+      return
+    }
     const host = this.host
     if (!host) {
       this.deps.engine.close()
@@ -403,6 +528,18 @@ export class ProjectSession {
     const how = exit.code !== null ? `exited with code ${exit.code}` : `was ended by ${exit.signal ?? "a signal"}`
     this.deps.log?.(`N2EditorHost ${how}`)
     this.setState({ status: "exited", message: `N2EditorHost ${how}${host.lastOutput}` })
+  }
+
+  /** The tunnel ended on its own (ssh died, the network dropped, the server ended the session) */
+  private onTunnelExit(tunnel: TunnelHandle, exit: HostExit, label: string): void {
+    if (tunnel !== this.tunnel) return
+    this.tunnel = null
+    this.deps.engine.close()
+    this.deps.log?.(`The SSH tunnel to ${label} ${describeExit(exit)}`)
+    this.setState({
+      status: "exited",
+      message: `The SSH tunnel to ${label} ${describeExit(exit)}${tunnel.lastOutput}`,
+    })
   }
 
   private setState(change: Partial<HostState>): void {

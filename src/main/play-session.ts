@@ -57,6 +57,8 @@ const ChildAddress = "127.0.0.1"
 
 export interface PlaySessionDeps {
   editor: EditorConnection
+  /** Why a game can't be started now (a remote engine has no local project to launch a host for); null when it can */
+  unavailable?(): string | null
   /** The open project's folder, or null when none is open */
   projectPath(): string | null
   /** The N2EditorHost executable (throws with advice when it isn't set) */
@@ -158,6 +160,8 @@ export class PlaySession {
    */
   async start(scenePath: string = ""): Promise<void> {
     if (this.disposed) throw new CancelledError("Cancelled: the editor is closing")
+    const unavailable = this.deps.unavailable?.()
+    if (unavailable) throw new Error(unavailable)
     if (this.active) throw new Error("A game is already running")
     const projectPath = this.deps.projectPath()
     if (projectPath === null) throw new Error("No project is open")

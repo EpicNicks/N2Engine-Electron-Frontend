@@ -1,4 +1,4 @@
-import type { EditMenuApi, EngineApi, HostApi, PlayApi, ProjectApi } from "../shared/api"
+import type { EditMenuApi, EngineApi, HostApi, PlayApi, ProjectApi, RemoteApi } from "../shared/api"
 
 // What the preload exposes (src/preload/preload.ts)
 declare global {
@@ -7,6 +7,7 @@ declare global {
     host: HostApi
     play: PlayApi
     project: ProjectApi
+    remote: RemoteApi
     editMenu: EditMenuApi
   }
 }
