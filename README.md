@@ -51,6 +51,51 @@ N2EditorHost --project <dir> --port 0 --token-env N2_EDITOR_TOKEN --exit-on-disc
 
 The toolbar shows the host's state: starting, connected, stopped, exited or failed. The page sees it through `window.host` and never picks a host, port or token.
 
+## Remote engine
+
+The welcome screen has two modes: **Local engine (exe)** (everything above: the editor launches `N2EditorHost` for a project folder) and **Remote engine**, which connects to an `N2EditorHost` that is already running somewhere else, for example on a cloud machine. The connection goes through an SSH tunnel the editor opens itself, so the host stays bound to loopback and only `sshd` is exposed (frontend issue #21; native TLS in the engine is a later step, engine issue [#108](https://github.com/EpicNicks/N2Engine/issues/108)).
+
+**Starting the host on the remote machine.** Pick a fixed port and put the token in the environment, not on the command line:
+
+```
+N2_EDITOR_TOKEN=<a long random string> N2EditorHost --project <dir> --port <fixed> --token-env N2_EDITOR_TOKEN
+```
+
+Leave `--bind` at its default (loopback): the tunnel reaches it there. Don't pass `--exit-on-disconnect` or `--exit-on-stdin-eof` (they are for a host the editor launches): the host should outlive the editor's session. The host serves the project it was started with.
+
+**Connecting.** Choose **Remote engine** and fill in:
+
+| Field | |
+|---|---|
+| SSH address | `user@host` (an IPv6 address works without brackets) |
+| SSH port | optional; ssh's default (22, or what `~/.ssh/config` says) otherwise |
+| Host's editor port | the `--port` the host was started with |
+| Identity file | optional, a private key file; without one ssh uses the agent, the default keys and `~/.ssh/config` |
+| Access token | the host's `N2_EDITOR_TOKEN` |
+
+Everything but the token is remembered as **Recent Remotes** (`recent-remotes.json` in the user data folder, next to `recent-projects.json`); click one to fill the form in. The token is asked every time: it is never saved.
+
+**SSH setup.** The editor runs the system's `ssh` (OpenSSH; it must be on the `PATH`; Windows 10 and later ship it) with `BatchMode=yes`, so it can't ask for anything: use a key without a passphrase or one loaded into an agent, and connect to the machine once with `ssh user@host` first so its host key is in `known_hosts` (host-key checking is ssh's own; an unknown or changed key fails with ssh's message). If connecting fails, the error shows ssh's last stderr lines (`Permission denied (publickey)`, `Host key verification failed`, `connect failed: Connection refused` for a wrong host port, and so on).
+
+**What the editor runs.** Without a shell, with the arguments as an array (`src/main/ssh-tunnel.ts`):
+
+```
+ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L 127.0.0.1:<free local port>:127.0.0.1:<host port> [-p <ssh port>] [-i <identity file> -o IdentitiesOnly=yes] -- user@host
+```
+
+The address, ports and identity file are validated first: an address that starts with `-` (or has characters a host name doesn't) is refused, so it can't become an ssh option, and `--` ends ssh's options before the destination. The local port is one the OS reports free just before ssh starts. The editor then waits (up to 25 s) until the local end accepts connections, connects to `127.0.0.1:<local port>` and says Hello with the token, as in local mode. Connecting opens and closes one throwaway connection to that port to see the forward is up; the host ignores a connection that never says Hello.
+
+**The token.** It goes from the form to the main process and into `Hello`, and nowhere else: not a command line or the environment of ssh, not a log line, not the host state or an error message, and not `recent-remotes.json`. The form clears it as soon as **Connect** is pressed, so a failed attempt asks for it again.
+
+**What is different from local mode.**
+
+- The editor edits whatever project the host has open: there is no project picker, **Create New Project** or recent project. **Start host**, **Stop host** and **Restart host** aren't shown (the host isn't the editor's), and nothing ever sends `Shutdown` to a remote host or kills it. **Disconnect** (the toolbar's Close project) closes the tunnel, as do a page reload and quitting (`ProjectSession.shutdown()` is final here too: it kills ssh, and nothing opens after it); the host keeps running.
+- If the tunnel dies (the network drops, ssh is killed, the server ends the session) the toolbar shows `The SSH tunnel ended`, with ssh's last stderr lines as the tooltip and in the console, like a host that exited. If only the host's connection ends while the tunnel stays, it reads `Disconnected from the remote host`. **Disconnect** and connect again.
+- **Play mode is off.** Play launches a second `N2EditorHost` on the editor's machine, from the project's folder, which a remote engine neither has nor can give; the Play button is disabled with that explanation, and the main process refuses `window.play.start()` too.
+- **Audio and the viewport** go through the same connection and the tunnel, unchanged: the audio stream (48 kHz stereo float32, about 3 Mbit/s) and the viewport's frames need that bandwidth, and the 25 ms `GetAudio` polling is timed from each response, so a link with a round trip near or above the 100 ms jitter buffer can underrun. Not measured yet (see the pull request).
+- Assets, scenes, the hierarchy, the inspector, undo and the console work as before: they only ever asked the host. The editor never touches the remote project's files directly.
+
 ## The console
 
 The **Console** tab of the bottom panel shows the host's log. The editor reads it with `PollEvents` about every 100 ms (`src/renderer/console-store.ts`, with the `EventPump` in `src/protocol/event-pump.ts`). It follows the epoch rule in the engine's docs ("Events: PollEvents and the log ring"):
@@ -157,9 +202,9 @@ The state machine is `src/main/play-session.ts` and the page's side is `src/rend
 | Where | What |
 |---|---|
 | `src/protocol/` | The protocol client, with no DOM or Electron dependencies: reading frames (`framing.ts`), one spec per command built from the generated codecs (`codec.ts`), `EngineClient`, the `EventPump` for `PollEvents`, and the generated ids, types and codecs (`protocol.generated.ts`) |
-| `src/main/` | The Electron main process. It launches the project's editor host (`host-launcher.ts`, `project-session.ts`, `host-settings.ts`) and, for play mode, the game's second host (`play-session.ts`, `play-ipc.ts`), owns the `EngineClient`s (the TCP connection to the host) and the open project's files, keeps the recent projects, and answers the page's IPC calls |
-| `src/shared/api.ts` | The typed API between the page and the main process: `window.engine` (protocol commands and connection state), `window.host` (the host process: state, restart, stop, locate), `window.play` (the game: start, stop, pause, step, and the child's frames, audio, events and input) and `window.project` (dialogs, recent projects, the project's text files), the IPC channel names, and the command allowlist |
-| `src/preload/` | Forwards `window.engine`, `window.host`, `window.play` and `window.project` calls over IPC. Bundled, since a sandboxed preload can require only `electron` |
+| `src/main/` | The Electron main process. It launches the project's editor host (`host-launcher.ts`, `project-session.ts`, `host-settings.ts`) and, for play mode, the game's second host (`play-session.ts`, `play-ipc.ts`), opens the SSH tunnel to a remote engine (`ssh-tunnel.ts`, `recent-remotes.ts`, `remote-ipc.ts`; see "Remote engine"), owns the `EngineClient`s (the TCP connection to the host) and the open project's files, keeps the recent projects, and answers the page's IPC calls |
+| `src/shared/api.ts` | The typed API between the page and the main process: `window.engine` (protocol commands and connection state), `window.host` (the host process: state, restart, stop, locate), `window.remote` (connect to a remote engine, recent remotes), `window.play` (the game: start, stop, pause, step, and the child's frames, audio, events and input) and `window.project` (dialogs, recent projects, the project's text files), the IPC channel names, and the command allowlist |
+| `src/preload/` | Forwards `window.engine`, `window.host`, `window.remote`, `window.play` and `window.project` calls over IPC. Bundled, since a sandboxed preload can require only `electron` |
 | `src/renderer/` | The page, in Preact with `@preact/signals`, bundled by esbuild into `dist/bundle/renderer.js`. `store.ts` (`EditorStore`) holds the editor's state as signals (the open project, recent projects, the host, the connection, what is busy or failed) and its actions; `console-store.ts` holds the console. Both take the page's API as a parameter, so they are tested in Node. The components (`.tsx`) are the welcome screen, the editor layout and its panels. The hierarchy panel's state and rules are `hierarchy-state.ts` and `hierarchy-tree.ts` (see "The hierarchy and scenes"); the inspector's are `inspector-state.ts`, `inspector-fields.ts` and `asset-lookup.ts` (see "The inspector"); undo, redo, edit groups and autosave recovery are `edit-controller.ts`, `edit-groups.ts`, `edit-actions.ts` and `autosave.ts` (see "Undo, redo, edit groups and autosave"); the assets panel and the text editor are `assets-state.ts`, `asset-tree.ts` and `asset-edit.ts` (see "The assets panel"); the inspector's selection and transform are in `scene-state.ts`. The audio player is here too |
 
 The window runs with `sandbox: true` and `contextIsolation: true`: the page has no Node and no raw file system. It can only call the commands in the allowlist, with arguments of the declared types (`EngineCommandArgs`), on the host the main process launched. It has no file access of its own: the project's files are read and written through the host's asset commands, which check every path (inside `assets/`, no links out, valid names, text types only, 4 MiB) and refuse the open scene's file and, in a play session, every write. The main process checks the arguments of each command. IPC is answered only for the editor's own page in its window's main frame; the window can't navigate, redirect or open windows, and every permission request is denied.
