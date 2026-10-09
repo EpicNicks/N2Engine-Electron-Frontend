@@ -82,8 +82,8 @@ Everything but the token is remembered as **Recent Remotes** (`recent-remotes.js
 **What the editor runs.** Without a shell, with the arguments as an array (`src/main/ssh-tunnel.ts`):
 
 ```
-ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-    -L 127.0.0.1:<free local port>:127.0.0.1:<host port> [-p <ssh port>] [-i <identity file> -o IdentitiesOnly=yes] -- user@host
+ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -o LogLevel=INFO -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L 127.0.0.1:0:127.0.0.1:<host port> [-p <ssh port>] [-i <identity file> -o IdentitiesOnly=yes] -- user@host
 ```
 
 The address, ports and identity file are validated first: an address that starts with `-` (or has characters a host name doesn't) is refused, so it can't become an ssh option, and `--` ends ssh's options before the destination. The local port is `0`: ssh picks a free one itself and prints `Allocated port <n> for local forward to ...` (at `LogLevel=INFO`, which the editor sets) once it has authenticated and listens. The editor waits (up to 25 s) for that line and only then connects to `127.0.0.1:<n>` and says Hello with the token, as in local mode. It never probes a port: a connect test would trust whatever listens there, and another local process could have taken a port picked in advance while ssh was still authenticating. After Hello it checks ssh is still running.
