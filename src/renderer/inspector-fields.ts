@@ -527,3 +527,95 @@ export function groupComponentTypes(
     .filter((name) => groups.has(name))
     .map((name) => ({ name, items: groups.get(name)!.sort((a, b) => a.typeName.localeCompare(b.typeName)) }))
 }
+
+// ==================== Text effect passes ====================
+
+/** The typeName the engine gives a text renderer's effect pass list (TextRenderer and UIText effectPasses) */
+export const PassListTypeName = "TextPass[]"
+
+/** One extra text pass: an outline, shadow or glow, as the engine saves it */
+export interface TextPass {
+  color: { r: number; g: number; b: number; a: number }
+  offset: { x: number; y: number }
+  width: number
+  softness: number
+  order: number
+}
+
+/** Whether a field gets the pass list editor: a Json field the engine marks TextPass[] (by type, not by name) */
+export const usesPassList = (field: FieldSchema): boolean => kindOf(field) === "Json" && field.typeName === PassListTypeName
+
+/** The engine's defaults for a pass: black, opaque, everything else 0 */
+export const defaultPass = (): TextPass => ({
+  color: { r: 0, g: 0, b: 0, a: 1 },
+  offset: { x: 0, y: 0 },
+  width: 0,
+  softness: 0,
+  order: 0,
+})
+
+/** A number the value holds under key, the default when the key is missing; undefined when it holds anything else */
+function passNumber(holder: JsonObject, key: string, fallback: number): number | undefined {
+  if (!(key in holder)) return fallback
+  return isFiniteNumber(holder[key]) ? holder[key] : undefined
+}
+
+function passPart(value: unknown, keys: readonly string[], defaults: readonly number[]): number[] | undefined {
+  if (value === undefined) return [...defaults]
+  if (!isObject(value)) return undefined
+  const out: number[] = []
+  for (let i = 0; i < keys.length; i++) {
+    const n = passNumber(value, keys[i], defaults[i])
+    if (n === undefined) return undefined
+    out.push(n)
+  }
+  return out
+}
+
+/**
+ * The passes a value holds, with the engine's defaults for missing keys, or null when it isn't a pass list (not an
+ * array, an item that isn't an object, a key that isn't the right kind of value): the editor then falls back to JSON.
+ */
+export function readPassList(value: unknown): TextPass[] | null {
+  if (!Array.isArray(value)) return null
+  const passes: TextPass[] = []
+  for (const item of value) {
+    if (!isObject(item)) return null
+    const color = passPart(item.color, ["r", "g", "b", "a"], [0, 0, 0, 1])
+    const offset = passPart(item.offset, ["x", "y"], [0, 0])
+    const width = passNumber(item, "width", 0)
+    const softness = passNumber(item, "softness", 0)
+    const order = passNumber(item, "order", 0)
+    if (!color || !offset || width === undefined || softness === undefined || order === undefined) return null
+    if (!Number.isInteger(order)) return null
+    passes.push({
+      color: { r: color[0], g: color[1], b: color[2], a: color[3] },
+      offset: { x: offset[0], y: offset[1] },
+      width,
+      softness,
+      order,
+    })
+  }
+  return passes
+}
+
+/** The list with a default pass added at the end */
+export const addPass = (passes: readonly TextPass[]): TextPass[] => [...passes, defaultPass()]
+
+/** The list without the pass at index (an index outside it changes nothing) */
+export const removePass = (passes: readonly TextPass[], index: number): TextPass[] =>
+  passes.filter((_, i) => i !== index)
+
+/** The list with the pass at index moved by delta places (up is -1); one that would leave the list changes nothing */
+export function movePass(passes: readonly TextPass[], index: number, delta: number): TextPass[] {
+  const to = index + delta
+  if (index < 0 || index >= passes.length || to < 0 || to >= passes.length) return [...passes]
+  const next = [...passes]
+  const [moved] = next.splice(index, 1)
+  next.splice(to, 0, moved)
+  return next
+}
+
+/** The list with the pass at index replaced */
+export const replacePass = (passes: readonly TextPass[], index: number, pass: TextPass): TextPass[] =>
+  passes.map((p, i) => (i === index ? pass : p))
