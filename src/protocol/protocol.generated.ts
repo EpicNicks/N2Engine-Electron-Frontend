@@ -787,7 +787,8 @@ export interface PlayStateResponse {
 // ==================== Codec runtime ====================
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+// ignoreBOM: true keeps a leading U+FEFF (the default strips it, so a text that starts with a BOM would not round-trip)
+const textDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /** Builds a payload: little-endian numbers, uint32-length-prefixed UTF-8 strings */
 export class ProtocolWriter {
