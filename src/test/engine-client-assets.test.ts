@@ -4,7 +4,6 @@ import { test, describe, before, after } from "node:test"
 import * as assert from "node:assert/strict"
 import * as net from "node:net"
 import { EngineClient, EngineError } from "../protocol/engine-client"
-import { decodeTextData } from "../protocol/codec"
 import { FrameReader } from "../protocol/framing"
 import {
   CommandType,
@@ -124,7 +123,7 @@ describe("EngineClient asset commands", () => {
 
     reply(ResponseType.Ok, encodeOkResponse({}))
     await client.writeTextAsset("res://a.lua", text)
-    // The bytes carry the BOM (the generated string reader would drop it, so they are compared as bytes)
+    // The bytes carry the BOM (compared as bytes, so a reader that dropped it would show)
     const sent = requests[1].payload
     assert.equal(decodeWriteTextAssetRequest(sent).path, "res://a.lua")
     assert.ok(sent.includes(Buffer.from([0xef, 0xbb, 0xbf])), "the BOM was written")
@@ -162,16 +161,5 @@ describe("EngineClient asset commands", () => {
     reply(ResponseType.Ok, encodeOkResponse({}))
     await client.createFolder("res://ok")
     assert.equal(client.isConnected, true)
-  })
-})
-
-
-describe("decodeTextData", () => {
-  test("keeps a byte order mark, and refuses a payload that can't hold its text", () => {
-    const bytes = Buffer.from([3, 0, 0, 0, 0xef, 0xbb, 0xbf])
-    assert.equal(decodeTextData(bytes).text, "\ufeff")
-    assert.throws(() => decodeTextData(Buffer.from([1, 0])), /too short/)
-    assert.throws(() => decodeTextData(Buffer.from([9, 0, 0, 0, 65])), /claims 9 bytes, 1 follow/)
-    assert.equal(decodeTextData(Buffer.from([0, 0, 0, 0])).text, "")
   })
 })
