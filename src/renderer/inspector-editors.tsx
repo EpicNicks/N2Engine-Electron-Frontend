@@ -4,6 +4,7 @@
 // (tested in Node); this is the DOM around it.
 import { ComponentChildren } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
+import type { TextPass } from "./inspector-fields"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import { assetName } from "./asset-lookup"
 import { AssetDragType, EntityDragType, FieldDropEffect, dragHas, parseAssetDrag } from "./drag-types"
@@ -20,6 +21,12 @@ import {
   numberLimits,
   parseJsonText,
   parseNumberText,
+  addPass,
+  movePass,
+  readPassList,
+  removePass,
+  replacePass,
+  usesPassList,
 } from "./inspector-fields"
 import { useApp } from "./ui"
 
@@ -798,10 +805,117 @@ function RefListEditor({ field, value, disabled, commit, invalid }: EditorProps)
   )
 }
 
+// ==================== Text effect passes ====================
+
+const colorField: FieldSchema = { name: "color", displayName: "Color", kind: "Color", typeName: "Color", hidden: false, readOnly: false }
+const offsetField: FieldSchema = { name: "offset", displayName: "Offset", kind: "Vector2", typeName: "Vector2", hidden: false, readOnly: false }
+// width and softness are not negative in the engine
+const widthField: FieldSchema = { name: "width", displayName: "Width", kind: "Float", typeName: "float", hidden: false, readOnly: false, min: 0 }
+const softnessField: FieldSchema = { name: "softness", displayName: "Softness", kind: "Float", typeName: "float", hidden: false, readOnly: false, min: 0 }
+const orderField: FieldSchema = { name: "order", displayName: "Order", kind: "Int", typeName: "int", hidden: false, readOnly: false }
+
+/**
+ * The effect passes of a text (TextPass[]): a row per pass with its colour, offset, width, softness and order, and
+ * buttons to remove it or move it up or down. Each edit commits the whole array. A value that isn't a pass list is
+ * edited as JSON instead.
+ */
+function PassListEditor(props: EditorProps) {
+  const { value, disabled, commit, invalid } = props
+  const passes = readPassList(value)
+  if (!passes) return <JsonEditor {...props} />
+  const set = (next: TextPass[], final: boolean) => commit(next, final)
+  const edit = (i: number, change: Partial<TextPass>, final: boolean) =>
+    set(replacePass(passes, i, { ...passes[i], ...change }), final)
+  return (
+    <div class="pass-list">
+      {passes.length === 0 && <div class="ref-list-empty">No passes</div>}
+      {passes.map((pass, i) => (
+        <div class="pass-row" key={i}>
+          <div class="pass-fields">
+            <ColorEditor
+              field={colorField}
+              value={pass.color}
+              disabled={disabled}
+              commit={(c, final) => edit(i, { color: c as TextPass["color"] }, final)}
+              invalid={invalid}
+            />
+            <VectorEditor
+              field={offsetField}
+              value={pass.offset}
+              disabled={disabled}
+              commit={(o, final) => edit(i, { offset: o as TextPass["offset"] }, final)}
+              invalid={invalid}
+            />
+            <NumberEditor
+              field={widthField}
+              value={pass.width}
+              disabled={disabled}
+              commit={(n, final) => edit(i, { width: n as number }, final)}
+              invalid={invalid}
+            />
+            <NumberEditor
+              field={softnessField}
+              value={pass.softness}
+              disabled={disabled}
+              commit={(n, final) => edit(i, { softness: n as number }, final)}
+              invalid={invalid}
+            />
+            <NumberEditor
+              field={orderField}
+              value={pass.order}
+              disabled={disabled}
+              commit={(n, final) => edit(i, { order: n as number }, final)}
+              invalid={invalid}
+            />
+          </div>
+          {!disabled && (
+            <div class="pass-buttons">
+              <button
+                class="secondary slot-clear"
+                title="Move up"
+                aria-label="Move up"
+                disabled={i === 0}
+                onClick={() => set(movePass(passes, i, -1), true)}
+              >
+                ↑
+              </button>
+              <button
+                class="secondary slot-clear"
+                title="Move down"
+                aria-label="Move down"
+                disabled={i === passes.length - 1}
+                onClick={() => set(movePass(passes, i, 1), true)}
+              >
+                ↓
+              </button>
+              <button
+                class="secondary slot-clear"
+                title="Remove the pass"
+                aria-label="Remove the pass"
+                onClick={() => set(removePass(passes, i), true)}
+              >
+                −
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+      {!disabled && (
+        <button class="secondary" onClick={() => set(addPass(passes), true)}>
+          Add pass
+        </button>
+      )}
+      <div class="pass-hint">Orders above 0 are not supported yet.</div>
+    </div>
+  )
+}
+
 // ==================== The editor for a field ====================
 
 /** The editor of a field's kind. A kind this client doesn't know is edited as JSON, which the host checks. */
 export function FieldEditor(props: EditorProps) {
+  // By type, not by field name: an engine that doesn't mark the field leaves it as the JSON box
+  if (usesPassList(props.field)) return <PassListEditor {...props} />
   switch (kindOf(props.field)) {
     case "Bool":
       return <BoolEditor {...props} />
