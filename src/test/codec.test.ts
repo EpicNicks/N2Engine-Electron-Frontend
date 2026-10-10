@@ -9,6 +9,10 @@ import { CommandName, Commands, decodeError } from "../protocol/codec"
 import {
   CommandResponse,
   CommandType,
+  decodeCreateFolderRequest,
+  decodeTextDataResponse,
+  encodeCreateFolderRequest,
+  encodeTextDataResponse,
   PROTOCOL_VERSION,
   ResponseCodecs,
   ResponseType,
@@ -124,5 +128,23 @@ describe("responses decode to the engine's vectors", () => {
     const vector = vectors.responses.find((v) => v.response === "EntityList")!
     const payload = fromHex(vector.payload)
     assert.throws(() => Commands.GetAllEntities.decode(payload.subarray(0, payload.length - 1)), RangeError)
+  })
+})
+
+describe("a leading byte order mark", () => {
+  const bom = Buffer.from([0xef, 0xbb, 0xbf])
+
+  test("a BOM-prefixed text asset round-trips through the generated codecs and ReadTextAsset's spec", () => {
+    const text = "\ufeff-- caf\u00e9\r\nprint(1)"
+    const payload = encodeTextDataResponse({ text })
+    assert.ok(Buffer.from(payload.subarray(4, 7)).equals(bom), "the BOM is on the wire")
+    assert.equal(decodeTextDataResponse(payload).text, text)
+    assert.equal(Commands.ReadTextAsset.decode(payload).text, text)
+    assert.equal(Commands.ReadTextAsset.decode(encodeTextDataResponse({ text: "\ufeff" })).text, "\ufeff")
+  })
+
+  test("a BOM-prefixed string field is kept, not stripped", () => {
+    const path = "\ufeffres://a/b"
+    assert.equal(decodeCreateFolderRequest(encodeCreateFolderRequest({ path })).path, path)
   })
 })
