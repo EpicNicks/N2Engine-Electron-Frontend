@@ -1246,6 +1246,11 @@ describe("EditorStore", () => {
     assert.equal(describeHost(remote("running"), false), "Disconnected from the remote host")
     assert.equal(describeHost(remote("exited"), false), "The SSH tunnel ended")
     assert.equal(describeHost(remote("failed"), false), "The SSH tunnel failed")
+    const direct = (status: HostState["status"]): HostState => ({ ...remote(status), direct: true })
+    assert.equal(describeHost(direct("starting"), false), "Connecting to the remote host...")
+    assert.equal(describeHost(direct("running"), true), "Connected (remote)")
+    assert.equal(describeHost(direct("failed"), false), "The remote connection failed")
+    assert.ok(!["starting", "running", "exited", "failed"].some((x) => /tunnel/i.test(describeHost(direct(x as HostState["status"]), false))))
   })
 })
 

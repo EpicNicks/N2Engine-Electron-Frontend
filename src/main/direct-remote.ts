@@ -65,7 +65,7 @@ export function requiredFingerprint(settings: DirectRemoteSettings, pinned: Pin 
   if (pinned && settings.fingerprint && pinned.fingerprint !== settings.fingerprint) {
     throw new Error(
       `The fingerprint given for ${label} (${settings.fingerprint}) is not the one pinned for it (${pinned.fingerprint}). ` +
-        "If the host's certificate was replaced on purpose, press Forget pin and confirm the new fingerprint"
+        "If the host's certificate was replaced on purpose, use Forget pin in the connection form, then confirm the new fingerprint"
     )
   }
   const required = settings.fingerprint ?? pinned?.fingerprint
@@ -79,7 +79,7 @@ export function requiredFingerprint(settings: DirectRemoteSettings, pinned: Pin 
 export function describeMismatch(label: string, expected: string, actual: string | null, pinned: boolean): string {
   const presented = actual === null ? "no certificate" : `a certificate with fingerprint ${actual}`
   const advice = pinned
-    ? "If the host's certificate was replaced on purpose, press Forget pin and confirm the new fingerprint; otherwise do not connect: this may not be your host"
+    ? "If the host's certificate was replaced on purpose, use Forget pin in the connection form, then confirm the new fingerprint; otherwise do not connect: this may not be your host"
     : "Check the fingerprint you entered; if it is right, this may not be your host"
   return `${label} presented ${presented}, not the expected ${expected}. ${advice}`
 }

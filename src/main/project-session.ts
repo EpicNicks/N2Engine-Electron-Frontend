@@ -244,7 +244,7 @@ export class ProjectSession {
 
   private remoteHostError(what: string): Error {
     return new Error(
-      `The editor can't ${what} a remote engine's host: it didn't start it. Disconnect, then connect again to reopen the tunnel.`
+      `The editor can't ${what} a remote engine's host: it didn't start it. Disconnect, then connect again${this.current.direct ? "" : " to reopen the tunnel"}.`
     )
   }
 
@@ -269,7 +269,7 @@ export class ProjectSession {
       this.assertCanSpawn()
       this.deps.files.close()
       const launch = this.current.launch + 1
-      this.setState({ status: "starting", mode: "remote", launch, projectPath: label, message: null })
+      this.setState({ status: "starting", mode: "remote", direct: false, launch, projectPath: label, message: null })
       const failed = (message: string): void =>
         this.setState({ status: "failed", mode: "local", projectPath: null, message })
 
@@ -359,7 +359,7 @@ export class ProjectSession {
       this.assertCanSpawn()
       this.deps.files.close()
       const launch = this.current.launch + 1
-      this.setState({ status: "starting", mode: "remote", launch, projectPath: label, message: null })
+      this.setState({ status: "starting", mode: "remote", direct: true, launch, projectPath: label, message: null })
       const failed = (message: string): never => {
         this.setState({ status: "failed", mode: "local", projectPath: null, message })
         throw new Error(message)

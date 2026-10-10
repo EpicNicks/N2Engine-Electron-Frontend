@@ -101,6 +101,18 @@ export type WelcomeMode = "local" | "remote"
 /** A short description of the host's state, for the toolbar */
 export function describeHost(host: HostState, connected: boolean): string {
   if (host.mode === "remote") {
+    if (host.direct) {
+      switch (host.status) {
+        case "starting":
+          return "Connecting to the remote host..."
+        case "running":
+          return connected ? "Connected (remote)" : "Disconnected from the remote host"
+        case "failed":
+          return "The remote connection failed"
+        default:
+          return "Not connected"
+      }
+    }
     switch (host.status) {
       case "starting":
         return "Opening the SSH tunnel..."
@@ -490,7 +502,9 @@ export class EditorStore {
       this.console.note(
         "info",
         state.mode === "remote"
-          ? `Opening an SSH tunnel to ${state.projectPath ?? "the remote engine"}`
+          ? state.direct
+            ? `Connecting to ${state.projectPath ?? "the remote engine"}`
+            : `Opening an SSH tunnel to ${state.projectPath ?? "the remote engine"}`
           : `Starting N2EditorHost for ${state.projectPath ?? "the project"}`
       )
     } else if ((state.status === "exited" || state.status === "failed") && state.message) {

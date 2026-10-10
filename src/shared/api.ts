@@ -367,6 +367,8 @@ export interface HostState {
    * host: ending it doesn't end the host, and the editor can't start, stop or restart it.
    */
   mode: HostMode
+  /** In remote mode: true when connected at the host's own address (no SSH tunnel); absent or false for a tunnel */
+  direct?: boolean
   /** Counts launches: a higher one is a newer host process (the console starts a new log for it) */
   launch: number
   /** The project the host is (or was) for; in remote mode the remote's name (user@host:port) */

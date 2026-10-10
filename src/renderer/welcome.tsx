@@ -335,9 +335,16 @@ function DirectForm() {
           </div>
         </div>
       )}
-      <button type="submit" disabled={busy || !ready || prompt !== null}>
-        Connect
-      </button>
+      <div class="pin-actions">
+        <button type="submit" disabled={busy || !ready || prompt !== null}>
+          Connect
+        </button>
+        {tls && (
+          <button type="button" disabled={busy || hostName === "" || !Number.isInteger(portNumber)} onClick={() => void forget()}>
+            Forget pin
+          </button>
+        )}
+      </div>
       <p class="note">
         The host's certificate is self-signed, so it is trusted by its fingerprint, remembered per host and port. The
         access token is sent only after the fingerprint matches. The editor works on the project the host has open.
