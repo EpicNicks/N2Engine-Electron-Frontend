@@ -55,7 +55,7 @@ The toolbar shows the host's state: starting, connected, stopped, exited or fail
 
 > **Not yet tested against a real server.** Remote mode has only been run against fakes in the unit tests, never against a real ssh server or a cloud host. Even the `Allocated port N for local forward` line ssh prints, which the editor waits for, is taken from OpenSSH's source, not observed. Expect rough edges, and please report what you hit.
 
-The welcome screen has two modes: **Local engine (exe)** (everything above: the editor launches `N2EditorHost` for a project folder) and **Remote engine**, which connects to an `N2EditorHost` that is already running somewhere else, for example on a cloud machine. The connection goes through an SSH tunnel the editor opens itself, so the host stays bound to loopback and only `sshd` is exposed (frontend issue #21; native TLS in the engine is a later step, engine issue [#108](https://github.com/EpicNicks/N2Engine/issues/108)).
+The welcome screen has two modes: **Local engine (exe)** (everything above: the editor launches `N2EditorHost` for a project folder) and **Remote engine**, which connects to an `N2EditorHost` that is already running somewhere else, for example on a cloud machine. The connection goes through an SSH tunnel the editor opens itself, so the host stays bound to loopback and only `sshd` is exposed (frontend issue #21; a host that serves TLS itself can be reached at its own address instead, see **Remote editing: direct address (TLS)** below; engine issue [#108](https://github.com/EpicNicks/N2Engine/issues/108)).
 
 **Setting it up, step by step.**
 
@@ -122,6 +122,31 @@ The address, ports and identity file are validated first: an address that starts
 - **Disconnect** with an unsaved scene asks whether to save first; "Disconnect without saving" doesn't lose the changes: they stay in the remote host's memory, which autosaves when the editor disconnects.
 
 **Known limits.** Connecting can't be cancelled while ssh is still connecting (it ends by its own timeout, 25 s at most). Ending the tunnel sends ssh a plain kill (`SIGTERM`, `TerminateProcess` on Windows) with no escalation, as local mode does for its host. Domain users (`DOMAIN\user`) and `user@host:port` aren't accepted in the address (use the SSH port field; put a domain user in your ssh config). There is no identity-file picker, and the ssh agent or key must work without a prompt. Play mode isn't available.
+
+## Remote editing: direct address (TLS)
+
+> **Not tested against a real cloud host.** The TLS and pinning code is unit tested against a local TLS server with a throwaway certificate, and the form has never been run against an N2EditorHost started with `--tls` on another machine. Expect rough edges.
+
+Besides the SSH tunnel, **Remote engine** has a second tab, **Direct address (TLS)**, for a host that is reachable at an address of its own and serves TLS itself (engine PR #112; see the engine's `docs/logging-and-editor.html`, section "ready line"). Nothing else needs installing on the host machine: no sshd, no tunnel.
+
+**Host side.** Start `N2EditorHost` with `--tls`, a fixed `--port`, a `--bind` the editor can reach and an access token (`--token-env`, as above). It serves TLS 1.2+/1.3 with a self-signed certificate, made on first use, and prints its fingerprint in the ready line:
+
+```
+N2EditorHost ready port=7777 tls=1 fingerprint=<64 lowercase hex digits>
+```
+
+**Editor side.** Fill in the host address, the port, the access token and leave **TLS** on. The **Expected fingerprint** is optional:
+
+- **With it** (copy it from the host's ready line), the editor pins the host up front: it connects only if the certificate the host presents has exactly that SHA-256 fingerprint. Colons, spaces and upper case are accepted when typing.
+- **Without it**, the editor does the TLS handshake only (nothing is sent) and shows the fingerprint the host presents. Compare it with the ready line, by a channel you trust, and press **Trust this fingerprint and connect**. Nothing is ever trusted silently.
+
+**Trust on first use.** The confirmed fingerprint is remembered per host and port, with the time it was first seen, in `pinned-fingerprints.json` in the user data folder (no secrets in it). The next connect to that host and port uses the pin without asking. If the host later presents a different certificate (its identity file was replaced, or something else answers on that address), the editor refuses to connect and the error and the form name the pinned and the new fingerprint. If the change is expected, press **Forget pin**, connect again and confirm the new fingerprint; otherwise do not connect.
+
+**Order of events.** The TCP and TLS handshake, then the pin check, and only after it passes is `Hello` (and with it the access token) sent. A host whose certificate doesn't match gets no bytes from the editor, the token included. Node's own certificate checks are off (the certificate is self-signed and named for nothing in particular): the pin is the only check, with no extra dependency (`src/protocol/tls-pin.ts`).
+
+**Plaintext.** The **TLS** box may be turned off only for this computer's loopback (`localhost`, `127.x.x.x`, `::1`), for a host started without `--tls`. The editor refuses a plaintext connection to any other address, in the form, the main process and the protocol client alike.
+
+**What this does not give.** The access token is still one shared secret for the whole host: no per-user tokens, no rate limiting of guesses, no revocation (see the engine's docs for what its token model does and doesn't give). A fingerprint pin proves the host is the one you confirmed, not that it is a good host, and it is only as good as the first confirmation (an attacker present at the first connect, when you confirm blindly, is trusted). There is no list of recent direct remotes yet (only the pins are remembered), and as with the tunnel, the editor edits whatever project the host has open and **Play mode is disabled** for a remote engine.
 
 ## The console
 
