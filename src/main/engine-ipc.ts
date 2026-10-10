@@ -21,6 +21,14 @@ import { EditorPage, handleResult } from "./ipc"
 /** Launched hosts listen on loopback only (N2EditorHost's default --bind) */
 const HostAddress = "127.0.0.1"
 
+/** Where to connect when it isn't a launched host: a host's address, and its pinned certificate for TLS */
+export interface EngineTarget {
+  /** Default: this computer's loopback, where launched hosts listen */
+  host?: string
+  /** Connect with TLS, pinned to this SHA-256 fingerprint; without it, plaintext (loopback only) */
+  tlsFingerprint?: string
+}
+
 const KindDescriptions: Record<ArgKind, string> = {
   string: "a string",
   number: "a finite number",
@@ -199,15 +207,19 @@ export class EngineHost {
   }
 
   /**
-   * Connects to a host the main process launched, on this machine, and says Hello with its access token (empty for
-   * a host without one). The token is never sent to the page: not in ConnectionState, results or errors. The new
+   * Connects to a host the main process launched, on this machine (or to target, for a remote one), and says Hello
+   * with its access token (empty for a host without one). The token is never sent to the page: not in ConnectionState, results or errors. The new
    * state is pushed to the page. A failed Hello rejects, with the connection already closed (and that published).
    */
-  async connectTo(port: number, token: string): Promise<ConnectionState> {
+  async connectTo(port: number, token: string, target: EngineTarget = {}): Promise<ConnectionState> {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error(`Invalid port ${String(port)}`)
     }
-    await this.client.connect(HostAddress, port, { token })
+    const host = target.host ?? HostAddress
+    if (host === "") throw new Error("Invalid host")
+    // The client refuses plaintext to any host but loopback, and sends nothing to a TLS host until its pin is checked
+    const options = target.tlsFingerprint === undefined ? { token } : { token, tlsFingerprint: target.tlsFingerprint }
+    await this.client.connect(host, port, options)
     return this.publish()
   }
 

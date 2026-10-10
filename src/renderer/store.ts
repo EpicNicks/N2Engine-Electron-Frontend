@@ -3,11 +3,13 @@
 import { Signal, batch, computed, signal } from "@preact/signals-core"
 import type {
   CreateProjectResult,
+  DirectRemoteSettings,
   EngineApi,
   HostApi,
   HostLocation,
   HostState,
   OpenProjectResult,
+  PinInspection,
   ProjectApi,
   RemoteApi,
   RemoteSettings,
@@ -293,6 +295,31 @@ export class EditorStore {
     const name = await this.run("Connecting to the remote engine...", () => this.api.remote.connect(settings, token))
     if (name !== undefined) this.projectPath.value = name
     await this.refreshRecentRemotes()
+  }
+
+  /**
+   * Connects to a remote engine at its address (TLS pinned by the fingerprint in settings, see DirectRemoteSettings).
+   * The token goes to the main process and no further. Resolves true once connected.
+   */
+  async connectDirect(settings: DirectRemoteSettings, token: string): Promise<boolean> {
+    const name = await this.run("Connecting to the remote engine...", () =>
+      this.api.remote.connectDirect(settings, token)
+    )
+    if (name === undefined) return false
+    this.projectPath.value = name
+    return true
+  }
+
+  /**
+   * The certificate a TLS host presents and what is pinned for it (nothing is sent, nothing is pinned): the form shows
+   * the fingerprint for the user to confirm. undefined when the host couldn't be reached (the error is shown).
+   */
+  inspectDirect(host: string, port: number): Promise<PinInspection | undefined> {
+    return this.run("Checking the host's certificate...", () => this.api.remote.inspectDirect(host, port))
+  }
+
+  async forgetPin(host: string, port: number): Promise<void> {
+    await this.run(null, () => this.api.remote.forgetPin(host, port))
   }
 
   async removeRecentRemote(settings: RemoteSettings): Promise<void> {

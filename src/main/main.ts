@@ -16,6 +16,7 @@ import { ProjectFiles } from "./project-files"
 import { ProjectSession } from "./project-session"
 import { RecentProjects } from "./recent-projects"
 import { RecentRemotes } from "./recent-remotes"
+import { PinStore } from "./pin-store"
 
 // The editor generates a fresh access token for each host it launches and puts it in that child's environment only
 // (host-launcher.ts). A token inherited from whatever started the editor is removed before anything starts, so no
@@ -52,6 +53,7 @@ const userData = app.getPath("userData")
 const files = new ProjectFiles()
 const recent = new RecentProjects(path.join(userData, "recent-projects.json"))
 const recentRemotes = new RecentRemotes(path.join(userData, "recent-remotes.json"))
+const pins = new PinStore(path.join(userData, "pinned-fingerprints.json"))
 const settings = new HostSettings(path.join(userData, "settings.json"))
 
 const engine = new EngineHost(new EngineClient(), page, {
@@ -69,6 +71,7 @@ const projectSession = new ProjectSession({
   settings,
   engine,
   recentRemotes,
+  pins,
   publish: publishHostState,
   renderer: () => settings.renderer(),
   log: (message) => console.log(message),
@@ -103,7 +106,7 @@ engine.client.onClose(() => {
 registerPlayIpc(ipcMain, { page, session: play })
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
-registerRemoteIpc(ipcMain, { page, session: projectSession, recent: recentRemotes })
+registerRemoteIpc(ipcMain, { page, session: projectSession, recent: recentRemotes, pins })
 
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay()

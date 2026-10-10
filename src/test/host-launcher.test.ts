@@ -65,13 +65,39 @@ const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolv
 
 describe("parseReadyLine", () => {
   test("reads the port of a ready line, with or without the \\r of a Windows line ending", () => {
-    assert.equal(parseReadyLine("N2EditorHost ready port=51234"), 51234)
-    assert.equal(parseReadyLine("N2EditorHost ready port=51234\r"), 51234)
+    assert.deepEqual(parseReadyLine("N2EditorHost ready port=51234"), { port: 51234 })
+    assert.deepEqual(parseReadyLine("N2EditorHost ready port=51234\r"), { port: 51234 })
   })
 
   test("ignores fields it doesn't know, wherever the port is", () => {
-    assert.equal(parseReadyLine("N2EditorHost ready protocol=1.2.0 port=9999 renderer=software"), 9999)
-    assert.equal(parseReadyLine("N2EditorHost ready port=9999 protocol=1.2.0\r"), 9999)
+    assert.deepEqual(parseReadyLine("N2EditorHost ready protocol=1.2.0 port=9999 renderer=software"), { port: 9999 })
+    assert.deepEqual(parseReadyLine("N2EditorHost ready port=9999 protocol=1.2.0\r"), { port: 9999 })
+  })
+
+  test("a tls=1 line carries the certificate's fingerprint, in any field order", () => {
+    const fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    assert.deepEqual(parseReadyLine(`N2EditorHost ready port=7000 tls=1 fingerprint=${fingerprint}`), {
+      port: 7000,
+      fingerprint,
+    })
+    assert.deepEqual(parseReadyLine(`N2EditorHost ready fingerprint=${fingerprint} tls=1 x=y port=7000\r`), {
+      port: 7000,
+      fingerprint,
+    })
+  })
+
+  test("a line without tls=1 has no fingerprint, whatever else it says", () => {
+    const fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    assert.deepEqual(parseReadyLine(`N2EditorHost ready port=7000 fingerprint=${fingerprint}`), { port: 7000 })
+    assert.deepEqual(parseReadyLine(`N2EditorHost ready port=7000 tls=0 fingerprint=${fingerprint}`), { port: 7000 })
+    assert.deepEqual(parseReadyLine("N2EditorHost ready port=7000 tls=0"), { port: 7000 })
+  })
+
+  test("a tls=1 line with a missing or malformed fingerprint is refused, not read as a host with nothing to pin", () => {
+    const bad = ["", "fingerprint=", "fingerprint=abc", `fingerprint=${"g".repeat(64)}`, `fingerprint=${"a".repeat(65)}`]
+    for (const field of bad) {
+      assert.equal(parseReadyLine(`N2EditorHost ready port=7000 tls=1 ${field}`.trim()), null, field)
+    }
   })
 
   test("anything else is not a ready line", () => {

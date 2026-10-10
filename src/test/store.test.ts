@@ -14,6 +14,7 @@ import type {
   HostLocation,
   HostState,
   OpenProjectResult,
+  PinInspection,
   RemoteSettings,
   ServerInfo,
 } from "../shared/api"
@@ -456,6 +457,9 @@ class FakeApi implements StoreApi {
     removeRecent: async (settings: RemoteSettings) => {
       this.remoteRecent = this.remoteRecent.filter((r) => r.target !== settings.target)
     },
+    connectDirect: async (): Promise<string> => "",
+    inspectDirect: async (): Promise<PinInspection> => ({ kind: "unknown", fingerprint: "" }),
+    forgetPin: async (): Promise<void> => undefined,
   }
 
   /** What the main process pushes while opening a project */
