@@ -53,13 +53,35 @@ The toolbar shows the host's state: starting, connected, stopped, exited or fail
 
 ## Remote engine
 
+> **Not yet tested against a real server.** Remote mode has only been run against fakes in the unit tests, never against a real ssh server or a cloud host. Even the `Allocated port N for local forward` line ssh prints, which the editor waits for, is taken from OpenSSH's source, not observed. Expect rough edges, and please report what you hit.
+
 The welcome screen has two modes: **Local engine (exe)** (everything above: the editor launches `N2EditorHost` for a project folder) and **Remote engine**, which connects to an `N2EditorHost` that is already running somewhere else, for example on a cloud machine. The connection goes through an SSH tunnel the editor opens itself, so the host stays bound to loopback and only `sshd` is exposed (frontend issue #21; native TLS in the engine is a later step, engine issue [#108](https://github.com/EpicNicks/N2Engine/issues/108)).
 
-**Starting the host on the remote machine.** Pick a fixed port and put the token in the environment, not on the command line:
+**Setting it up, step by step.**
 
-```
-N2_EDITOR_TOKEN=<a long random string> N2EditorHost --project <dir> --port <fixed> --token-env N2_EDITOR_TOKEN
-```
+1. **Make up a token.** The host does not generate one: it reads whatever string is in the environment variable named by `--token-env`, and the editor sends the same string. Generate a long random one, for example in PowerShell:
+
+   ```
+   -join ((1..32) | % { '{0:x2}' -f (Get-Random -Max 256) })
+   ```
+
+   or in bash: `openssl rand -hex 32`.
+
+2. **Start the host on the remote machine.** Pick a fixed port and put the token in the environment, not on the command line. In bash:
+
+   ```
+   N2_EDITOR_TOKEN=<token> N2EditorHost --project <dir> --port 7777 --token-env N2_EDITOR_TOKEN
+   ```
+
+   In PowerShell:
+
+   ```
+   $env:N2_EDITOR_TOKEN='<token>'; .\N2EditorHost.exe --project <dir> --port 7777 --token-env N2_EDITOR_TOKEN
+   ```
+
+   The host removes the variable from its own environment after reading it. Keep the token out of your shell history (for example, set it from a file or a secrets manager rather than typing it into a logged shell). Without `--token-env`, anyone who can reach the host controls it.
+
+3. **Fill in the editor's Remote form** (see **Connecting** below): `user@host`, the SSH port, optionally an identity file, the host's port (`7777` above), and the same token.
 
 Leave `--bind` at its default (loopback): the tunnel reaches it there. Don't pass `--exit-on-disconnect` or `--exit-on-stdin-eof` (they are for a host the editor launches): the host should outlive the editor's session. The host serves the project it was started with.
 
