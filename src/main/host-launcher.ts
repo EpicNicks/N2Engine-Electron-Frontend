@@ -16,6 +16,7 @@
 // connections that never said Hello).
 import { ChildProcess, SpawnOptions, spawn as nodeSpawn } from "child_process"
 import { randomBytes } from "crypto"
+import { normaliseFingerprint } from "../protocol/tls-pin"
 
 /** The environment variable the token is passed in (--token-env names it) */
 export const TokenEnvVariable = "N2_EDITOR_TOKEN"
@@ -29,19 +30,36 @@ export const DefaultReadyTimeoutMs = 30000
 /** How many of the host's last stderr and stdout lines a failure message quotes */
 const QuotedLines = 8
 
-/** The bound port from a ready line, or null if the line isn't one. A trailing \r (Windows' \r\n) is ignored. */
-export function parseReadyLine(line: string): number | null {
+/** What a ready line says: the bound port and, for a host started with --tls, its certificate's fingerprint */
+export interface ReadyInfo {
+  port: number
+  /** SHA-256 of the host's certificate (64 lowercase hex digits); only for a line with tls=1 */
+  fingerprint?: string
+}
+
+/**
+ * What a ready line says, or null if the line isn't one. A trailing \r (Windows' \r\n) is ignored. The fingerprint is
+ * given only for a line with tls=1 (a line without it is as it always was); a tls=1 line whose fingerprint isn't 64
+ * hex digits is refused as malformed rather than treated as a host with nothing to pin.
+ */
+export function parseReadyLine(line: string): ReadyInfo | null {
   const text = line.endsWith("\r") ? line.slice(0, -1) : line
   if (!text.startsWith(ReadyLinePrefix + " ")) return null
-  // Space-separated key=value fields after the prefix; unknown keys are ignored, in any order
+  // Space-separated key=value fields after the prefix; unknown keys are ignored, in any order, the first of a key wins
+  const fields = new Map<string, string>()
   for (const field of text.slice(ReadyLinePrefix.length + 1).split(" ")) {
-    const match = /^port=(\d{1,5})$/.exec(field)
-    if (match) {
-      const port = Number(match[1])
-      return port >= 1 && port <= 65535 ? port : null
-    }
+    const equals = field.indexOf("=")
+    if (equals < 1) continue
+    const key = field.slice(0, equals)
+    if (!fields.has(key)) fields.set(key, field.slice(equals + 1))
   }
-  return null
+  const portText = fields.get("port")
+  if (portText === undefined || !/^\d{1,5}$/.test(portText)) return null
+  const port = Number(portText)
+  if (port < 1 || port > 65535) return null
+  if (fields.get("tls") !== "1") return { port }
+  const fingerprint = normaliseFingerprint(fields.get("fingerprint"))
+  return fingerprint === null ? null : { port, fingerprint }
 }
 
 /** Splits a byte stream into lines as chunks arrive: a line split across chunks comes out whole, once complete */
@@ -254,11 +272,11 @@ export class HostProcess {
         pushLast(host ? host.stdoutLines : stdoutLines, lines)
         if (settled) return
         for (const line of lines) {
-          const port = parseReadyLine(line)
-          if (port === null) continue
+          const ready = parseReadyLine(line)
+          if (ready === null) continue
           settled = true
           clearTimeout(timer)
-          host = new HostProcess(child, port, token)
+          host = new HostProcess(child, ready.port, token)
           host.stderrLines.push(...stderrLines)
           host.stdoutLines.push(...stdoutLines)
           resolve(host)

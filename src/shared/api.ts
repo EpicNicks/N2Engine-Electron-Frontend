@@ -367,6 +367,8 @@ export interface HostState {
    * host: ending it doesn't end the host, and the editor can't start, stop or restart it.
    */
   mode: HostMode
+  /** In remote mode: true when connected at the host's own address (no SSH tunnel); absent or false for a tunnel */
+  direct?: boolean
   /** Counts launches: a higher one is a newer host process (the console starts a new log for it) */
   launch: number
   /** The project the host is (or was) for; in remote mode the remote's name (user@host:port) */
@@ -430,7 +432,33 @@ export interface RemoteSettings {
   hostPort: number
 }
 
-/** window.remote: remote engine mode (the editor connects to a host that is already running, through an SSH tunnel) */
+/**
+ * What the user types for a remote engine reached at its own address, without the access token. Plaintext (tls
+ * false) is only for this computer's loopback; any other host needs TLS.
+ */
+export interface DirectRemoteSettings {
+  host: string
+  port: number
+  /** The host was started with --tls: connect with TLS and pin its self-signed certificate */
+  tls: boolean
+  /**
+   * The expected SHA-256 fingerprint of the host's certificate, 64 hex digits (colons and case are accepted when
+   * typing, and normalised). It is what a connect is checked against, so a confirmed or typed fingerprint is how a
+   * host is trusted; without it the stored pin is used, and with neither the connect is refused.
+   */
+  fingerprint?: string
+}
+
+/** What a host at host:port presents, against what is pinned for it (see RemoteApi.inspectDirect) */
+export type PinInspection =
+  /** Nothing is pinned yet: the user must confirm this fingerprint before the editor trusts the host */
+  | { kind: "unknown"; fingerprint: string }
+  /** The pinned fingerprint */
+  | { kind: "trusted"; fingerprint: string }
+  /** The host presents another certificate than the pinned one: refused until the pin is forgotten */
+  | { kind: "changed"; fingerprint: string; pinned: string; firstSeen: string }
+
+/** window.remote: remote engine mode (the editor connects to a host that is already running, through an SSH tunnel or at its address) */
 export interface RemoteApi {
   /**
    * Opens the tunnel (the system's ssh, BatchMode), connects to the host through it with the token and says Hello.
@@ -441,6 +469,19 @@ export interface RemoteApi {
   /** Recently used remotes, newest first (no tokens) */
   getRecent(): Promise<RemoteSettings[]>
   removeRecent(settings: RemoteSettings): Promise<void>
+  /**
+   * Connects to a host at its address (see DirectRemoteSettings) and says Hello with the token. With TLS the
+   * certificate must have the fingerprint in settings (or the stored pin): nothing, the token included, is sent to a
+   * host that presents another, and a connect that succeeded pins it. Resolves with the remote's name (host:port).
+   */
+  connectDirect(settings: DirectRemoteSettings, token: string): Promise<string>
+  /**
+   * The fingerprint the TLS host at host:port presents and what that means for its pin: for the user to confirm
+   * before connecting. Sends nothing: only the TLS handshake is made. Never pins anything by itself.
+   */
+  inspectDirect(host: string, port: number): Promise<PinInspection>
+  /** Forgets the pin of host:port, so its next connect asks to confirm a fingerprint again */
+  forgetPin(host: string, port: number): Promise<void>
 }
 
 /** An asset the host listed (ListAssets), or a sub-asset of a model: what an asset field can hold */
@@ -576,6 +617,12 @@ export const Channels = {
   remoteConnect: "remote:connect",
   remoteGetRecent: "remote:getRecent",
   remoteRemoveRecent: "remote:removeRecent",
+  /** (settings: DirectRemoteSettings, token: string) → IpcResult<string> */
+  remoteConnectDirect: "remote:connectDirect",
+  /** (host: string, port: number) → IpcResult<PinInspection> */
+  remoteInspectDirect: "remote:inspectDirect",
+  /** (host: string, port: number) → IpcResult */
+  remoteForgetPin: "remote:forgetPin",
 
   /** () → IpcResult<PlayState> */
   playGetState: "play:getState",

@@ -26,6 +26,10 @@ import type { HostSettings } from "./host-settings"
 import type { ProjectFiles } from "./project-files"
 import type { RecentProjects } from "./recent-projects"
 import type { RecentRemotes } from "./recent-remotes"
+import type { EngineTarget } from "./engine-ipc"
+import type { PinStore } from "./pin-store"
+import { FingerprintMismatchError } from "../protocol/tls-pin"
+import { describeDirect, describeMismatch, parseDirectRemoteSettings, requiredFingerprint } from "./direct-remote"
 import { SshTunnel, TunnelOptions, describeRemote, parseRemoteSettings } from "./ssh-tunnel"
 
 /** The project file a folder needs to be a project (engine #90) */
@@ -61,7 +65,7 @@ export type TunnelHandle = Pick<SshTunnel, "localPort" | "exit" | "pid" | "lastO
 
 /** What the session needs of EngineHost */
 export interface EngineConnection {
-  connectTo(port: number, token: string): Promise<ConnectionState>
+  connectTo(port: number, token: string, target?: EngineTarget): Promise<ConnectionState>
   disconnect(): void
   close(): void
 }
@@ -78,6 +82,8 @@ export interface ProjectSessionDeps {
   openTunnel?: (options: TunnelOptions) => Promise<TunnelHandle>
   /** Remembers the remotes that were connected to (their settings, never a token) */
   recentRemotes?: Pick<RecentRemotes, "add">
+  /** The pinned certificate fingerprints of direct-address remotes (trust on first use) */
+  pins?: Pick<PinStore, "get" | "pin">
   create?: (options: CreateOptions) => Promise<CreatedProject>
   /** N2EditorHost --help: what the host can do */
   probe?: (options: ProbeOptions) => Promise<HostCapabilities>
@@ -238,7 +244,7 @@ export class ProjectSession {
 
   private remoteHostError(what: string): Error {
     return new Error(
-      `The editor can't ${what} a remote engine's host: it didn't start it. Disconnect, then connect again to reopen the tunnel.`
+      `The editor can't ${what} a remote engine's host: it didn't start it. Disconnect, then connect again${this.current.direct ? "" : " to reopen the tunnel"}.`
     )
   }
 
@@ -263,7 +269,7 @@ export class ProjectSession {
       this.assertCanSpawn()
       this.deps.files.close()
       const launch = this.current.launch + 1
-      this.setState({ status: "starting", mode: "remote", launch, projectPath: label, message: null })
+      this.setState({ status: "starting", mode: "remote", direct: false, launch, projectPath: label, message: null })
       const failed = (message: string): void =>
         this.setState({ status: "failed", mode: "local", projectPath: null, message })
 
@@ -316,6 +322,72 @@ export class ProjectSession {
       }
       if (this.tunnel === tunnel) this.setState({ status: "running", message: null })
       this.deps.recentRemotes?.add(settings)
+      return label
+    })
+  }
+
+  /**
+   * Remote mode without a tunnel: connects to a host at its own address (settings are validated here), with TLS pinned
+   * to a fingerprint the user typed or confirmed (or the one pinned earlier), or in plaintext to this computer's
+   * loopback only. Any local host or earlier tunnel is stopped first. Resolves with the remote's name (host:port). A
+   * certificate that isn't the expected one fails the connect before anything is sent, so before the token; the token
+   * goes to the engine connection and nowhere else: not a log line, the state or an error. A connect that succeeded
+   * pins the fingerprint (it was the user's to confirm). Failing leaves nothing open.
+   */
+  connectDirect(settingsInput: unknown, token: unknown): Promise<string> {
+    // Checked before anything is stopped
+    let settings: ReturnType<typeof parseDirectRemoteSettings>
+    try {
+      settings = parseDirectRemoteSettings(settingsInput)
+    } catch (e) {
+      return Promise.reject(e)
+    }
+    if (typeof token !== "string" || token === "") return Promise.reject(new Error("Enter the host's access token"))
+    const label = describeDirect(settings)
+    const pinned = settings.tls ? this.deps.pins?.get(settings.host, settings.port) : undefined
+    let fingerprint: string | undefined
+    if (settings.tls) {
+      try {
+        if (!this.deps.pins) throw new Error("Pinned fingerprints aren't available")
+        fingerprint = requiredFingerprint(settings, pinned)
+      } catch (e) {
+        return Promise.reject(e)
+      }
+    }
+    return this.serial(async () => {
+      await this.stopCurrent(false)
+      this.assertCanSpawn()
+      this.deps.files.close()
+      const launch = this.current.launch + 1
+      this.setState({ status: "starting", mode: "remote", direct: true, launch, projectPath: label, message: null })
+      const failed = (message: string): never => {
+        this.setState({ status: "failed", mode: "local", projectPath: null, message })
+        throw new Error(message)
+      }
+      try {
+        await this.deps.engine.connectTo(settings.port, token, { host: settings.host, tlsFingerprint: fingerprint })
+      } catch (e) {
+        this.deps.engine.close()
+        if (this.disposed) throw new CancelledError("Cancelled: the editor is closing")
+        if (e instanceof FingerprintMismatchError) {
+          return failed(describeMismatch(label, e.expected, e.actual, pinned !== undefined))
+        }
+        return failed(`Couldn't connect to ${label}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+      if (this.disposed) {
+        this.deps.engine.close()
+        throw new CancelledError("Cancelled: the editor is closing")
+      }
+      if (fingerprint !== undefined && !pinned) {
+        try {
+          this.deps.pins?.pin(settings.host, settings.port, fingerprint)
+        } catch (e) {
+          // Connected, but the pin wasn't kept: say so, the next connect asks again
+          this.deps.log?.(`Couldn't save the pin for ${label}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      this.setState({ status: "running", message: null })
+      this.deps.log?.(`Connected to ${label}${settings.tls ? " with TLS" : " (plaintext, loopback)"}`)
       return label
     })
   }

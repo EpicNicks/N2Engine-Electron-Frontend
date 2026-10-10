@@ -173,6 +173,9 @@ const remote: RemoteApi = {
   connect: (settings, token) => invoke(Channels.remoteConnect, settings, token),
   getRecent: () => invoke(Channels.remoteGetRecent),
   removeRecent: (settings) => invoke(Channels.remoteRemoveRecent, settings),
+  connectDirect: (settings, token) => invoke(Channels.remoteConnectDirect, settings, token),
+  inspectDirect: (host, port) => invoke(Channels.remoteInspectDirect, host, port),
+  forgetPin: (host, port) => invoke(Channels.remoteForgetPin, host, port),
 }
 
 // ==================== window.editMenu ====================

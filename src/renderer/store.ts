@@ -3,11 +3,13 @@
 import { Signal, batch, computed, signal } from "@preact/signals-core"
 import type {
   CreateProjectResult,
+  DirectRemoteSettings,
   EngineApi,
   HostApi,
   HostLocation,
   HostState,
   OpenProjectResult,
+  PinInspection,
   ProjectApi,
   RemoteApi,
   RemoteSettings,
@@ -99,6 +101,18 @@ export type WelcomeMode = "local" | "remote"
 /** A short description of the host's state, for the toolbar */
 export function describeHost(host: HostState, connected: boolean): string {
   if (host.mode === "remote") {
+    if (host.direct) {
+      switch (host.status) {
+        case "starting":
+          return "Connecting to the remote host..."
+        case "running":
+          return connected ? "Connected (remote)" : "Disconnected from the remote host"
+        case "failed":
+          return "The remote connection failed"
+        default:
+          return "Not connected"
+      }
+    }
     switch (host.status) {
       case "starting":
         return "Opening the SSH tunnel..."
@@ -295,6 +309,31 @@ export class EditorStore {
     await this.refreshRecentRemotes()
   }
 
+  /**
+   * Connects to a remote engine at its address (TLS pinned by the fingerprint in settings, see DirectRemoteSettings).
+   * The token goes to the main process and no further. Resolves true once connected.
+   */
+  async connectDirect(settings: DirectRemoteSettings, token: string): Promise<boolean> {
+    const name = await this.run("Connecting to the remote engine...", () =>
+      this.api.remote.connectDirect(settings, token)
+    )
+    if (name === undefined) return false
+    this.projectPath.value = name
+    return true
+  }
+
+  /**
+   * The certificate a TLS host presents and what is pinned for it (nothing is sent, nothing is pinned): the form shows
+   * the fingerprint for the user to confirm. undefined when the host couldn't be reached (the error is shown).
+   */
+  inspectDirect(host: string, port: number): Promise<PinInspection | undefined> {
+    return this.run("Checking the host's certificate...", () => this.api.remote.inspectDirect(host, port))
+  }
+
+  async forgetPin(host: string, port: number): Promise<void> {
+    await this.run(null, () => this.api.remote.forgetPin(host, port))
+  }
+
   async removeRecentRemote(settings: RemoteSettings): Promise<void> {
     await this.run(null, () => this.api.remote.removeRecent(settings))
     await this.refreshRecentRemotes()
@@ -463,7 +502,9 @@ export class EditorStore {
       this.console.note(
         "info",
         state.mode === "remote"
-          ? `Opening an SSH tunnel to ${state.projectPath ?? "the remote engine"}`
+          ? state.direct
+            ? `Connecting to ${state.projectPath ?? "the remote engine"}`
+            : `Opening an SSH tunnel to ${state.projectPath ?? "the remote engine"}`
           : `Starting N2EditorHost for ${state.projectPath ?? "the project"}`
       )
     } else if ((state.status === "exited" || state.status === "failed") && state.message) {

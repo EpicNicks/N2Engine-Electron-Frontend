@@ -39,6 +39,7 @@ import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
 import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
 import { AudioSamples } from "../audio-stream"
+import { TlsSocketFactory, connectPinnedTls, isLoopbackHost, normaliseFingerprint } from "./tls-pin"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */
 export const FirstEventType = 0xc0
@@ -73,6 +74,12 @@ export interface ConnectOptions {
   /** The host's access token; empty (the default) for a host started without one */
   token?: string
   clientName?: string
+  /**
+   * Connect with TLS (a host started with --tls) and pin its certificate to this SHA-256 fingerprint: Hello, and the
+   * token with it, is sent only after the host's certificate is shown to have this fingerprint. Without it the
+   * connection is plaintext, which is refused for any host but this computer's loopback.
+   */
+  tlsFingerprint?: string
 }
 
 /** connect()'s Hello failed: the host refused it (wrong token, incompatible version), or never answered */
@@ -124,7 +131,10 @@ export class EngineClient {
   /** The current connection's answer to Hello; null until its Hello succeeds */
   private session: ServerInfoResponse | null = null
 
-  constructor(private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect)) {}
+  constructor(
+    private createSocket: SocketFactory = (options, onConnect) => net.connect(options, onConnect),
+    private createTlsSocket: TlsSocketFactory = connectPinnedTls
+  ) {}
 
   /** Whether there is a connection whose Hello succeeded */
   get isConnected(): boolean {
@@ -156,7 +166,16 @@ export class EngineClient {
     port: number = 9999,
     options: ConnectOptions = {}
   ): Promise<ServerInfoResponse> {
-    const socket = await this.open(host, port)
+    let fingerprint: string | undefined
+    if (options.tlsFingerprint !== undefined) {
+      const normalised = normaliseFingerprint(options.tlsFingerprint)
+      if (normalised === null) throw new Error("The pinned fingerprint isn't a SHA-256 fingerprint (64 hex digits)")
+      fingerprint = normalised
+    } else if (!isLoopbackHost(host)) {
+      // Checked before any socket is opened: the token would cross the network in the clear
+      throw new Error(`Refusing a plaintext connection to ${host}: TLS is required for any host but this computer's`)
+    }
+    const socket = await this.open(host, port, fingerprint)
     try {
       return await this.hello(socket, options)
     } catch (e) {
@@ -168,16 +187,23 @@ export class EngineClient {
     }
   }
 
-  /** Opens a socket, replacing any current one; resolves once it has connected */
-  private open(host: string, port: number): Promise<net.Socket> {
+  /**
+   * Opens a socket, replacing any current one; resolves once it has connected. With a fingerprint the socket is TLS,
+   * and counts as connected only once the host's certificate has that fingerprint.
+   */
+  private open(host: string, port: number, fingerprint?: string): Promise<net.Socket> {
     // Nothing from a previous connection (a partial response, requests it never answered) may leak into this one
     this.closeSocket(new Error("Reconnected"))
 
     return new Promise((resolve, reject) => {
-      const socket = this.createSocket({ host, port }, () => {
+      const onConnect = (): void => {
         if (this.pendingConnect?.socket === socket) this.pendingConnect = null
         resolve(socket)
-      })
+      }
+      const socket =
+        fingerprint === undefined
+          ? this.createSocket({ host, port }, onConnect)
+          : this.createTlsSocket({ host, port, fingerprint }, onConnect)
       this.socket = socket
       this.pendingConnect = { socket, reject }
 
