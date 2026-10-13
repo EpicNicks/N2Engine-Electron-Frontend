@@ -71,12 +71,17 @@ function folderMenu(app: AppState, folder: string): MenuItem[] {
   ]
 }
 
-function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
+export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
   const uuid = row.kind === "asset" ? row.asset.uuid : row.sub.uuid
   const items: MenuItem[] = []
   const isScene = row.path.toLowerCase().endsWith(".scene")
   if (row.kind === "asset" && (isScene || isTextAssetPath(row.path))) {
-    items.push({ label: isScene ? "Open Scene" : "Open", action: open })
+    // OpenScene is a write: a read-only host refuses it, like the toolbar's Open scene (disabled, not hidden)
+    items.push({
+      label: isScene ? "Open Scene" : "Open",
+      action: open,
+      disabled: isScene && app.store.hostReadOnly.peek(),
+    })
   }
   items.push({ label: "Copy Path", action: () => copyText(app, row.path) })
   items.push({ label: "Copy UUID", action: () => copyText(app, uuid) })
@@ -124,6 +129,7 @@ function RowView({ row }: { row: AssetRow }) {
   const open = () => {
     if (row.kind !== "asset") return
     if (type === "Scene" || row.path.toLowerCase().endsWith(".scene")) {
+      if (store.hostReadOnly.peek()) return
       if (!store.connected.value) return store.reportError("Open scene", "Not connected to the editor host")
       void store.openScene(row.path)
     } else if (isTextAssetPath(row.path)) {

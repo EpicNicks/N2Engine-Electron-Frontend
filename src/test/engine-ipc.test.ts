@@ -14,7 +14,7 @@ import { FrameReader } from "../protocol/framing"
 import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
 import { ConnectOptions, EngineClient, EngineError } from "../protocol/engine-client"
 import type { ServerInfoResponse } from "../protocol/protocol.generated"
-import { Channels, ConnectionState, IpcResult, errorCodeOf, ipcError } from "../shared/api"
+import { Channels, ConnectionState, IpcResult, errorCodeOf, errorTextOf, ipcError } from "../shared/api"
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
 
@@ -825,13 +825,17 @@ describe("a host denial (protocol 1.11 ErrorCoded) over IPC", () => {
     })
   })
 
-  test("the page error keeps the code in its name (the context bridge copies name and message only)", () => {
+  test("the page error keeps the code in its message (the context bridge copies the message only)", () => {
     const e = ipcError({ error: "denied", code: "forbidden" })
-    assert.equal(e.message, "denied")
     assert.equal(errorCodeOf(e), "forbidden")
+    assert.equal(errorTextOf(e), "denied")
+    // The bridge: a new plain Error with the message and nothing else (no name, no properties)
     const copied = new Error(e.message)
-    copied.name = e.name
+    assert.equal(copied.name, "Error")
     assert.equal(errorCodeOf(copied), "forbidden")
+    assert.equal(errorTextOf(copied), "denied")
+    assert.equal(errorTextOf(ipcError({ error: "plain" })), "plain")
+    assert.equal(errorTextOf("not an error"), "not an error")
     assert.equal(errorCodeOf(ipcError({ error: "plain" })), undefined)
     assert.equal(errorCodeOf(new Error("plain")), undefined)
     assert.equal(errorCodeOf("not an error"), undefined)

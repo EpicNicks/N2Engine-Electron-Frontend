@@ -25,7 +25,7 @@ import {
   parseStateEvent,
   sceneChangeOf,
 } from "../protocol/editor-events"
-import { errorCodeOf } from "../shared/api"
+import { errorCodeOf, errorTextOf } from "../shared/api"
 import { AutosaveChoice, describeAutosave, sceneKey, shouldOfferAutosave } from "./autosave"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename, normalizeScenePath, scenePathProblem } from "./paths"
@@ -447,13 +447,13 @@ export class EditorStore {
   reportError(what: string, e: unknown): void {
     console.error(`${what}:`, e)
     this.noteDenial(e)
-    this.error.value = `${what}: ${e instanceof Error ? e.message : String(e)}`
+    this.error.value = `${what}: ${errorTextOf(e)}`
   }
 
   /**
    * A command the host refused whole (ErrorCoded readOnly or forbidden) changed nothing: the failure is shown with the
    * host's own message, like any other. A readOnly one also means the host is read-only whatever its ServerInfo said
-   * (it can be switched while running), so the writes are disabled from now on.
+   * (a host that does not say so up front), so the writes are disabled from now on.
    */
   private noteDenial(e: unknown): void {
     if (errorCodeOf(e) === "readOnly") this.deniedAsReadOnly.value = true
@@ -509,7 +509,7 @@ export class EditorStore {
     try {
       return await action()
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = errorTextOf(e)
       this.noteDenial(e)
       // The editor cancelled it itself (stopped or closed while a host started, the page reloaded): no error
       if (!message.startsWith("Cancelled:")) this.error.value = message

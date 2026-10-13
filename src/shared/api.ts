@@ -595,26 +595,29 @@ export interface EditMenuApi {
  */
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string; code?: string }
 
+/** Marks the code in an error message that crossed the context bridge (U+2063, invisible separator) */
+const CodeMark = "⁣"
+
 /**
- * The Error the page throws for a failed IpcResult. A code goes in the name as well as in `code`, because the context
- * bridge copies an Error's name and message to the page, not its own properties: "EngineError:readOnly".
+ * The Error the page throws for a failed IpcResult. A code is put in the message, as a prefix between two invisible
+ * marks, because the context bridge rebuilds a thrown Error from its message alone: its name and properties are lost.
  */
-export function ipcError(failure: { error: string; code?: string }): Error & { code?: string } {
-  const error: Error & { code?: string } = new Error(failure.error)
-  if (failure.code) {
-    error.name = `EngineError:${failure.code}`
-    error.code = failure.code
-  }
-  return error
+export function ipcError(failure: { error: string; code?: string }): Error {
+  return new Error(failure.code ? `${CodeMark}${failure.code}${CodeMark}${failure.error}` : failure.error)
 }
 
 /** The ErrorCoded code an error from the engine API carries (see ipcError); undefined for any other error */
 export function errorCodeOf(e: unknown): string | undefined {
-  if (!(e instanceof Error)) return undefined
-  const code = (e as { code?: unknown }).code
-  if (typeof code === "string" && e.name.startsWith("EngineError")) return code
-  const prefix = "EngineError:"
-  return e.name.startsWith(prefix) && e.name.length > prefix.length ? e.name.slice(prefix.length) : undefined
+  if (!(e instanceof Error) || !e.message.startsWith(CodeMark)) return undefined
+  const end = e.message.indexOf(CodeMark, CodeMark.length)
+  return end > CodeMark.length ? e.message.slice(CodeMark.length, end) : undefined
+}
+
+/** An error's message without the code prefix ipcError adds */
+export function errorTextOf(e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e)
+  if (errorCodeOf(e) === undefined) return message
+  return message.slice(message.indexOf(CodeMark, CodeMark.length) + CodeMark.length)
 }
 
 export const Channels = {

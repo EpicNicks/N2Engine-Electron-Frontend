@@ -11,8 +11,9 @@ import { HierarchyState } from "../renderer/hierarchy-state"
 import { HierarchyPanel } from "../renderer/hierarchy-panel"
 import { ReadOnlyBadge, SceneButtons } from "../renderer/editor"
 import { ErrorBanner } from "../renderer/ui"
+import { assetMenu } from "../renderer/assets-panel"
 import { followWriteGuard } from "../renderer/write-guard"
-import { renderWithApp } from "./helpers"
+import { renderWithApp, stubApp } from "./helpers"
 
 const scene = { path: "res://scenes/a.scene", name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
 
@@ -143,5 +144,41 @@ describe("a denial the host sends", () => {
     act(() => store.reportError("Failed to save", ipcError({ error: "read-only host: SaveSceneToFile is not allowed", code: "readOnly" })))
     assert.equal(screen.getByRole("status").textContent, "Read-only")
     assert.equal((screen.getByText("Save scene") as HTMLButtonElement).disabled, true)
+  })
+})
+
+const itemOf = (items: ReturnType<typeof assetMenu>, label: string) =>
+  items.find((item): item is Extract<(typeof items)[number], { label: string }> => "label" in item && item.label === label)
+
+describe("the asset context menu", () => {
+  const sceneRow = {
+    kind: "asset",
+    depth: 0,
+    path: "res://scenes/a.scene",
+    asset: { uuid: "u2", path: "res://scenes/a.scene", type: "Scene" },
+  } as never
+  const scriptRow = {
+    kind: "asset",
+    depth: 0,
+    path: "res://scripts/a.lua",
+    asset: { uuid: "u3", path: "res://scripts/a.lua", type: "LuaScript" },
+  } as never
+
+  test("Open Scene is disabled on a read-only host, not hidden; a text file can still be opened", async () => {
+    const store = await connectedStore(true)
+    const app = stubApp({ store })
+    const scene = itemOf(assetMenu(app, sceneRow, () => {}), "Open Scene")
+    assert.ok(scene)
+    assert.equal(scene.disabled, true)
+    const script = itemOf(assetMenu(app, scriptRow, () => {}), "Open")
+    assert.ok(script)
+    assert.ok(!script.disabled)
+  })
+
+  test("Open Scene is enabled on a host that can be edited", async () => {
+    const store = await connectedStore(false)
+    const scene = itemOf(assetMenu(stubApp({ store }), sceneRow, () => {}), "Open Scene")
+    assert.ok(scene)
+    assert.ok(!scene.disabled)
   })
 })
