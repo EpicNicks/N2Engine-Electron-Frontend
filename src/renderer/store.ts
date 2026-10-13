@@ -25,6 +25,7 @@ import {
   parseStateEvent,
   sceneChangeOf,
 } from "../protocol/editor-events"
+import { errorCodeOf } from "../shared/api"
 import { AutosaveChoice, describeAutosave, sceneKey, shouldOfferAutosave } from "./autosave"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename, normalizeScenePath, scenePathProblem } from "./paths"
@@ -44,6 +45,9 @@ export interface Dialogs {
 }
 
 export type UnsavedChoice = "save" | "discard" | "cancel"
+
+/** Why a host started with --read-only can't be edited (the reason shown next to a disabled write) */
+export const HostReadOnlyReason = "the host is read-only (started with --read-only)"
 
 /** The parts of the page's API the store uses */
 /** One assetsChanged event that lists the paths of both (each path once, in the order first seen) */
@@ -206,9 +210,22 @@ export class EditorStore {
    * is edited. The play controller sets it (setPlayMode) for as long as a game starts or runs.
    */
   readonly playMode = signal<string | null>(null)
-  /** The scene can be edited now: connected, with a scene, nothing busy and not a play session (Undo and Redo need it) */
+  /** A command was refused with the readOnly code on this connection (the host is read-only whatever its ServerInfo said) */
+  private readonly deniedAsReadOnly = signal(false)
+  /** The host was started with --read-only (protocol 1.11 ServerInfo.readOnly; a 1.10 host never is) and refuses every write */
+  readonly hostReadOnly = computed(() => this.serverInfo.value?.readOnly === true || this.deniedAsReadOnly.value)
+  /**
+   * Why nothing can be written now (a play session, or a read-only host); null when it can. THE guard for every write
+   * affordance: the panels read this (or canWrite) rather than playMode, so a new write is disabled with the others.
+   */
+  readonly readOnlyReason = computed<string | null>(
+    () => this.playMode.value ?? (this.hostReadOnly.value ? HostReadOnlyReason : null)
+  )
+  /** Nothing is refusing writes: not a play session and not a read-only host */
+  readonly canWrite = computed(() => this.readOnlyReason.value === null)
+  /** The scene can be edited now: connected, with a scene, nothing busy and able to write (Undo and Redo need it) */
   readonly canEdit = computed(
-    () => this.connected.value && this.scene.value !== null && this.busy.value === null && this.playMode.value === null
+    () => this.connected.value && this.scene.value !== null && this.busy.value === null && this.canWrite.value
   )
   /** The last assetsChanged event, and how many arrived (panels refetch their listings when it changes) */
   readonly lastAssetsChange = signal<AssetsChangedEvent | null>(null)
@@ -429,7 +446,17 @@ export class EditorStore {
   /** Shows a failure from elsewhere in the editor (a panel's action), and logs it */
   reportError(what: string, e: unknown): void {
     console.error(`${what}:`, e)
+    this.noteDenial(e)
     this.error.value = `${what}: ${e instanceof Error ? e.message : String(e)}`
+  }
+
+  /**
+   * A command the host refused whole (ErrorCoded readOnly or forbidden) changed nothing: the failure is shown with the
+   * host's own message, like any other. A readOnly one also means the host is read-only whatever its ServerInfo said
+   * (it can be switched while running), so the writes are disabled from now on.
+   */
+  private noteDenial(e: unknown): void {
+    if (errorCodeOf(e) === "readOnly") this.deniedAsReadOnly.value = true
   }
 
   /**
@@ -483,6 +510,7 @@ export class EditorStore {
       return await action()
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
+      this.noteDenial(e)
       // The editor cancelled it itself (stopped or closed while a host started, the page reloaded): no error
       if (!message.startsWith("Cancelled:")) this.error.value = message
       return undefined
@@ -521,6 +549,7 @@ export class EditorStore {
       this.historyReads++
       this.history.value = EmptyHistoryStatus // GetHistory below says what the host has (it may be a running host)
       this.connected.value = connected
+      this.deniedAsReadOnly.value = false
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
       if (!connected) {
         this.scene.value = null
@@ -598,10 +627,22 @@ export class EditorStore {
     return made
   }
 
-  /** While a game runs the scene is read-only: says so (error banner) and returns true for an action that would change it */
+  /**
+   * While a game runs, or on a read-only host, the scene can't be changed: says so (error banner) and returns true for
+   * an action that would change it
+   */
   refusedWhilePlaying(what: string): boolean {
-    if (this.playMode.value === null) return false
-    this.error.value = `${what}: not while ${this.playMode.value}. Stop the game first.`
+    if (this.playMode.value !== null) {
+      this.error.value = `${what}: not while ${this.playMode.value}. Stop the game first.`
+      return true
+    }
+    return this.refusedByReadOnlyHost(what)
+  }
+
+  /** On a read-only host nothing is written (saving included, which a game doesn't stop): says so, and returns true */
+  refusedByReadOnlyHost(what: string): boolean {
+    if (!this.hostReadOnly.value) return false
+    this.error.value = `${what}: ${HostReadOnlyReason}`
     return true
   }
 
@@ -620,6 +661,7 @@ export class EditorStore {
   async saveScene(): Promise<SceneInfoResponse | undefined> {
     const scene = this.scene.value
     if (!scene) return undefined
+    if (this.refusedByReadOnlyHost("Save scene")) return undefined
     if (scene.path === "") return this.saveSceneAs()
     return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(""))
   }
@@ -628,6 +670,7 @@ export class EditorStore {
   async saveSceneAs(): Promise<SceneInfoResponse | undefined> {
     const scene = this.scene.value
     if (!scene) return undefined
+    if (this.refusedByReadOnlyHost("Save scene")) return undefined
     const name = (scene.name || "Untitled").replace(/[\\/:*?"<>|]/g, "_")
     const input = await this.api.dialogs.prompt(
       "Save scene as (a res:// path)",
@@ -745,6 +788,8 @@ export class EditorStore {
     manual: boolean,
     connection: number
   ): Promise<SceneInfoResponse | null> {
+    // Recovering (restore or discard) writes: a read-only host is not asked, and keeps its autosave
+    if (this.hostReadOnly.value) return null
     const key = sceneKey(scene)
     let info
     try {

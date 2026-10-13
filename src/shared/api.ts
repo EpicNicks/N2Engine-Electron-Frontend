@@ -589,8 +589,33 @@ export interface EditMenuApi {
   onCommand(listener: (command: EditCommand) => void): void
 }
 
-/** What an IPC handler returns: errors are carried as data so the page sees the original message */
-export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string }
+/**
+ * What an IPC handler returns: errors are carried as data so the page sees the original message. code is the host's
+ * ErrorCoded code (protocol 1.11, "readOnly" or "forbidden") when it refused a command with one.
+ */
+export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string; code?: string }
+
+/**
+ * The Error the page throws for a failed IpcResult. A code goes in the name as well as in `code`, because the context
+ * bridge copies an Error's name and message to the page, not its own properties: "EngineError:readOnly".
+ */
+export function ipcError(failure: { error: string; code?: string }): Error & { code?: string } {
+  const error: Error & { code?: string } = new Error(failure.error)
+  if (failure.code) {
+    error.name = `EngineError:${failure.code}`
+    error.code = failure.code
+  }
+  return error
+}
+
+/** The ErrorCoded code an error from the engine API carries (see ipcError); undefined for any other error */
+export function errorCodeOf(e: unknown): string | undefined {
+  if (!(e instanceof Error)) return undefined
+  const code = (e as { code?: unknown }).code
+  if (typeof code === "string" && e.name.startsWith("EngineError")) return code
+  const prefix = "EngineError:"
+  return e.name.startsWith(prefix) && e.name.length > prefix.length ? e.name.slice(prefix.length) : undefined
+}
 
 export const Channels = {
   /** (name: EngineCommandName, args: unknown[]) → IpcResult */

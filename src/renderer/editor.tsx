@@ -15,6 +15,7 @@ import { MenuItem, Splitter, confirmDialog, modalOpen, showContextMenu, useApp }
 import { GameEndedMessage } from "../shared/api"
 import { followScene } from "./scene-follow"
 import { Viewport } from "./viewport-panel"
+import { HostReadOnlyReason } from "./store"
 
 // Panel sizes, in CSS pixels, kept for the session
 const leftWidth = signal(300)
@@ -25,12 +26,26 @@ const bottomTab = signal<string>("console")
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
+/** The badge that says the host is read-only (nothing can be changed); nothing on a host that can be edited */
+export function ReadOnlyBadge() {
+  const { store } = useApp()
+  if (!store.hostReadOnly.value) return null
+  return (
+    <span class="read-only-badge" role="status" title={`This editor can't change anything: ${HostReadOnlyReason}`}>
+      Read-only
+    </span>
+  )
+}
+
 /** New, Open, Save and Save As for the loaded scene */
-function SceneButtons() {
+export function SceneButtons() {
   const { store, assets } = useApp()
   const busy = store.busy.value !== null
   const connected = store.connected.value
   const loaded = store.scene.value
+  // A read-only host refuses all four (they make, load or write a scene): disabled, not hidden
+  const hostReadOnly = store.hostReadOnly.value
+  const readOnlyTip = hostReadOnly ? `Not available: ${HostReadOnlyReason}` : undefined
   // A scene command may have made a file (the host's assetsChanged follows too)
   const done = (result: unknown) => {
     if (result) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
@@ -52,20 +67,32 @@ function SceneButtons() {
 
   return (
     <>
-      <button onClick={() => store.newScene().then(done)} disabled={busy || !connected} title="Make a new empty scene">
+      <button
+        onClick={() => store.newScene().then(done)}
+        disabled={busy || !connected || hostReadOnly}
+        title={readOnlyTip ?? "Make a new empty scene"}
+      >
         New scene
       </button>
-      <button onClick={open} disabled={busy || !connected} title="Open a scene of the project">
+      <button
+        onClick={open}
+        disabled={busy || !connected || hostReadOnly}
+        title={readOnlyTip ?? "Open a scene of the project"}
+      >
         Open scene
       </button>
-      <button onClick={() => store.saveScene().then(done)} disabled={busy || !loaded} title="Save the scene (Ctrl+S)">
+      <button
+        onClick={() => store.saveScene().then(done)}
+        disabled={busy || !loaded || hostReadOnly}
+        title={readOnlyTip ?? "Save the scene (Ctrl+S)"}
+      >
         Save scene
       </button>
       <button
         class="secondary"
         onClick={() => store.saveSceneAs().then(done)}
-        disabled={busy || !loaded}
-        title="Save the scene to another file"
+        disabled={busy || !loaded || hostReadOnly}
+        title={readOnlyTip ?? "Save the scene to another file"}
       >
         Save as...
       </button>
@@ -89,7 +116,9 @@ function PlayButtons() {
         onClick={() => void play.start()}
         disabled={!play.canPlay.value}
         title={
-          store.remote.value
+          store.hostReadOnly.value
+            ? `Not available: ${HostReadOnlyReason}`
+            : store.remote.value
             ? "Play mode needs a local engine: it launches a second N2EditorHost on this machine, from the project's folder"
             : store.scene.value
             ? "Play the open scene as it is now, unsaved changes included, in a game of its own"
@@ -145,7 +174,7 @@ function EditButton() {
           {
             label: "Recover autosave...",
             action: () => void store.recoverAutosave(),
-            disabled: store.playMode.value !== null,
+            disabled: !store.canWrite.value,
           },
         ]
       : []),
@@ -193,6 +222,7 @@ function Toolbar() {
           {store.sceneLabel.value}
         </span>
       )}
+      <ReadOnlyBadge />
       <div class="separator" />
       <SceneButtons />
       <EditButton />

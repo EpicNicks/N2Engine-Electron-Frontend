@@ -53,6 +53,7 @@ describe("EngineClient asset commands", () => {
                   engineVersion: "1.0.0",
                   capabilities: [],
                   projectLoaded: true,
+                  readOnly: false,
                 })
               )
             )

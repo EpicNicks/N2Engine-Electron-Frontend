@@ -8,6 +8,7 @@ import {
   EngineError,
   HelloError,
   HelloTimeoutMilliseconds,
+  isDenialCode,
   MaxPayloadBytesBeforeHello,
   MaxRequestPayloadBytes,
   ShutdownGraceMilliseconds,
@@ -51,6 +52,7 @@ import {
   encodeEntityCreatedResponse,
   encodeFrameUpdateResponse,
   encodeEntityDataResponse,
+  encodeErrorCodedResponse,
   encodeErrorResponse,
   encodeHierarchyResponse,
   encodeHistoryResponse,
@@ -67,6 +69,7 @@ const serverInfo = (protocolVersion: string = PROTOCOL_VERSION): ServerInfoRespo
   engineVersion: "0.9.0",
   capabilities: [],
   projectLoaded: true,
+  readOnly: false,
 })
 
 /** The host's answer to a Hello: a whole response frame, or null for none */
@@ -393,7 +396,7 @@ describe("EngineClient Hello", () => {
     const info = await client.connect()
 
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "" },
+      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true },
     ])
     assert.deepEqual(info, serverInfo())
     assert.deepEqual(client.serverInfo, serverInfo())
@@ -404,7 +407,7 @@ describe("EngineClient Hello", () => {
     const { client, sockets } = connectFake()
     await client.connect("localhost", 9999, { token: "the-access-token", clientName: "Test" })
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token" },
+      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token", errorCodes: true },
     ])
   })
 
@@ -892,6 +895,77 @@ describe("EngineClient scene and project commands (protocol 1.3)", () => {
     const pending = client.openScene("res://nope.txt")
     sockets[0].emit("data", frame(ResponseType.Error, Buffer.from("not a scene path")))
     await assert.rejects(pending, /not a scene path/)
+  })
+
+  test("a plain Error answer (all a 1.10 host sends) is an EngineError with no code", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const pending = client.openScene("res://nope.txt")
+    sockets[0].emit("data", frame(ResponseType.Error, Buffer.from("read-only host: OpenScene is not allowed")))
+    await assert.rejects(pending, (e: unknown) => {
+      assert.ok(e instanceof EngineError)
+      assert.equal(e.code, undefined)
+      assert.equal(isDenialCode(e.code), false)
+      assert.equal(e.message, "read-only host: OpenScene is not allowed")
+      return true
+    })
+  })
+
+  test("an ErrorCoded answer rejects with an EngineError carrying the host's message and its code", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const pending = client.destroyEntity("a")
+    const message = "read-only host: DestroyEntity is not allowed"
+    sockets[0].emit("data", frame(ResponseType.ErrorCoded, Buffer.from(encodeErrorCodedResponse({ message, code: "readOnly" }))))
+    await assert.rejects(pending, (e: unknown) => {
+      assert.ok(e instanceof EngineError)
+      assert.equal(e.code, "readOnly")
+      assert.equal(e.message, message)
+      assert.equal(e.command, "DestroyEntity")
+      assert.equal(isDenialCode(e.code), true)
+      return true
+    })
+    // The connection stays open and the next answer matches the next request
+    assert.equal(client.isConnected, true)
+    const next = client.getCameraPosition()
+    sockets[0].emit("data", cameraPositionResponse(1, 2, 3))
+    assert.deepEqual(await next, { x: 1, y: 2, z: 3 })
+  })
+
+  test("an unknown ErrorCoded code is an error, not a denial", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const pending = client.getCameraPosition()
+    sockets[0].emit("data", frame(ResponseType.ErrorCoded, Buffer.from(encodeErrorCodedResponse({ message: "later", code: "someNewCode" }))))
+    await assert.rejects(pending, (e: unknown) => e instanceof EngineError && e.code === "someNewCode" && !isDenialCode(e.code))
+  })
+
+  test("an ErrorCoded answer with no message still says which command failed", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect()
+    const pending = client.getCameraPosition()
+    sockets[0].emit("data", frame(ResponseType.ErrorCoded, Buffer.from(encodeErrorCodedResponse({ message: "", code: "forbidden" }))))
+    await assert.rejects(pending, (e: unknown) => e instanceof EngineError && /GetCameraPosition failed/.test(e.message) && e.code === "forbidden")
+  })
+})
+
+describe("EngineClient against a read-only host (protocol 1.11)", () => {
+  test("ServerInfo.readOnly is kept for the connection", async () => {
+    const { client } = connectFake(true, () =>
+      Buffer.from(encodeFrame(ResponseType.ServerInfo, encodeServerInfoResponse({ ...serverInfo(), readOnly: true })))
+    )
+    const info = await client.connect()
+    assert.equal(info.readOnly, true)
+    assert.equal(client.serverInfo?.readOnly, true)
+  })
+
+  test("a 1.10 host's ServerInfo, which ends before readOnly, connects as a host that is not read-only", async () => {
+    const full = encodeServerInfoResponse({ ...serverInfo("1.10.0"), readOnly: false })
+    const short = full.subarray(0, full.length - 1)
+    const { client } = connectFake(true, () => Buffer.from(encodeFrame(ResponseType.ServerInfo, short)))
+    const info = await client.connect()
+    assert.equal(info.readOnly, false)
+    assert.equal(info.protocolVersion, "1.10.0")
   })
 })
 

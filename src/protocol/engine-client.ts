@@ -28,6 +28,7 @@ import {
   ServerInfoResponse,
   Quat,
   Vec3,
+  decodeErrorCodedResponse,
   encodeFrame,
   isProtocolCompatible,
   parseProtocolVersion,
@@ -101,15 +102,28 @@ interface PendingRequest {
 /** Opens the connection; a parameter so tests can substitute a fake socket */
 export type SocketFactory = (options: net.NetConnectOpts, onConnect: () => void) => net.Socket
 
-/** The message of an Error response, kept apart from local failures (not connected, connection closed) */
+/**
+ * The message of an Error or ErrorCoded response, kept apart from local failures (not connected, connection closed).
+ * code is the ErrorCoded response's code (a host of protocol 1.11 refusing a command to a client that asked for codes,
+ * see isDenialCode); undefined for a plain Error, which is all a host before 1.11 sends.
+ */
 export class EngineError extends Error {
   constructor(
     message: string,
-    readonly command: string
+    readonly command: string,
+    readonly code?: string
   ) {
     super(message)
     this.name = "EngineError"
   }
+}
+
+/** The ErrorCoded codes that mean the host refused the command whole (nothing it asked for happened) */
+export const DenialCodes: readonly string[] = ["readOnly", "forbidden"]
+
+/** Whether an ErrorCoded code is one of the host's denials (an unknown code is treated like a plain Error) */
+export function isDenialCode(code: string | undefined): boolean {
+  return code !== undefined && DenialCodes.includes(code)
 }
 
 /**
@@ -268,13 +282,18 @@ export class EngineClient {
 
   /**
    * Sends one command and decodes its response. An Error response rejects with an EngineError carrying the
-   * server's message; any other unexpected type rejects with a mismatch error.
+   * server's message, and an ErrorCoded one (Hello asks for them) with the same plus its code; any other unexpected
+   * type rejects with a mismatch error.
    */
   async send<Request, Response>(spec: CommandSpec<Request, Response>, request: Request): Promise<Response> {
     const frame = await this.sendRaw(spec.command, spec.encode(request))
     if (frame.type === ResponseType.Error) {
       const message = decodeError(frame.payload)
       throw new EngineError(message || `${spec.name} failed`, spec.name)
+    }
+    if (frame.type === ResponseType.ErrorCoded) {
+      const coded = decodeErrorCodedResponse(frame.payload)
+      throw new EngineError(coded.message || `${spec.name} failed`, spec.name, coded.code || undefined)
     }
     if (frame.type !== spec.response) {
       throw new Error(`${spec.name}: expected response type ${spec.response}, got ${frame.type}`)
@@ -720,6 +739,8 @@ export class EngineClient {
       clientName: options.clientName ?? DefaultClientName,
       protocolVersion: PROTOCOL_VERSION,
       token: options.token ?? "",
+      // Protocol 1.11: a refused command is answered with ErrorCoded (message and code); a 1.10 host ignores the flag
+      errorCodes: true,
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined

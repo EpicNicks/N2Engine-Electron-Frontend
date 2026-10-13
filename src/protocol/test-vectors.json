@@ -1,6 +1,6 @@
 {
-  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes.",
-  "protocolVersion": "1.10.0",
+  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before them and fields holds what a reader decodes (their zero defaults).",
+  "protocolVersion": "1.11.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -17,9 +17,10 @@
       "fields": {
         "clientName": "clientName 0 ✓ é",
         "protocolVersion": "protocolVersion 1 ✓ é",
-        "token": "token 2 ✓ é"
+        "token": "token 2 ✓ é",
+        "errorCodes": false
       },
-      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a900"
     },
     {
       "command": "PollEvents",
@@ -536,9 +537,10 @@
           "capabilities 2 ✓",
           "capabilities 3 ✓"
         ],
-        "projectLoaded": false
+        "projectLoaded": false,
+        "readOnly": true
       },
-      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00"
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d0001"
     },
     {
       "response": "Events",
@@ -1377,6 +1379,15 @@
         "time": 1.75
       },
       "payload": "0e0000007374617465203020e29c9320c3a9795634120000e03f"
+    },
+    {
+      "response": "ErrorCoded",
+      "id": "0x1C",
+      "fields": {
+        "message": "message 0 ✓ é",
+        "code": "code 1 ✓ é"
+      },
+      "payload": "100000006d657373616765203020e29c9320c3a90d000000636f6465203120e29c9320c3a9"
     }
   ],
   "responseVariants": [
@@ -1391,6 +1402,34 @@
         "pixels": ""
       },
       "payload": "78563412007a5634127b563412"
+    }
+  ],
+  "shortPayloads": [
+    {
+      "request": "Hello",
+      "id": "0x04",
+      "fields": {
+        "clientName": "clientName 0 ✓ é",
+        "protocolVersion": "protocolVersion 1 ✓ é",
+        "token": "token 2 ✓ é",
+        "errorCodes": false
+      },
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
+    },
+    {
+      "response": "ServerInfo",
+      "id": "0x0B",
+      "fields": {
+        "protocolVersion": "protocolVersion 0 ✓ é",
+        "engineVersion": "engineVersion 1 ✓ é",
+        "capabilities": [
+          "capabilities 2 ✓",
+          "capabilities 3 ✓"
+        ],
+        "projectLoaded": false,
+        "readOnly": false
+      },
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00"
     }
   ]
 }
