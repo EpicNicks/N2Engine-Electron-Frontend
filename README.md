@@ -270,10 +270,14 @@ The window runs with `sandbox: true` and `contextIsolation: true`: the page has 
 
 ```
 npm run typecheck   # two tsconfigs: the Node side (main, preload, protocol, tests) and the page (.tsx, without Node's types)
-npm test            # builds, then runs src/test with node --test
+npm test            # builds, then runs src/test and the DOM tests (src/test-dom) with node --test
 ```
 
 `tsconfig.json` compiles the Node side to `dist` for Electron and the tests, including the page's framework-free modules (the store, the console, the audio player). `tsconfig.renderer.json` type checks the page, Preact components included (`jsx: react-jsx`, `jsxImportSource: preact`). esbuild bundles the page and the preload (`scripts/bundle.js`).
+
+**DOM tests** (`src/test-dom/*.test.tsx`) render the page's real components in jsdom with `@testing-library/preact` and `@testing-library/user-event` (devDependencies only). The components reach their state only through `useApp()`, so a test provides just the state it needs with `renderWithApp(ui, { store: { ... } })` (`src/test-dom/helpers.tsx`); the stub throws when a component reads something the test did not provide. Each test file starts with `import "./setup"`, which puts a jsdom window on `globalThis` and unmounts what each test rendered. `scripts/bundle-tests.js` bundles them with esbuild into `dist/test-dom` (the components are .tsx, which tsc does not compile), `npm test` runs them, and `tsconfig.test-dom.json` type checks them (part of `npm run typecheck`). jsdom 30 needs Node 22.22.2 or later, hence `engines.node` of `>=22.22.2` (Electron 39 ships Node 22). They cover the direct-remote form (the unknown host's fingerprint prompt and no connect before it is trusted, the plaintext refusal for a host that is not this computer, a changed fingerprint and Forget pin, the token cleared after connecting) and the text pass list editor. To run only them: `npm run build && node scripts/bundle-tests.js && node --test "dist/test-dom/**/*.test.js"`.
+
+jsdom's gaps: no layout (every rectangle is zeros, so popover and splitter positions cannot be asserted), no canvas or WebGL, no `ResizeObserver`, no `DataTransfer` (a drop can only be tested with a hand-made object), and `scrollIntoView` is a stub. So the viewport panel and drag and drop are out of scope for DOM tests; their logic is tested as pure code (above).
 
 The unit tests cover:
 

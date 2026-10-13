@@ -1,0 +1,9 @@
+{
+  // The DOM tests (src/test-dom), type checked only: scripts/bundle-tests.js bundles them for node --test. The page's
+  // settings (Preact JSX, DOM lib) plus Node's types, since the tests run under Node with jsdom.
+  "extends": "./tsconfig.renderer.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src/test-dom"]
+}
