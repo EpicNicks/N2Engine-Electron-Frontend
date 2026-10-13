@@ -8,6 +8,7 @@
 import { batch, computed, signal } from "@preact/signals-core"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
 import type { AssetDetails } from "../protocol/protocol.generated"
+import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { EngineApi, JsonObject } from "../shared/api"
 import {
   LineEnding,
@@ -91,7 +92,7 @@ export interface AssetDetail {
   outdated: boolean
 }
 
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const messageOf = (e: unknown): string => errorTextOf(e)
 
 const isSceneAsset = (type: string, path: string): boolean => type === "Scene" || path.toLowerCase().endsWith(".scene")
 
@@ -344,6 +345,8 @@ export class AssetsState {
     } catch (e) {
       const now = this.detail.value
       if (now && now.path === path) this.detail.value = { ...now, saving: false, error: messageOf(e) }
+      // A denial also goes to the banner, which makes a readOnly one disable the writes
+      if (errorCodeOf(e) !== undefined) this.onError("Failed to save the import settings", e)
       return false
     }
     const now = this.detail.value
@@ -473,6 +476,7 @@ export class AssetsState {
       await this.engine.writeTextAsset(path, onDisk)
     } catch (e) {
       this.patchTab(path, { saving: false, error: messageOf(e) })
+      if (errorCodeOf(e) !== undefined) this.onError("Failed to save the file", e)
       return false
     }
     // Text typed while it was being written stays, dirty
