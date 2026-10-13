@@ -3,7 +3,8 @@
   // Electron and node --test (the preload is also bundled by esbuild, since a sandboxed preload can require only
   // "electron"; Electron loads the bundle). The page's components (.tsx) are type checked by tsconfig.renderer.json
   // and bundled by esbuild. The page's framework-free modules (the store, the console, the audio player) compile
-  // here too, for their tests, so DOM stays in lib; nothing in src/main or src/protocol uses it.
+  // here too, for their tests, so DOM stays in lib; nothing in src/main or src/protocol uses it. The DOM tests
+  // (src/test-dom) are type checked by tsconfig.test-dom.json and bundled by scripts/bundle-tests.js.
   "compilerOptions": {
     "target": "ES2022",
     "module": "CommonJS",
@@ -16,5 +17,5 @@
     "skipLibCheck": true
   },
   "include": ["src"],
-  "exclude": ["src/renderer/**/*.tsx"]
+  "exclude": ["src/renderer/**/*.tsx", "src/test-dom"]
 }
