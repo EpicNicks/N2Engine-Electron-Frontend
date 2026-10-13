@@ -2,6 +2,8 @@ import "./setup"
 import type { ComponentChildren } from "preact"
 import { render, type RenderResult } from "@testing-library/preact"
 import { AppContext, type AppState } from "../renderer/ui"
+import { EditorStore } from "../renderer/store"
+import { FakeApi, FakeTimers, fakeStoreApi } from "../test/fake-store-api"
 
 /** What a test provides: some members of some of the page's state objects, each with some of its members */
 export type AppOverrides = { [K in keyof AppState]?: Partial<AppState[K]> }
@@ -30,4 +32,31 @@ export function stubApp(overrides: AppOverrides): AppState {
 /** Renders ui inside the page's AppContext, over the state the test provided */
 export function renderWithApp(ui: ComponentChildren, overrides: AppOverrides = {}): RenderResult {
   return render(<AppContext.Provider value={stubApp(overrides)}>{ui}</AppContext.Provider>)
+}
+
+/** A real EditorStore over the shared fake page API, and the fake and timers behind it */
+export interface StoreHarness {
+  api: FakeApi
+  store: EditorStore
+  timers: FakeTimers
+}
+
+/**
+ * Renders ui over a REAL EditorStore built on fakeStoreApi() (src/test/fake-store-api.ts), so the store's signals
+ * drive the DOM and its actions reach the fake API, where the test can read the calls. `setup` shapes the fake before
+ * the store loads (its recent lists, the host's location); the store is loaded (recent projects, recent remotes, the
+ * host's location) before the first render. Other state the component reads can be added with `overrides`.
+ */
+export async function renderWithStore(
+  ui: ComponentChildren,
+  setup: (api: FakeApi) => void = () => {},
+  overrides: AppOverrides = {}
+): Promise<RenderResult & StoreHarness> {
+  const api = fakeStoreApi()
+  setup(api)
+  const timers = new FakeTimers()
+  const store = new EditorStore(api, { timers, now: () => 0 })
+  await store.load()
+  const result = renderWithApp(ui, { ...overrides, store })
+  return Object.assign(result, { api, store, timers })
 }
