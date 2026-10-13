@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict"
 import type { AssetDetails, AssetInfo } from "../protocol/protocol.generated"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
 import { AssetsState, isDirty } from "../renderer/assets-state"
+import { errorCodeOf, ipcError } from "../shared/api"
 import { MaxTextAssetBytes } from "../renderer/asset-edit"
 import { ConsoleStore, entriesAfter } from "../renderer/console-store"
 import { assetDragData, parseAssetDrag } from "../renderer/drag-types"
@@ -23,11 +24,12 @@ function setup() {
     files: new Map<string, string>([["res://scripts/a.lua", "print(1)"]]),
     settings: { sRGB: true } as Record<string, unknown>,
     fail: new Map<string, string>(),
+    failCode: new Map<string, string>(),
   }
   const calls: string[] = []
   const gate = (name: string) => {
     const message = state.fail.get(name)
-    if (message) throw new Error(message)
+    if (message) throw ipcError({ error: message, code: state.failCode.get(name) })
   }
   const engine = {
     listAssets: async (folder: string, recursive: boolean) => {
@@ -74,9 +76,13 @@ function setup() {
     },
   }
   const errors: string[] = []
+  const denials: string[] = []
   const logMarks = { mark: () => 7, poll: async () => void calls.push("poll") }
-  const assets = new AssetsState(engine, logMarks, (what, e) => void errors.push(`${what}: ${(e as Error).message}`))
-  return { assets, engine, state, calls, errors }
+  const assets = new AssetsState(engine, logMarks, (what, e) => {
+    errors.push(`${what}: ${(e as Error).message}`)
+    denials.push(`${what}: ${errorCodeOf(e)}`)
+  })
+  return { assets, engine, state, calls, errors, denials }
 }
 
 const change = (parts: Partial<AssetsChangedEvent>): AssetsChangedEvent => ({
@@ -692,5 +698,50 @@ describe("review fixes", () => {
     await reading
     assert.equal(listing.assets.length, 2)
     assert.equal(calls.filter((c) => c.startsWith("listAssets")).length, 1)
+  })
+})
+
+describe("AssetsState denied saves", () => {
+  test("a coded denial of the import settings shows the clean text and reaches the banner callback", async () => {
+    const { assets, state, errors, denials } = setup()
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    assets.editSettings("{ \"x\": 1 }")
+    state.fail.set("setImportSettings", "The host is read-only")
+    state.failCode.set("setImportSettings", "readOnly")
+    assert.equal(await assets.applySettings(), false)
+    assert.equal(assets.detail.value?.error, "The host is read-only")
+    assert.equal(assets.detail.value?.saving, false)
+    assert.deepEqual(denials, ["Failed to save the import settings: readOnly"])
+    assert.equal(errors.length, 1)
+  })
+
+  test("a coded denial of a text save shows the clean text and reaches the banner callback", async () => {
+    const { assets, state, denials } = setup()
+    await assets.openText("res://scripts/a.lua")
+    assets.editText("res://scripts/a.lua", "print(2)")
+    state.fail.set("writeTextAsset", "Not allowed")
+    state.failCode.set("writeTextAsset", "forbidden")
+    assert.equal(await assets.saveText("res://scripts/a.lua"), false)
+    const tab = assets.tabs.value[0]
+    assert.equal(tab.error, "Not allowed")
+    assert.equal(isDirty(tab), true)
+    assert.deepEqual(denials, ["Failed to save the file: forbidden"])
+  })
+
+  test("plain save failures stay inline only", async () => {
+    const { assets, state, errors } = setup()
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    assets.editSettings("{ \"x\": 1 }")
+    state.fail.set("setImportSettings", "too large")
+    assert.equal(await assets.applySettings(), false)
+    assert.equal(assets.detail.value?.error, "too large")
+    await assets.openText("res://scripts/a.lua")
+    assets.editText("res://scripts/a.lua", "print(2)")
+    state.fail.set("writeTextAsset", "busy")
+    assert.equal(await assets.saveText("res://scripts/a.lua"), false)
+    assert.equal(assets.tabs.value[0].error, "busy")
+    assert.deepEqual(errors, [])
   })
 })
