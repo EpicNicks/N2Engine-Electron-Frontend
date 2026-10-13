@@ -11,6 +11,7 @@
 import { batch, computed, signal } from "@preact/signals-core"
 import type { ComponentSchema, EntityHeader } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
+import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { AssetEntry, EngineApi, JsonObject } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
 import type { EditGroups, GroupHandle } from "./edit-groups"
@@ -69,7 +70,7 @@ export interface InspectorOptions {
   timers?: { set(callback: () => void, ms: number): unknown; clear(handle: unknown): void }
 }
 
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+const messageOf = (e: unknown): string => errorTextOf(e)
 
 const isEmpty = (object: JsonObject): boolean => Object.keys(object).length === 0
 
@@ -562,6 +563,8 @@ export class InspectorState {
           if (overlay) this.setOverlay(componentId, { inflight: null, pending: overlay.pending })
           this.setError(componentId, messageOf(e))
         })
+        // A denial also goes to the banner, which makes a readOnly one disable the writes
+        if (errorCodeOf(e) !== undefined) this.options.onError?.("Failed to set the component's fields", e)
       } else {
         this.options.onError?.("Failed to set the component's fields", e)
       }
@@ -662,6 +665,7 @@ export class InspectorState {
           if (edits === this.headerEdits) this.header.value = previous
           this.setError(EntityKey, messageOf(e))
         })
+        if (errorCodeOf(e) !== undefined) this.options.onError?.("Failed to change the object", e)
       } else {
         this.options.onError?.("Failed to change the object", e)
       }

@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.10.0";
+export const PROTOCOL_VERSION = "1.11.0";
 
 // ==================== Types ====================
 
@@ -305,6 +305,7 @@ export const ResponseType = {
   AssetCreated: 0xA3,
   PlaySnapshot: 0xB0,
   PlayState: 0xB1,
+  ErrorCoded: 0x1C,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -390,6 +391,7 @@ export interface HelloRequest {
   clientName: string;
   protocolVersion: string;
   token: string;
+  errorCodes: boolean;
 }
 
 export interface PollEventsRequest {
@@ -624,6 +626,7 @@ export interface ServerInfoResponse {
   engineVersion: string;
   capabilities: string[];
   projectLoaded: boolean;
+  readOnly: boolean;
 }
 
 export interface EventsResponse {
@@ -782,6 +785,11 @@ export interface PlayStateResponse {
   state: string;
   frame: number;
   time: number;
+}
+
+export interface ErrorCodedResponse {
+  message: string;
+  code: string;
 }
 
 // ==================== Codec runtime ====================
@@ -1092,6 +1100,7 @@ export function encodeHelloRequest(value: HelloRequest): Uint8Array {
   writer.string(value.clientName);
   writer.string(value.protocolVersion);
   writer.string(value.token);
+  writer.bool(value.errorCodes);
   return writer.finish();
 }
 
@@ -1101,7 +1110,8 @@ export function decodeHelloRequest(payload: Uint8Array): HelloRequest {
   const clientName = reader.string();
   const protocolVersion = reader.string();
   const token = reader.string();
-  return { clientName, protocolVersion, token };
+  const errorCodes = reader.remaining > 0 ? reader.bool() : false;
+  return { clientName, protocolVersion, token, errorCodes };
 }
 
 /** PollEvents's request payload (without the frame header) */
@@ -1834,6 +1844,7 @@ export function encodeServerInfoResponse(value: ServerInfoResponse): Uint8Array 
   writer.string(value.engineVersion);
   writer.json(value.capabilities);
   writer.bool(value.projectLoaded);
+  writer.bool(value.readOnly);
   return writer.finish();
 }
 
@@ -1844,7 +1855,8 @@ export function decodeServerInfoResponse(payload: Uint8Array): ServerInfoRespons
   const engineVersion = reader.string();
   const capabilities = reader.json() as string[];
   const projectLoaded = reader.bool();
-  return { protocolVersion, engineVersion, capabilities, projectLoaded };
+  const readOnly = reader.remaining > 0 ? reader.bool() : false;
+  return { protocolVersion, engineVersion, capabilities, projectLoaded, readOnly };
 }
 
 /** Events's payload (without the frame header) */
@@ -2337,6 +2349,22 @@ export function decodePlayStateResponse(payload: Uint8Array): PlayStateResponse 
   return { state, frame, time };
 }
 
+/** ErrorCoded's payload (without the frame header) */
+export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.message);
+  writer.string(value.code);
+  return writer.finish();
+}
+
+/** Reads ErrorCoded's payload; bytes after the last field are ignored */
+export function decodeErrorCodedResponse(payload: Uint8Array): ErrorCodedResponse {
+  const reader = new ProtocolReader(payload);
+  const message = reader.string();
+  const code = reader.string();
+  return { message, code };
+}
+
 /** Each command's request codecs, for commands with request fields */
 export const RequestCodecs = {
   SetViewportSize: { encode: encodeSetViewportSizeRequest, decode: decodeSetViewportSizeRequest },
@@ -2421,4 +2449,5 @@ export const ResponseCodecs = {
   Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },
   PlaySnapshot: { encode: encodePlaySnapshotResponse, decode: decodePlaySnapshotResponse },
   PlayState: { encode: encodePlayStateResponse, decode: decodePlayStateResponse },
+  ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

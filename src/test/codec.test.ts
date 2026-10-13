@@ -14,6 +14,7 @@ import {
   encodeCreateFolderRequest,
   encodeTextDataResponse,
   PROTOCOL_VERSION,
+  RequestCodecs,
   ResponseCodecs,
   ResponseType,
 } from "../protocol/protocol.generated"
@@ -27,6 +28,8 @@ interface Vectors {
   protocolVersion: string
   requests: Array<Vector & { command: string }>
   responses: Array<Vector & { response: string }>
+  /** What a peer from before a message's optional trailing fields sends: the payload ends before them */
+  shortPayloads: Array<Vector & { request?: string; response?: string }>
 }
 
 // dist/test/codec.test.js: the source tree is two levels up
@@ -93,9 +96,17 @@ describe("requests encode to the engine's vectors", () => {
 
 describe("responses decode to the engine's vectors", () => {
   for (const vector of vectors.responses) {
-    // Ok and Error have no command of their own; AudioSamples is converted to float32 (below, and audio-stream.test)
+    // Ok, Error and ErrorCoded have no command of their own (ErrorCoded is tested below); AudioSamples is converted to
+    // float32 (below, and audio-stream.test)
     const name = commandNames.find((n) => CommandResponse[n] === vector.response)
-    if (vector.response === "Ok" || vector.response === "Error" || vector.response === "AudioSamples") continue
+    if (
+      vector.response === "Ok" ||
+      vector.response === "Error" ||
+      vector.response === "ErrorCoded" ||
+      vector.response === "AudioSamples"
+    ) {
+      continue
+    }
 
     test(`${vector.response} (${name})`, () => {
       assert.ok(name, `a command answers with ${vector.response}`)
@@ -108,6 +119,22 @@ describe("responses decode to the engine's vectors", () => {
       assert.deepEqual(withHexBytes(decoded), vector.fields)
     })
   }
+
+  test("ErrorCoded: its id is the vector's and no command answers with it", () => {
+    const vector = vectors.responses.find((v) => v.response === "ErrorCoded")!
+    assert.equal(ResponseType.ErrorCoded, Number.parseInt(vector.id, 16))
+    assert.equal(ResponseType.ErrorCoded, 0x1c)
+    assert.deepEqual(ResponseCodecs.ErrorCoded.decode(fromHex(vector.payload)), vector.fields)
+    assert.equal(
+      commandNames.some((n) => (CommandResponse[n] as string) === "ErrorCoded"),
+      false
+    )
+  })
+
+  test("ErrorCoded: a refusal's message and code round-trip", () => {
+    const refusal = { message: "read-only host: SetComponentFields is not allowed", code: "readOnly" }
+    assert.deepEqual(ResponseCodecs.ErrorCoded.decode(ResponseCodecs.ErrorCoded.encode(refusal)), refusal)
+  })
 
   test("AudioSamples: the generated decoder gives the vector's fields", () => {
     const vector = vectors.responses.find((v) => v.response === "AudioSamples")!
@@ -128,6 +155,29 @@ describe("responses decode to the engine's vectors", () => {
     const vector = vectors.responses.find((v) => v.response === "EntityList")!
     const payload = fromHex(vector.payload)
     assert.throws(() => Commands.GetAllEntities.decode(payload.subarray(0, payload.length - 1)), RangeError)
+  })
+})
+
+describe("optional trailing fields (protocol 1.11)", () => {
+  test("a peer from before them is decoded with their defaults, from the engine's short payloads", () => {
+    assert.ok(vectors.shortPayloads.length >= 2)
+    for (const vector of vectors.shortPayloads) {
+      const decoded = vector.request
+        ? RequestCodecs[vector.request as "Hello"].decode(fromHex(vector.payload))
+        : ResponseCodecs[vector.response as "ServerInfo"].decode(fromHex(vector.payload))
+      assert.deepEqual(decoded, vector.fields, vector.request ?? vector.response)
+    }
+  })
+
+  test("a 1.10 host's ServerInfo (no readOnly) reads as a host that is not read-only", () => {
+    const vector = vectors.shortPayloads.find((v) => v.response === "ServerInfo")!
+    const info = Commands.Hello.decode(fromHex(vector.payload))
+    assert.equal(info.readOnly, false)
+  })
+
+  test("a 1.11 host's ServerInfo carries readOnly", () => {
+    const vector = vectors.responses.find((v) => v.response === "ServerInfo")!
+    assert.equal(Commands.Hello.decode(fromHex(vector.payload)).readOnly, true)
   })
 })
 

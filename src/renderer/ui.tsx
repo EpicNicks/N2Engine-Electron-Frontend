@@ -34,6 +34,23 @@ export function useApp(): AppState {
   return app
 }
 
+// ==================== Errors ====================
+
+/** The last failure, until dismissed (a command the host denied shows the host's own message) */
+export function ErrorBanner() {
+  const { store } = useApp()
+  const error = store.error.value
+  if (!error) return null
+  return (
+    <div class="error-banner" role="alert">
+      <pre>{error}</pre>
+      <button class="secondary" onClick={() => store.dismissError()} aria-label="Dismiss">
+        ×
+      </button>
+    </div>
+  )
+}
+
 // ==================== Panel ====================
 
 export function Panel(props: {

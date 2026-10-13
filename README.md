@@ -250,6 +250,17 @@ Protocol 1.10.0 (engine E9, PR #102). **Play** in the toolbar runs the open scen
 
 The state machine is `src/main/play-session.ts` and the page's side is `src/renderer/play-controller.ts` (`PlayController`); both are unit tested with fakes. The page reaches the game through `window.play` (`PlayApi` in `src/shared/api.ts`).
 
+## Read-only hosts
+
+Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.11.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 host, whose answers end before the new fields (they decode to their defaults: not read-only, no error codes).
+
+- **What the host says.** A host started with `--read-only` answers every command that is not a read with a refusal (`SetComponentFields`, `OpenScene`, `Undo`, `WritePlaySnapshot`, `Shutdown` and so on; the viewport camera and the viewport size are reads). `ServerInfo.readOnly` (read from Hello) says so up front. The editor asks for error codes in Hello (`errorCodes: true`), so a refusal arrives as `ErrorCoded` (message and code `readOnly` or, for later per-user roles, `forbidden`) and rejects with an `EngineError` whose `code` is set; a 1.10 host, or any other failure, sends a plain `Error` and the `code` is `undefined`. An unknown code is treated like a plain error.
+- **The badge.** While `ServerInfo.readOnly` is true (`EditorStore.hostReadOnly`) the toolbar shows a **Read-only** badge.
+- **One guard for writes.** `EditorStore.readOnlyReason` is why nothing can be written now (a play session, else the read-only host), `canWrite` is whether it can, and `canEdit` includes it (undo, redo, the gizmo). The panels read these instead of `playMode`, and `write-guard.ts` pushes the reason into the inspector and the hierarchy, so a new write affordance has one place to be disabled. Disabled, not hidden: the inspector's fields and buttons, the hierarchy (create, rename, reparent, duplicate, delete, drag and drop, the active checkbox), the assets panel (new folder, script and scene, the import settings, saving a text file), New, Open, Save and Save as, Play, and Edit > Recover autosave (a read-only host's autosave is not asked about either). Undo and Redo go with `canEdit`. Selecting, expanding, the viewport camera, picking, the console and reading files still work.
+- **A denial that still arrives** (a command the editor did not know to disable, a `forbidden` role) is shown in the error banner with the host's own message, like any failure. The host refused the command whole, so nothing was applied: the inspector's and the hierarchy's optimistic values go back to the host's, and a `readOnly` one also makes the store treat the host as read-only until the connection changes (`EditorStore.deniedAsReadOnly`).
+- **Over IPC.** The code is carried as `IpcResult.code` and, because the context bridge rebuilds a thrown error from its message alone, also as a prefix of the page error's message between two invisible marks (see `ipcError`, `errorCodeOf` and `errorTextOf` in `src/shared/api.ts`; the panels show the text without it). The access token is never part of an error.
+- **Not verified:** the Electron UI against a live `--read-only` host (the unit and DOM tests use fakes).
+
 ## Architecture
 
 | Where | What |
@@ -283,7 +294,8 @@ The unit tests cover:
 
 - framing: split headers, many frames per chunk, and a 3.7 MB frame in 64 KB chunks;
 - the command specs against the engine's golden vectors (`src/protocol/test-vectors.json`);
-- `Hello`: tokens, refusals and the timeout;
+- `Hello`: tokens, refusals and the timeout; `errorCodes`, `ServerInfo.readOnly` and a 1.10 host's shorter answer;
+- `ErrorCoded`: the golden vector, the `EngineError` it becomes, the code over IPC, the store's read-only state and the write guard, and (DOM tests) the badge, the disabled scene buttons and Add, and the denial banner;
 - FIFO matching, errors and disconnects;
 - the `EventPump` and the epoch rule;
 - the main process's IPC checks (`PollEvents` included), and that the token never reaches the page;

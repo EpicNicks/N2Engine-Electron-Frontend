@@ -19,12 +19,14 @@ import { PlayController } from "./play-controller"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
 import { EditorStore } from "./store"
+import { followWriteGuard } from "./write-guard"
 import {
   AppContext,
   AppState,
   AutosaveDialog,
   ConfirmDialog,
   ContextMenu,
+  ErrorBanner,
   PromptDialog,
   UnsavedDialog,
   autosaveDialog,
@@ -36,19 +38,7 @@ import {
 } from "./ui"
 import { Welcome } from "./welcome"
 
-function ErrorBanner() {
-  const { store } = useApp()
-  const error = store.error.value
-  if (!error) return null
-  return (
-    <div class="error-banner" role="alert">
-      <pre>{error}</pre>
-      <button class="secondary" onClick={() => store.dismissError()} aria-label="Dismiss">
-        ×
-      </button>
-    </div>
-  )
-}
+// ErrorBanner (the last failure: a host's denial too, with its own message) is in ui.tsx, where the DOM tests reach it
 
 function BusyOverlay() {
   const { store } = useApp()
@@ -91,8 +81,8 @@ const assets = new AssetsState(
   window.engine,
   { mark: () => store.console.lastEntryId, poll: () => store.console.pollNow() },
   (what, e) => store.reportError(what, e),
-  // The host refuses the asset writers during a play session
-  () => store.playMode.peek()
+  // The host refuses the asset writers during a play session, and always when it is read-only
+  () => store.readOnlyReason.peek()
 )
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
@@ -129,7 +119,7 @@ const play = new PlayController({
     await app.inspector.flush()
   },
   // Not on a remote engine: a game is a second host process on this machine
-  canStart: () => !store.remote.value && store.connected.value && store.scene.value !== null && store.busy.value === null,
+  canStart: () => !store.remote.value && !store.hostReadOnly.value && store.connected.value && store.scene.value !== null && store.busy.value === null,
   addLog: (entries) => store.console.addEntries(entries),
   note: (level, message) => store.console.note(level, message),
   onError: (what, e) => store.reportError(what, e),
@@ -177,9 +167,8 @@ editActions.value = new EditController({
   syncAfterEdit: () => store.syncAfterEdit(),
   applyResult: (result) => store.applyEditResult(result),
 })
-// A play session makes the inspector read-only too (the host refuses edits then)
-effect(() => app.inspector.setReadOnly(store.playMode.value))
-effect(() => hierarchy.setReadOnly(store.playMode.value))
+// A play session, or a read-only host, makes the inspector and the hierarchy read-only (the host refuses edits)
+followWriteGuard(store, { inspector: app.inspector, hierarchy })
 // The host ends the groups of a connection that closes (and at the next Hello): none is open on another connection
 effect(() => {
   store.connected.value // what this runs on

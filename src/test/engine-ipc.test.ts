@@ -12,9 +12,9 @@ import {
 import { Commands } from "../protocol/codec"
 import { FrameReader } from "../protocol/framing"
 import { ResponseType, encodeFrame, encodeFrameDataResponse } from "../protocol/protocol.generated"
-import { ConnectOptions, EngineClient } from "../protocol/engine-client"
+import { ConnectOptions, EngineClient, EngineError } from "../protocol/engine-client"
 import type { ServerInfoResponse } from "../protocol/protocol.generated"
-import { Channels, ConnectionState, IpcResult } from "../shared/api"
+import { Channels, ConnectionState, IpcResult, errorCodeOf, errorTextOf, ipcError } from "../shared/api"
 
 type Handler = (event: unknown, ...args: unknown[]) => Promise<IpcResult<unknown>>
 
@@ -36,6 +36,7 @@ const info: ServerInfoResponse = {
   engineVersion: "0.9.0",
   capabilities: [],
   projectLoaded: true,
+  readOnly: false,
 }
 
 /** Just the EngineClient surface EngineHost uses */
@@ -788,5 +789,56 @@ describe("results sent over IPC", () => {
     assert.equal(value.view.buffer.byteLength, 4)
     assert.equal(value.n, 1)
     assert.equal(value.s, "s")
+  })
+})
+
+describe("a host denial (protocol 1.11 ErrorCoded) over IPC", () => {
+  const args = ["a", { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, { x: 1, y: 1, z: 1 }]
+
+  test("the code travels with the message, so the page can tell a denial from a failure", async () => {
+    const { ipc, client, editor } = setup()
+    client.setEntityTransform = async () => {
+      throw new EngineError("read-only host: SetEntityTransform is not allowed", "SetEntityTransform", "readOnly")
+    }
+    assert.deepEqual(await ipc.invoke(Channels.engineCall, editor, "setEntityTransform", args), {
+      ok: false,
+      error: "read-only host: SetEntityTransform is not allowed",
+      code: "readOnly",
+    })
+  })
+
+  test("a plain Error (a 1.10 host) and a local failure have no code", async () => {
+    const { ipc, client, editor } = setup()
+    client.setEntityTransform = async () => {
+      throw new EngineError("Entity not found", "SetEntityTransform")
+    }
+    assert.deepEqual(await ipc.invoke(Channels.engineCall, editor, "setEntityTransform", args), {
+      ok: false,
+      error: "Entity not found",
+    })
+    client.setEntityTransform = async () => {
+      throw Object.assign(new Error("socket"), { code: "ECONNRESET" })
+    }
+    assert.deepEqual(await ipc.invoke(Channels.engineCall, editor, "setEntityTransform", args), {
+      ok: false,
+      error: "socket",
+    })
+  })
+
+  test("the page error keeps the code in its message (the context bridge copies the message only)", () => {
+    const e = ipcError({ error: "denied", code: "forbidden" })
+    assert.equal(errorCodeOf(e), "forbidden")
+    assert.equal(errorTextOf(e), "denied")
+    // The bridge: a new plain Error with the message and nothing else (no name, no properties)
+    const copied = new Error(e.message)
+    assert.equal(copied.name, "Error")
+    assert.equal(errorCodeOf(copied), "forbidden")
+    assert.equal(errorTextOf(copied), "denied")
+    assert.equal(errorTextOf(ipcError({ error: "plain" })), "plain")
+    assert.equal(errorTextOf("not an error"), "not an error")
+    assert.equal(errorCodeOf(ipcError({ error: "plain" })), undefined)
+    assert.equal(errorCodeOf(new Error("plain")), undefined)
+    assert.equal(errorCodeOf("not an error"), undefined)
+    assert.equal(errorCodeOf(Object.assign(new Error("x"), { code: "ECONNRESET" })), undefined)
   })
 })

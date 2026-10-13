@@ -8,6 +8,13 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** The ErrorCoded code of an EngineError (the host's denial: "readOnly", "forbidden"); undefined for any other error */
+export function errorCode(e: unknown): string | undefined {
+  if (!(e instanceof Error) || e.name !== "EngineError") return undefined
+  const code = (e as { code?: unknown }).code
+  return typeof code === "string" && code !== "" ? code : undefined
+}
+
 /** The page allowed to call the IPC API: the editor window's main frame, showing the editor's own index.html */
 export interface EditorPage {
   getEditor(): WebContents | null
@@ -35,7 +42,8 @@ export function handleResult(ipcMain: IpcMain, channel: string, page: EditorPage
     try {
       return { ok: true, value: await handler(...args) }
     } catch (e) {
-      return { ok: false, error: errorMessage(e) }
+      const code = errorCode(e)
+      return code === undefined ? { ok: false, error: errorMessage(e) } : { ok: false, error: errorMessage(e), code }
     }
   })
 }

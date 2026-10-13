@@ -1,6 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { ComponentSchema, EntityDataResponse, FieldSchema } from "../protocol/protocol.generated"
+import { ipcError } from "../shared/api"
 import type { AssetEntry, JsonObject } from "../shared/api"
 import { signal } from "@preact/signals-core"
 import { EmptyHistoryStatus, HistoryStatus } from "../protocol/edit-history"
@@ -82,7 +83,7 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
   const errors: Array<[string, unknown]> = []
   const timers: Array<{ id: number; callback: () => void; ms: number }> = []
   let nextTimer = 1
-  const state: { connected: boolean; stored: Record<string, JsonObject>; autoReply: boolean; failSet: string | null } = {
+  const state: { connected: boolean; stored: Record<string, JsonObject>; autoReply: boolean; failSet: string | null; failCode?: string } = {
     connected: true,
     stored: {},
     autoReply: true,
@@ -112,7 +113,7 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
       calls.push(["setComponentFields", [entityId, componentId, values]])
       const reply = deferred<unknown>()
       sets.push({ entityId, componentId, values, reply })
-      if (state.failSet) reply.reject(new Error(state.failSet))
+      if (state.failSet) reply.reject(ipcError({ error: state.failSet, code: state.failCode }))
       else if (state.autoReply) reply.resolve(storedAfter(componentId, values))
       return reply.promise
     },
@@ -123,7 +124,7 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
     },
     setEntityProperties: async (entityId: string, properties: JsonObject) => {
       calls.push(["setEntityProperties", [entityId, properties]])
-      if (state.failSet) throw new Error(state.failSet)
+      if (state.failSet) throw ipcError({ error: state.failSet, code: state.failCode })
     },
   }
   /** What the fake host stores: the request merged over the component's values, a light's intensity clamped to 0..10 */
@@ -600,6 +601,43 @@ describe("InspectorState: the object's own properties", () => {
     await inspector.setEntityProperties({ layer: 40 })
     assert.equal(inspector.header.value?.layer, 0)
     assert.match(inspector.errors.value.get(EntityKey) ?? "", /layer/)
+  })
+})
+
+describe("InspectorState: a host denial", () => {
+  const message = "read-only host: SetComponentFields is not allowed"
+
+  test("a denied component edit is reverted inline and also reported (the store's banner)", async () => {
+    const { inspector, state, errors, light } = setup()
+    await inspector.select("e1")
+    state.failSet = message
+    state.failCode = "readOnly"
+    inspector.edit("light", { intensity: 5 }, { immediate: true })
+    await inspector.flush()
+    assert.equal(light().values.intensity, 1)
+    assert.equal(inspector.errors.value.get("light"), message)
+    assert.equal(errors.length, 1)
+    assert.equal(errors[0][0], "Failed to set the component's fields")
+  })
+
+  test("a denied object property is reverted inline and also reported", async () => {
+    const { inspector, state, errors } = setup()
+    await inspector.select("e1")
+    state.failSet = message
+    state.failCode = "readOnly"
+    await inspector.setEntityProperties({ layer: 3 })
+    assert.equal(inspector.header.value?.layer, 0)
+    assert.equal(inspector.errors.value.get(EntityKey), message)
+    assert.equal(errors.length, 1)
+    assert.equal(errors[0][0], "Failed to change the object")
+  })
+
+  test("an ordinary failure stays inline only", async () => {
+    const { inspector, state, errors } = setup()
+    await inspector.select("e1")
+    state.failSet = "layer must be 0 to 31"
+    await inspector.setEntityProperties({ layer: 40 })
+    assert.deepEqual(errors, [])
   })
 })
 

@@ -37,7 +37,7 @@ function typeIcon(type: string, name: string): string {
 async function newFolder(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New folder", "Not connected to the editor host")
-  if (store.playMode.value !== null) return store.reportError("New folder", "Not while the game is playing")
+  if (!store.canWrite.value) return store.reportError("New folder", `Not allowed: ${store.readOnlyReason.value}`)
   const name = await prompt("New folder", "NewFolder")
   if (name) assets.createFolder(parent, name).catch((e) => store.reportError("Failed to create the folder", e))
 }
@@ -45,7 +45,7 @@ async function newFolder(app: AppState, parent: string): Promise<void> {
 async function newScript(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New script", "Not connected to the editor host")
-  if (store.playMode.value !== null) return store.reportError("New script", "Not while the game is playing")
+  if (!store.canWrite.value) return store.reportError("New script", `Not allowed: ${store.readOnlyReason.value}`)
   const name = await prompt("New script", "NewScript")
   if (name) assets.createScript(parent, name).catch((e) => store.reportError("Failed to create the script", e))
 }
@@ -53,7 +53,7 @@ async function newScript(app: AppState, parent: string): Promise<void> {
 async function newScene(app: AppState, parent: string): Promise<void> {
   const { store, assets } = app
   if (!store.connected.value) return store.reportError("New scene", "Not connected to the editor host")
-  if (store.playMode.value !== null) return store.reportError("New scene", "Not while the game is playing")
+  if (!store.canWrite.value) return store.reportError("New scene", `Not allowed: ${store.readOnlyReason.value}`)
   const made = await store.newScene(`${parent === RootFolder ? RootFolder : `${parent}/`}Untitled.scene`)
   if (made) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
 }
@@ -63,7 +63,7 @@ function copyText(app: AppState, text: string): void {
 }
 
 function folderMenu(app: AppState, folder: string): MenuItem[] {
-  const playing = app.store.playMode.peek() !== null
+  const playing = !app.store.canWrite.peek()
   return [
     { label: "New Folder...", action: () => void newFolder(app, folder), disabled: playing },
     { label: "New Script...", action: () => void newScript(app, folder), disabled: playing },
@@ -71,12 +71,17 @@ function folderMenu(app: AppState, folder: string): MenuItem[] {
   ]
 }
 
-function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
+export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
   const uuid = row.kind === "asset" ? row.asset.uuid : row.sub.uuid
   const items: MenuItem[] = []
   const isScene = row.path.toLowerCase().endsWith(".scene")
   if (row.kind === "asset" && (isScene || isTextAssetPath(row.path))) {
-    items.push({ label: isScene ? "Open Scene" : "Open", action: open })
+    // OpenScene is a write: a read-only host refuses it, like the toolbar's Open scene (disabled, not hidden)
+    items.push({
+      label: isScene ? "Open Scene" : "Open",
+      action: open,
+      disabled: isScene && app.store.hostReadOnly.peek(),
+    })
   }
   items.push({ label: "Copy Path", action: () => copyText(app, row.path) })
   items.push({ label: "Copy UUID", action: () => copyText(app, uuid) })
@@ -124,6 +129,7 @@ function RowView({ row }: { row: AssetRow }) {
   const open = () => {
     if (row.kind !== "asset") return
     if (type === "Scene" || row.path.toLowerCase().endsWith(".scene")) {
+      if (store.hostReadOnly.peek()) return
       if (!store.connected.value) return store.reportError("Open scene", "Not connected to the editor host")
       void store.openScene(row.path)
     } else if (isTextAssetPath(row.path)) {
@@ -250,7 +256,7 @@ function ImportSettingsEditor() {
         spellcheck={false}
         value={detail.settings}
         disabled={detail.info === null}
-        readOnly={store.playMode.value !== null}
+        readOnly={!store.canWrite.value}
         aria-label="Import settings"
         onInput={(e) => assets.editSettings((e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
@@ -266,7 +272,7 @@ function ImportSettingsEditor() {
       {detail.error && <div class="asset-error">{detail.error}</div>}
       <div class="import-settings-buttons">
         <button
-          disabled={!edited || detail.saving || !store.connected.value || store.playMode.value !== null}
+          disabled={!edited || detail.saving || !store.connected.value || !store.canWrite.value}
           onClick={() =>
             assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
           }
@@ -286,7 +292,7 @@ export function AssetsPanel() {
   const { store, assets } = app
   const connected = store.connected.value
   // Nothing is changed while a play session runs (the host refuses it)
-  const editable = connected && store.playMode.value === null
+  const editable = connected && store.canWrite.value
   const rows = assets.rows.value
   const filter = assets.filter.value
   const listing = assets.listing.value
@@ -411,7 +417,7 @@ export function TextEditor({ path }: { path: string }) {
         class="script-editor"
         spellcheck={false}
         value={tab.text}
-        readOnly={store.playMode.value !== null}
+        readOnly={!store.canWrite.value}
         aria-label={nameOf(path)}
         onInput={(e) => assets.editText(path, (e.currentTarget as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {
@@ -424,7 +430,7 @@ export function TextEditor({ path }: { path: string }) {
       <div class="text-status">
         <span>{path}</span>
         <span class={dirty ? "dirty" : ""}>{status}</span>
-        <button disabled={!dirty || tab.saving || !store.connected.value || store.playMode.value !== null} onClick={save} title="Save (Ctrl+S)">
+        <button disabled={!dirty || tab.saving || !store.connected.value || !store.canWrite.value} onClick={save} title="Save (Ctrl+S)">
           Save
         </button>
       </div>

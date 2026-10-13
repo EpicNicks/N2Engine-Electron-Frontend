@@ -18,6 +18,7 @@ import type {
   RemoteSettings,
   ServerInfo,
 } from "../shared/api"
+import { ipcError } from "../shared/api"
 import type { Timers } from "../protocol/event-pump"
 import { ConsoleStore, entryFromEvent } from "../renderer/console-store"
 import { EditorStore, StoreApi, UnsavedChoice, createUnavailableReason, describeHost } from "../renderer/store"
@@ -223,7 +224,7 @@ describe("ConsoleStore", () => {
 class FakeApi implements StoreApi {
   hostState: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
   connectedNow = false
-  info: ServerInfo = { protocolVersion: "1.2.0", engineVersion: "1.0.0", capabilities: [], projectLoaded: true }
+  info: ServerInfo = { protocolVersion: "1.2.0", engineVersion: "1.0.0", capabilities: [], projectLoaded: true, readOnly: false }
   recentList = ["C:\\Games\\A", "C:\\Games\\B"]
   events = new FakeHostEvents()
   hostListeners: Array<(state: HostState) => void> = []
@@ -1753,5 +1754,124 @@ describe("EditorStore autosave recovery while a game runs", () => {
     await store.recoverAutosave()
     assert.match(store.error.value ?? "", /Recover autosave: not while the game is running/)
     assert.equal(api.calls.length, before)
+  })
+})
+
+/** An error as the page sees one the host refused with ErrorCoded (see ipcError) */
+function denial(code: string, message: string): Error {
+  return ipcError({ error: message, code })
+}
+
+describe("EditorStore on a read-only host (protocol 1.11)", () => {
+  async function openReadOnly(readOnly: boolean) {
+    const made = makeStore()
+    made.api.info = { ...made.api.info, readOnly }
+    made.api.openScene = { path: "res://scenes/a.scene", name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
+    await made.store.openProject()
+    await settle()
+    return made
+  }
+
+  test("ServerInfo.readOnly is in the state, and it takes every write away with one reason", async () => {
+    const { store } = await openReadOnly(true)
+    assert.equal(store.hostReadOnly.value, true)
+    assert.equal(store.canWrite.value, false)
+    assert.match(store.readOnlyReason.value ?? "", /read-only/)
+    assert.equal(store.canEdit.value, false, "undo, redo and the gizmo follow canEdit")
+  })
+
+  test("a host that is not read-only (and a 1.10 host, whose readOnly decodes to false) is edited as before", async () => {
+    const { store } = await openReadOnly(false)
+    assert.equal(store.hostReadOnly.value, false)
+    assert.equal(store.canWrite.value, true)
+    assert.equal(store.readOnlyReason.value, null)
+    assert.equal(store.canEdit.value, true)
+  })
+
+  test("a play session is still a reason, and the read-only reason wins nothing over it", async () => {
+    const { store } = await openReadOnly(false)
+    store.setPlayMode("the game is running")
+    assert.equal(store.readOnlyReason.value, "the game is running")
+    assert.equal(store.canWrite.value, false)
+    store.setPlayMode(null)
+    assert.equal(store.canWrite.value, true)
+  })
+
+  test("opening, creating and saving scenes are refused with a message, and the host is not asked", async () => {
+    const { api, store } = await openReadOnly(true)
+    const before = api.calls.length
+    assert.equal(await store.openScene("res://scenes/Other.scene"), undefined)
+    assert.match(store.error.value ?? "", /Open scene: the host is read-only/)
+    store.dismissError()
+    assert.equal(await store.newScene(), undefined)
+    assert.match(store.error.value ?? "", /New scene: the host is read-only/)
+    store.dismissError()
+    assert.equal(await store.saveScene(), undefined)
+    assert.match(store.error.value ?? "", /Save scene: the host is read-only/)
+    store.dismissError()
+    assert.equal(await store.saveSceneAs(), undefined)
+    assert.match(store.error.value ?? "", /Save scene: the host is read-only/)
+    assert.deepEqual(api.calls.slice(before), [])
+  })
+
+  test("Recover autosave is refused, and a read-only host's autosave is not asked about", async () => {
+    const { api, store } = await openReadOnly(true)
+    api.autosave = { exists: true, size: 10, modified: "2026-01-01T00:00:00Z" } as never
+    api.autosaveCalls.length = 0
+    await store.recoverAutosave()
+    assert.match(store.error.value ?? "", /Recover autosave: the host is read-only/)
+    assert.deepEqual(api.autosaveCalls, [])
+    assert.deepEqual(api.asked, [])
+  })
+
+  test("the state follows the connection: another host is not read-only, and none is not either", async () => {
+    const { api, store } = await openReadOnly(true)
+    api.pushConnection(false)
+    assert.equal(store.hostReadOnly.value, false)
+    api.info = { ...api.info, readOnly: false }
+    api.pushConnection(true)
+    assert.equal(store.hostReadOnly.value, false)
+    assert.equal(store.canWrite.value, true)
+  })
+
+  test("a denial that reaches the store is shown with the host's own message, and the connection stays", async () => {
+    const { store } = await openReadOnly(false)
+    const message = "read-only host: SetComponentFields is not allowed"
+    store.reportError("Failed to set the component's fields", denial("readOnly", message))
+    assert.equal(store.error.value, `Failed to set the component's fields: ${message}`)
+    assert.equal(store.connected.value, true)
+  })
+
+  test("a readOnly denial means the host is read-only whatever its ServerInfo said: writes are disabled from then on", async () => {
+    const { api, store } = await openReadOnly(false)
+    assert.equal(store.canEdit.value, true)
+    store.reportError("Failed to delete", denial("readOnly", "read-only host: DestroyEntity is not allowed"))
+    assert.equal(store.hostReadOnly.value, true)
+    assert.equal(store.canEdit.value, false)
+    // A new connection starts again from what its Hello says
+    api.pushConnection(false)
+    api.pushConnection(true)
+    assert.equal(store.hostReadOnly.value, false)
+  })
+
+  test("a forbidden denial is shown but does not make the host read-only; neither does an ordinary error", async () => {
+    const { store } = await openReadOnly(false)
+    store.reportError("Failed to delete", denial("forbidden", "not allowed for this user"))
+    assert.match(store.error.value ?? "", /not allowed for this user/)
+    assert.equal(store.hostReadOnly.value, false)
+    store.reportError("Failed to delete", new Error("Entity not found"))
+    assert.equal(store.hostReadOnly.value, false)
+    assert.equal(store.canEdit.value, true)
+  })
+
+  test("an action the host denies with readOnly shows its message, not a failure of the editor", async () => {
+    const { api, store } = await openReadOnly(false)
+    api.engine.saveSceneToFile = async () => {
+      throw denial("readOnly", "read-only host: SaveSceneToFile is not allowed")
+    }
+    assert.equal(await store.saveScene(), undefined)
+    assert.equal(store.error.value, "read-only host: SaveSceneToFile is not allowed")
+    assert.equal(store.hostReadOnly.value, true)
+    assert.equal(store.busy.value, null)
   })
 })

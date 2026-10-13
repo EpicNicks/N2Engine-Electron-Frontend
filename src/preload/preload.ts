@@ -14,6 +14,7 @@ import {
   HostState,
   InitialPlayState,
   IpcResult,
+  ipcError,
   PlayApi,
   PlayCommandNames,
   PlayCommands,
@@ -24,7 +25,7 @@ import {
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const result = (await ipcRenderer.invoke(channel, ...args)) as IpcResult<T>
-  if (!result.ok) throw new Error(result.error)
+  if (!result.ok) throw ipcError(result)
   return result.value
 }
 
