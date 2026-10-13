@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "dist/main/main.js",
   "engines": {
-    "node": ">=22.22"
+    "node": ">=22.22.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/bundle.js",
@@ -18,7 +18,7 @@
     "test": "npm run build && node scripts/bundle-tests.js && node --test \"dist/test/**/*.test.js\" \"dist/test-dom/**/*.test.js\""
   },
   "devDependencies": {
-    "@testing-library/dom": "^10.4.2",
+    "@testing-library/dom": "^8.20.1",
     "@testing-library/preact": "^3.2.4",
     "@testing-library/user-event": "^14.6.8",
     "@types/jsdom": "^30.0.0",
