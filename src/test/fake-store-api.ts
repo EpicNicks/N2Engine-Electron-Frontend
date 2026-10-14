@@ -83,7 +83,7 @@ export class FakeHostEvents {
 export class FakeApi implements StoreApi {
   hostState: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
   connectedNow = false
-  info: ServerInfo = { protocolVersion: "1.2.0", engineVersion: "1.0.0", capabilities: [], projectLoaded: true, readOnly: false }
+  info: ServerInfo = { protocolVersion: "1.2.0", engineVersion: "1.0.0", capabilities: [], projectLoaded: true, readOnly: false, user: "", role: "" }
   recentList = ["C:\\Games\\A", "C:\\Games\\B"]
   events = new FakeHostEvents()
   hostListeners: Array<(state: HostState) => void> = []

@@ -1,6 +1,6 @@
 {
-  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before them and fields holds what a reader decodes (their zero defaults).",
-  "protocolVersion": "1.11.0",
+  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
+  "protocolVersion": "1.12.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -18,9 +18,10 @@
         "clientName": "clientName 0 ✓ é",
         "protocolVersion": "protocolVersion 1 ✓ é",
         "token": "token 2 ✓ é",
-        "errorCodes": false
+        "errorCodes": false,
+        "user": "user 4 ✓ é"
       },
-      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a900"
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9000d00000075736572203420e29c9320c3a9"
     },
     {
       "command": "PollEvents",
@@ -538,9 +539,11 @@
           "capabilities 3 ✓"
         ],
         "projectLoaded": false,
-        "readOnly": true
+        "readOnly": true,
+        "user": "user 5 ✓ é",
+        "role": "role 6 ✓ é"
       },
-      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d0001"
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00010d00000075736572203520e29c9320c3a90d000000726f6c65203620e29c9320c3a9"
     },
     {
       "response": "Events",
@@ -1408,17 +1411,42 @@
     {
       "request": "Hello",
       "id": "0x04",
+      "omitted": [
+        "errorCodes",
+        "user"
+      ],
       "fields": {
         "clientName": "clientName 0 ✓ é",
         "protocolVersion": "protocolVersion 1 ✓ é",
         "token": "token 2 ✓ é",
-        "errorCodes": false
+        "errorCodes": false,
+        "user": ""
       },
       "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
     },
     {
+      "request": "Hello",
+      "id": "0x04",
+      "omitted": [
+        "user"
+      ],
+      "fields": {
+        "clientName": "clientName 0 ✓ é",
+        "protocolVersion": "protocolVersion 1 ✓ é",
+        "token": "token 2 ✓ é",
+        "errorCodes": false,
+        "user": ""
+      },
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a900"
+    },
+    {
       "response": "ServerInfo",
       "id": "0x0B",
+      "omitted": [
+        "readOnly",
+        "user",
+        "role"
+      ],
       "fields": {
         "protocolVersion": "protocolVersion 0 ✓ é",
         "engineVersion": "engineVersion 1 ✓ é",
@@ -1427,9 +1455,52 @@
           "capabilities 3 ✓"
         ],
         "projectLoaded": false,
-        "readOnly": false
+        "readOnly": false,
+        "user": "",
+        "role": ""
       },
       "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00"
+    },
+    {
+      "response": "ServerInfo",
+      "id": "0x0B",
+      "omitted": [
+        "user",
+        "role"
+      ],
+      "fields": {
+        "protocolVersion": "protocolVersion 0 ✓ é",
+        "engineVersion": "engineVersion 1 ✓ é",
+        "capabilities": [
+          "capabilities 2 ✓",
+          "capabilities 3 ✓"
+        ],
+        "projectLoaded": false,
+        "readOnly": true,
+        "user": "",
+        "role": ""
+      },
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d0001"
+    },
+    {
+      "response": "ServerInfo",
+      "id": "0x0B",
+      "omitted": [
+        "role"
+      ],
+      "fields": {
+        "protocolVersion": "protocolVersion 0 ✓ é",
+        "engineVersion": "engineVersion 1 ✓ é",
+        "capabilities": [
+          "capabilities 2 ✓",
+          "capabilities 3 ✓"
+        ],
+        "projectLoaded": false,
+        "readOnly": true,
+        "user": "user 5 ✓ é",
+        "role": ""
+      },
+      "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00010d00000075736572203520e29c9320c3a9"
     }
   ]
 }

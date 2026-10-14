@@ -3,7 +3,7 @@
 // types, on the editor host the main process launched for the open project (ProjectSession connects to it, with the
 // host's access token, which the page never sees).
 import { IpcMain } from "electron"
-import { EngineClient } from "../protocol/engine-client"
+import { ConnectOptions, EngineClient } from "../protocol/engine-client"
 import { checkInputEvents } from "../protocol/input-events"
 import {
   ArgKind,
@@ -27,6 +27,8 @@ export interface EngineTarget {
   host?: string
   /** Connect with TLS, pinned to this SHA-256 fingerprint; without it, plaintext (loopback only) */
   tlsFingerprint?: string
+  /** Who connects (sent in Hello with the token); omitted: no user */
+  user?: string
 }
 
 const KindDescriptions: Record<ArgKind, string> = {
@@ -218,7 +220,9 @@ export class EngineHost {
     const host = target.host ?? HostAddress
     if (host === "") throw new Error("Invalid host")
     // The client refuses plaintext to any host but loopback, and sends nothing to a TLS host until its pin is checked
-    const options = target.tlsFingerprint === undefined ? { token } : { token, tlsFingerprint: target.tlsFingerprint }
+    const options: ConnectOptions = { token }
+    if (target.tlsFingerprint !== undefined) options.tlsFingerprint = target.tlsFingerprint
+    if (target.user !== undefined) options.user = target.user
     await this.client.connect(host, port, options)
     return this.publish()
   }

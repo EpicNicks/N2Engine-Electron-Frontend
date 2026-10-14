@@ -95,7 +95,8 @@ Leave `--bind` at its default (loopback): the tunnel reaches it there. Don't pas
 | SSH port | optional; ssh's default (22, or what `~/.ssh/config` says) otherwise |
 | Host's editor port | the `--port` the host was started with |
 | Identity file | optional, a private key file; without one ssh uses the agent, the default keys and `~/.ssh/config` |
-| Access token | the host's `N2_EDITOR_TOKEN` |
+| User | optional; the user the token was made for, for a host with a tokens file ("Users and roles" below). Not the ssh user |
+| Access token | the host's `N2_EDITOR_TOKEN` (or a user's token) |
 
 Everything but the token is remembered as **Recent Remotes** (`recent-remotes.json` in the user data folder, next to `recent-projects.json`); click one to fill the form in. The token is asked every time: it is never saved.
 
@@ -135,7 +136,7 @@ Besides the SSH tunnel, **Remote engine** has a second tab, **Direct address (TL
 N2EditorHost ready port=7777 tls=1 fingerprint=<64 lowercase hex digits>
 ```
 
-**Editor side.** Fill in the host address, the port, the access token and leave **TLS** on. The **Expected fingerprint** is optional:
+**Editor side.** Fill in the host address, the port, the access token (and the optional **User**, for a host with a tokens file) and leave **TLS** on. The **Expected fingerprint** is optional:
 
 - **With it** (copy it from the host's ready line), the editor pins the host up front: it connects only if the certificate the host presents has exactly that SHA-256 fingerprint. Colons, spaces and upper case are accepted when typing.
 - **Without it**, the editor does the TLS handshake only (nothing is sent) and shows the fingerprint the host presents. Compare it with the ready line, by a channel you trust, and press **Trust this fingerprint and connect**. Nothing is ever trusted silently.
@@ -146,7 +147,7 @@ N2EditorHost ready port=7777 tls=1 fingerprint=<64 lowercase hex digits>
 
 **Plaintext.** The **TLS** box may be turned off only for this computer's loopback (`localhost`, `127.x.x.x`, `::1`), for a host started without `--tls`. The editor refuses a plaintext connection to any other address, in the form, the main process and the protocol client alike.
 
-**What this does not give.** The access token is still one shared secret for the whole host: no per-user tokens, no rate limiting of guesses, no revocation (see the engine's docs for what its token model does and doesn't give). A fingerprint pin proves the host is the one you confirmed, not that it is a good host, and it is only as good as the first confirmation (an attacker present at the first connect, when you confirm blindly, is trusted). There is no list of recent direct remotes yet (only the pins are remembered), and as with the tunnel, the editor edits whatever project the host has open and **Play mode is disabled** for a remote engine.
+**What this does not give.** A single `--token-env` token is still one shared secret for the whole host (a tokens file gives per-user tokens and roles, see "Users and roles"); there is no rate limiting of guesses (see the engine's docs for what its token model does and doesn't give). A fingerprint pin proves the host is the one you confirmed, not that it is a good host, and it is only as good as the first confirmation (an attacker present at the first connect, when you confirm blindly, is trusted). There is no list of recent direct remotes yet (only the pins are remembered), and as with the tunnel, the editor edits whatever project the host has open and **Play mode is disabled** for a remote engine.
 
 ## The console
 
@@ -252,7 +253,7 @@ The state machine is `src/main/play-session.ts` and the page's side is `src/rend
 
 ## Read-only hosts
 
-Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.11.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 host, whose answers end before the new fields (they decode to their defaults: not read-only, no error codes).
+Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.12.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
 
 - **What the host says.** A host started with `--read-only` answers every command that is not a read with a refusal (`SetComponentFields`, `OpenScene`, `Undo`, `WritePlaySnapshot`, `Shutdown` and so on; the viewport camera and the viewport size are reads). `ServerInfo.readOnly` (read from Hello) says so up front. The editor asks for error codes in Hello (`errorCodes: true`), so a refusal arrives as `ErrorCoded` (message and code `readOnly` or, for later per-user roles, `forbidden`) and rejects with an `EngineError` whose `code` is set; a 1.10 host, or any other failure, sends a plain `Error` and the `code` is `undefined`. An unknown code is treated like a plain error.
 - **The badge.** While `ServerInfo.readOnly` is true (`EditorStore.hostReadOnly`) the toolbar shows a **Read-only** badge.
@@ -260,6 +261,17 @@ Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.
 - **A denial that still arrives** (a command the editor did not know to disable, a `forbidden` role) is shown in the error banner with the host's own message, like any failure. The host refused the command whole, so nothing was applied: the inspector's and the hierarchy's optimistic values go back to the host's, and a `readOnly` one also makes the store treat the host as read-only until the connection changes (`EditorStore.deniedAsReadOnly`).
 - **Over IPC.** The code is carried as `IpcResult.code` and, because the context bridge rebuilds a thrown error from its message alone, also as a prefix of the page error's message between two invisible marks (see `ipcError`, `errorCodeOf` and `errorTextOf` in `src/shared/api.ts`; the panels show the text without it). The access token is never part of an error.
 - **Not verified:** the Electron UI against a live `--read-only` host (the unit and DOM tests use fakes).
+
+## Users and roles
+
+Protocol 1.12.0 (engine #130, `N2EditorHost --tokens-file`). A host that more than one person reaches has one token per user, each with a role, instead of one shared token.
+
+- **The User field.** The remote forms (SSH tunnel and Direct address) have an optional **User** next to the token. It is sent in `Hello` as the trailing `user` string, only when it is not empty: with none, the field is left out of the payload, so an older host sees the `Hello` it has always accepted. It is not secret: the SSH form's recent remotes remember it with the other settings (the Direct form has no recent list, so it is typed each time), and the token is still asked every time and never saved or logged. A host started with `--token-env` or without a token ignores it. The user name has letters, digits and `. _ @ -`, up to 64 characters (what `N2EditorHost --new-token` accepts).
+- **Who the host says you are.** `ServerInfo.user` and `ServerInfo.role` (`admin`, `editor` or `viewer`) are shown in the toolbar next to the Read-only badge, as `alice (editor)` (`EditorStore.hostUser`, `hostRole`). A host without a tokens file answers user `""` and role `admin`, shown as nothing; `--token-env` answers user `token`, role `admin`. A host before 1.12 sends neither, which decodes to `""` and counts as `admin`. A role this editor does not know is treated as a viewer, the safe side: the host enforces its own roles and this only decides what is offered.
+- **Viewer.** A viewer can only look and may not play. It goes through the same guard as a read-only host (`EditorStore.hostReadOnlyReason`, so `hostReadOnly`, `readOnlyReason`, `canWrite`, `canEdit` and `write-guard.ts`): every write affordance is disabled with the reason "you are signed in as a viewer", Play included, and the Read-only badge shows.
+- **Editor.** An editor can change the project. The one thing it cannot do is `Shutdown` the host, and the editor offers no way to send it to a remote host (Stop host is only for a host the editor launched itself, whose token is an admin's).
+- **A `forbidden` denial** (a command the role does not allow that the editor did not know to disable) is shown in the error banner with the host's own message, and the edit is put back. It does not turn the whole editor read-only: only a `readOnly` denial does that.
+- **Not verified:** the Electron UI against a live host with a tokens file (the unit and DOM tests use fakes).
 
 ## Architecture
 

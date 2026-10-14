@@ -27,6 +27,7 @@ import {
   decodeGetEntityRequest,
   decodeGetLuaFieldsRequest,
   decodeHelloRequest,
+  encodeHelloRequest,
   decodeNewSceneRequest,
   decodeGetEntityBoundsRequest,
   decodeOpenSceneRequest,
@@ -70,6 +71,8 @@ const serverInfo = (protocolVersion: string = PROTOCOL_VERSION): ServerInfoRespo
   capabilities: [],
   projectLoaded: true,
   readOnly: false,
+  user: "",
+  role: "",
 })
 
 /** The host's answer to a Hello: a whole response frame, or null for none */
@@ -85,6 +88,8 @@ class FakeSocket extends EventEmitter {
   ended = false
   written: Buffer[] = []
   hellos: HelloRequest[] = []
+  /** The raw payloads of the Hellos, to check what is on the wire */
+  helloPayloads: Buffer[] = []
 
   constructor(private readonly answerHello: HelloAnswer) {
     super()
@@ -99,6 +104,7 @@ class FakeSocket extends EventEmitter {
     if (data[0] === CommandType.Hello && this.hellos.length === 0) {
       const hello = decodeHelloRequest(data.subarray(5))
       this.hellos.push(hello)
+      this.helloPayloads.push(Buffer.from(data.subarray(5)))
       const answer = this.answerHello(hello)
       if (answer) setImmediate(() => this.emit("data", answer))
       return true
@@ -396,7 +402,7 @@ describe("EngineClient Hello", () => {
     const info = await client.connect()
 
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true },
+      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "" },
     ])
     assert.deepEqual(info, serverInfo())
     assert.deepEqual(client.serverInfo, serverInfo())
@@ -407,8 +413,32 @@ describe("EngineClient Hello", () => {
     const { client, sockets } = connectFake()
     await client.connect("localhost", 9999, { token: "the-access-token", clientName: "Test" })
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token", errorCodes: true },
+      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token", errorCodes: true, user: "" },
     ])
+  })
+
+  test("the user is sent in Hello when the options carry one", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { token: "t", user: "alice" })
+    assert.equal(sockets[0].hellos[0].user, "alice")
+    assert.equal(sockets[0].hellos[0].token, "t")
+  })
+
+  test("without a user, Hello's payload ends after errorCodes, as a 1.11 host's does", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { token: "t" })
+    const request = { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "t", errorCodes: true, user: "" }
+    const full = encodeHelloRequest(request)
+    const sent = sockets[0].helloPayloads[0]
+    assert.equal(sent.length, full.length - 4)
+    assert.deepEqual(Uint8Array.from(sent), Uint8Array.from(full.subarray(0, full.length - 4)))
+    assert.equal(sockets[0].hellos[0].user, "")
+  })
+
+  test("a blank user is no user", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { user: "" })
+    assert.equal(sockets[0].helloPayloads[0].length, encodeHelloRequest({ clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "" }).length - 4)
   })
 
   test("nothing else is sent, and the client isn't connected, until Hello succeeds", async () => {
@@ -961,11 +991,34 @@ describe("EngineClient against a read-only host (protocol 1.11)", () => {
 
   test("a 1.10 host's ServerInfo, which ends before readOnly, connects as a host that is not read-only", async () => {
     const full = encodeServerInfoResponse({ ...serverInfo("1.10.0"), readOnly: false })
-    const short = full.subarray(0, full.length - 1)
+    // readOnly's byte, then user's and role's empty strings (4 bytes each)
+    const short = full.subarray(0, full.length - 9)
     const { client } = connectFake(true, () => Buffer.from(encodeFrame(ResponseType.ServerInfo, short)))
     const info = await client.connect()
     assert.equal(info.readOnly, false)
     assert.equal(info.protocolVersion, "1.10.0")
+  })
+
+  test("a 1.11 host's ServerInfo, which ends before user and role, connects with no user and no role", async () => {
+    const full = encodeServerInfoResponse({ ...serverInfo("1.11.0"), readOnly: true })
+    const short = full.subarray(0, full.length - 8)
+    const { client } = connectFake(true, () => Buffer.from(encodeFrame(ResponseType.ServerInfo, short)))
+    const info = await client.connect()
+    assert.equal(info.readOnly, true)
+    assert.equal(info.user, "")
+    assert.equal(info.role, "")
+  })
+
+  test("a 1.12 host's ServerInfo carries the user and role", async () => {
+    const { client } = connectFake(true, () =>
+      Buffer.from(
+        encodeFrame(ResponseType.ServerInfo, encodeServerInfoResponse({ ...serverInfo(), user: "alice", role: "editor" }))
+      )
+    )
+    const info = await client.connect()
+    assert.equal(info.user, "alice")
+    assert.equal(info.role, "editor")
+    assert.equal(client.serverInfo?.role, "editor")
   })
 })
 

@@ -11,6 +11,7 @@ import {
   ProbeOptions,
 } from "../main/host-launcher"
 import { CancelledError, EngineConnection, ProjectSession, ProjectSessionDeps } from "../main/project-session"
+import type { EngineTarget } from "../main/engine-ipc"
 import type { SshTunnel, TunnelOptions } from "../main/ssh-tunnel"
 
 /** The HostProcess surface ProjectSession uses */
@@ -52,6 +53,8 @@ class FakeHost {
 
 class FakeEngine implements EngineConnection {
   connections: Array<[number, string]> = []
+  /** The target (host, pin, user) each connectTo was given */
+  targets: Array<EngineTarget | undefined> = []
   disconnects = 0
   closes = 0
   failNext: string | null = null
@@ -60,8 +63,9 @@ class FakeEngine implements EngineConnection {
   /** Called on disconnect (Shutdown): an --exit-on-disconnect host exits */
   onDisconnect: (() => void) | null = null
 
-  async connectTo(port: number, token: string): Promise<ConnectionState> {
+  async connectTo(port: number, token: string, target?: EngineTarget): Promise<ConnectionState> {
     this.connections.push([port, token])
+    this.targets.push(target)
     if (this.failNext) {
       const message = this.failNext
       this.failNext = null
@@ -581,6 +585,19 @@ describe("ProjectSession remote mode", () => {
     assert.ok(!JSON.stringify(states).includes("s3cret-token"))
     assert.ok(!JSON.stringify(opened[0]).includes("s3cret-token"))
     assert.ok(!Object.keys(opened[0]).includes("token"))
+  })
+
+  test("the user goes to the engine with the token, is remembered with the remote, and no user is no user key", async () => {
+    const { session, engine, remembered } = remoteSetup()
+    const withUser = { ...remote, user: "alice" }
+    await session.connectRemote(withUser, "s3cret-token")
+    assert.deepEqual(engine.targets[0], { user: "alice" })
+    assert.deepEqual(remembered, [withUser])
+    assert.ok(!JSON.stringify(remembered).includes("s3cret-token"))
+
+    await session.connectRemote(remote, "s3cret-token")
+    assert.deepEqual(engine.targets[1], {})
+    assert.deepEqual(remembered[1], remote)
   })
 
   test("settings and token are checked before anything is stopped or opened", async () => {

@@ -430,6 +430,11 @@ export interface RemoteSettings {
   identityFile?: string
   /** The port the remote N2EditorHost listens on */
   hostPort: number
+  /**
+   * Who connects, for a host with a tokens file (protocol 1.12): sent in Hello with the token. Not the ssh user in
+   * target. Not secret, so it is remembered; omitted: Hello carries no user.
+   */
+  user?: string
 }
 
 /**
@@ -447,6 +452,8 @@ export interface DirectRemoteSettings {
    * host is trusted; without it the stored pin is used, and with neither the connect is refused.
    */
   fingerprint?: string
+  /** Who connects, for a host with a tokens file (protocol 1.12): sent in Hello with the token. Not secret; omitted: none */
+  user?: string
 }
 
 /** What a host at host:port presents, against what is pinned for it (see RemoteApi.inspectDirect) */

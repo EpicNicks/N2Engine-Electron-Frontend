@@ -27,6 +27,15 @@ describe("parseDirectRemoteSettings", () => {
     assert.equal(parseDirectRemoteSettings({ host: "2001:db8::1", port: 1, tls: true }).host, "2001:db8::1")
   })
 
+  test("the optional user is kept trimmed, dropped when blank and refused when it can't be a user name", () => {
+    assert.equal(parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: " alice " }).user, "alice")
+    assert.ok(!("user" in parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: "" })))
+    assert.ok(!("user" in parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: null })))
+    assert.throws(() => parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: "a b" }), /user name/)
+    assert.throws(() => parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: "a".repeat(65) }), /too long/)
+    assert.throws(() => parseDirectRemoteSettings({ host: "h", port: 1, tls: true, user: 5 }), /must be text/)
+  })
+
   test("plaintext is for this computer's loopback only", () => {
     for (const host of ["localhost", "127.0.0.1", "::1"]) {
       assert.equal(parseDirectRemoteSettings({ host, port: 7000, tls: false }).tls, false, host)
@@ -145,6 +154,20 @@ describe("ProjectSession direct-address remote", () => {
       assert.equal(t.session.isRemote, true)
       assert.ok(!JSON.stringify(t.states).includes("s3cret-token"))
       assert.ok(!t.logs.join("\n").includes("s3cret-token"))
+    } finally {
+      t.cleanup()
+    }
+  })
+
+  test("a user is passed to the engine with the token, and no user is no key at all", async () => {
+    const t = setup()
+    try {
+      await t.session.connectDirect({ host: "h", port: 7000, tls: true, fingerprint: A, user: " alice " }, "tok")
+      await t.session.connectDirect({ host: "h", port: 7000, tls: true, fingerprint: A, user: "  " }, "tok")
+      assert.deepEqual(t.engine.connections, [
+        { port: 7000, token: "tok", target: { host: "h", tlsFingerprint: A, user: "alice" } },
+        { port: 7000, token: "tok", target: { host: "h", tlsFingerprint: A } },
+      ])
     } finally {
       t.cleanup()
     }

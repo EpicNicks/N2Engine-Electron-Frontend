@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.11.0";
+export const PROTOCOL_VERSION = "1.12.0";
 
 // ==================== Types ====================
 
@@ -392,6 +392,7 @@ export interface HelloRequest {
   protocolVersion: string;
   token: string;
   errorCodes: boolean;
+  user: string;
 }
 
 export interface PollEventsRequest {
@@ -627,6 +628,8 @@ export interface ServerInfoResponse {
   capabilities: string[];
   projectLoaded: boolean;
   readOnly: boolean;
+  user: string;
+  role: string;
 }
 
 export interface EventsResponse {
@@ -1101,6 +1104,7 @@ export function encodeHelloRequest(value: HelloRequest): Uint8Array {
   writer.string(value.protocolVersion);
   writer.string(value.token);
   writer.bool(value.errorCodes);
+  writer.string(value.user);
   return writer.finish();
 }
 
@@ -1111,7 +1115,8 @@ export function decodeHelloRequest(payload: Uint8Array): HelloRequest {
   const protocolVersion = reader.string();
   const token = reader.string();
   const errorCodes = reader.remaining > 0 ? reader.bool() : false;
-  return { clientName, protocolVersion, token, errorCodes };
+  const user = reader.remaining > 0 ? reader.string() : "";
+  return { clientName, protocolVersion, token, errorCodes, user };
 }
 
 /** PollEvents's request payload (without the frame header) */
@@ -1845,6 +1850,8 @@ export function encodeServerInfoResponse(value: ServerInfoResponse): Uint8Array 
   writer.json(value.capabilities);
   writer.bool(value.projectLoaded);
   writer.bool(value.readOnly);
+  writer.string(value.user);
+  writer.string(value.role);
   return writer.finish();
 }
 
@@ -1856,7 +1863,9 @@ export function decodeServerInfoResponse(payload: Uint8Array): ServerInfoRespons
   const capabilities = reader.json() as string[];
   const projectLoaded = reader.bool();
   const readOnly = reader.remaining > 0 ? reader.bool() : false;
-  return { protocolVersion, engineVersion, capabilities, projectLoaded, readOnly };
+  const user = reader.remaining > 0 ? reader.string() : "";
+  const role = reader.remaining > 0 ? reader.string() : "";
+  return { protocolVersion, engineVersion, capabilities, projectLoaded, readOnly, user, role };
 }
 
 /** Events's payload (without the frame header) */

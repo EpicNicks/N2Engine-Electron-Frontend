@@ -37,6 +37,8 @@ const info: ServerInfoResponse = {
   capabilities: [],
   projectLoaded: true,
   readOnly: false,
+  user: "",
+  role: "",
 }
 
 /** Just the EngineClient surface EngineHost uses */
