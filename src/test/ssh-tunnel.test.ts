@@ -144,6 +144,12 @@ describe("remote settings validation", () => {
     )
   })
 
+  test("parseRemoteSettings keeps the optional editor user trimmed, drops a blank one and refuses a bad one", () => {
+    assert.equal(parseRemoteSettings({ target: "dev@host", hostPort: 7000, user: " alice " }).user, "alice")
+    assert.ok(!("user" in parseRemoteSettings({ target: "dev@host", hostPort: 7000, user: " " })))
+    assert.throws(() => parseRemoteSettings({ target: "dev@host", hostPort: 7000, user: "a/b" }), /user name/)
+  })
+
   test("parseRemoteSettings refuses what isn't valid", () => {
     assert.throws(() => parseRemoteSettings(null), /Invalid remote settings/)
     assert.throws(() => parseRemoteSettings([]), /Invalid remote settings/)

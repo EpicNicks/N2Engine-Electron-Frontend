@@ -49,6 +49,12 @@ export type UnsavedChoice = "save" | "discard" | "cancel"
 /** Why a host started with --read-only can't be edited (the reason shown next to a disabled write) */
 export const HostReadOnlyReason = "the host is read-only (started with --read-only)"
 
+/** Why a viewer (protocol 1.12 role) can't change anything or play: the host refuses it, so the editor doesn't offer it */
+export const ViewerReason = "you are signed in as a viewer, who can look but not change anything or play"
+
+/** The roles a protocol 1.12 host gives a connection; a host that predates them answers none, and is treated as admin */
+export type HostRole = "admin" | "editor" | "viewer"
+
 /** The parts of the page's API the store uses */
 /** One assetsChanged event that lists the paths of both (each path once, in the order first seen) */
 export function mergeAssetsChanges(first: AssetsChangedEvent | null, next: AssetsChangedEvent): AssetsChangedEvent {
@@ -213,13 +219,32 @@ export class EditorStore {
   /** A command was refused with the readOnly code on this connection (the host is read-only whatever its ServerInfo said) */
   private readonly deniedAsReadOnly = signal(false)
   /** The host was started with --read-only (protocol 1.11 ServerInfo.readOnly; a 1.10 host never is) and refuses every write */
-  readonly hostReadOnly = computed(() => this.serverInfo.value?.readOnly === true || this.deniedAsReadOnly.value)
+  private readonly hostReadOnlyFlag = computed(() => this.serverInfo.value?.readOnly === true || this.deniedAsReadOnly.value)
+  /** The user the host gave this connection (protocol 1.12); "" for a host without a tokens file or an older one */
+  readonly hostUser = computed(() => this.serverInfo.value?.user ?? "")
+  /**
+   * The role the host gave this connection. A host that answers none (before 1.12, or without a tokens file) lets the
+   * token do anything, so it counts as admin; a role this editor doesn't know is treated as a viewer, the safe side
+   * (the host enforces its own, this only decides what is offered).
+   */
+  readonly hostRole = computed<HostRole | null>(() => {
+    const info = this.serverInfo.value
+    if (info === null) return null
+    if (info.role === "" || info.role === "admin") return "admin"
+    return info.role === "editor" ? "editor" : "viewer"
+  })
+  /** Why nothing can be written to this host (it is read-only, or the user is a viewer), or null */
+  readonly hostReadOnlyReason = computed<string | null>(() =>
+    this.hostReadOnlyFlag.value ? HostReadOnlyReason : this.hostRole.value === "viewer" ? ViewerReason : null
+  )
+  /** The host refuses every write: it is read-only, or the user is a viewer (the same guard, so Play is off too) */
+  readonly hostReadOnly = computed(() => this.hostReadOnlyReason.value !== null)
   /**
    * Why nothing can be written now (a play session, or a read-only host); null when it can. THE guard for every write
    * affordance: the panels read this (or canWrite) rather than playMode, so a new write is disabled with the others.
    */
   readonly readOnlyReason = computed<string | null>(
-    () => this.playMode.value ?? (this.hostReadOnly.value ? HostReadOnlyReason : null)
+    () => this.playMode.value ?? this.hostReadOnlyReason.value
   )
   /** Nothing is refusing writes: not a play session and not a read-only host */
   readonly canWrite = computed(() => this.readOnlyReason.value === null)
@@ -641,8 +666,9 @@ export class EditorStore {
 
   /** On a read-only host nothing is written (saving included, which a game doesn't stop): says so, and returns true */
   refusedByReadOnlyHost(what: string): boolean {
-    if (!this.hostReadOnly.value) return false
-    this.error.value = `${what}: ${HostReadOnlyReason}`
+    const reason = this.hostReadOnlyReason.value
+    if (reason === null) return false
+    this.error.value = `${what}: ${reason}`
     return true
   }
 

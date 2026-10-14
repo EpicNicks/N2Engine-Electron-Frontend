@@ -54,6 +54,8 @@ describe("EngineClient asset commands", () => {
                   capabilities: [],
                   projectLoaded: true,
                   readOnly: false,
+                  user: "",
+                  role: "",
                 })
               )
             )

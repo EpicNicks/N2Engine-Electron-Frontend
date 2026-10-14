@@ -68,12 +68,32 @@ export const MaxPayloadBytesBeforeHello = 64 * 1024
  */
 export const HelloTimeoutMilliseconds = 10000
 
+/**
+ * Hello without its trailing user when there is none: the field is optional (protocol 1.12), and leaving it out keeps
+ * the payload what a 1.11 host has always accepted. An empty string is its u32 length prefix alone (a test checks the
+ * cut payload decodes as a Hello without a user).
+ */
+const StringLengthPrefixBytes = 4
+const helloSpec: typeof Commands.Hello = {
+  ...Commands.Hello,
+  encode: (request) => {
+    const full = Commands.Hello.encode(request)
+    return request.user === "" ? full.subarray(0, full.length - StringLengthPrefixBytes) : full
+  },
+}
+
 /** The clientName sent in Hello (the host logs it) */
 export const DefaultClientName = "N2Engine Electron editor"
 
 export interface ConnectOptions {
   /** The host's access token; empty (the default) for a host started without one */
   token?: string
+  /**
+   * Who is connecting (protocol 1.12: the user the token belongs to in a host's tokens file). Sent in Hello only when
+   * it is not empty: an older host never sees the field. Not secret. The host answers with the user and role it
+   * actually gave this connection (ServerInfo.user and role).
+   */
+  user?: string
   clientName?: string
   /**
    * Connect with TLS (a host started with --tls) and pin its certificate to this SHA-256 fingerprint: Hello, and the
@@ -741,6 +761,8 @@ export class EngineClient {
       token: options.token ?? "",
       // Protocol 1.11: a refused command is answered with ErrorCoded (message and code); a 1.10 host ignores the flag
       errorCodes: true,
+      // Protocol 1.12: the user; an empty one is encoded as an empty string, which a host reads as none
+      user: options.user ?? "",
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -752,7 +774,7 @@ export class EngineClient {
     })
     let info: ServerInfoResponse
     try {
-      info = await Promise.race([this.send(Commands.Hello, request), timeout])
+      info = await Promise.race([this.send(helloSpec, request), timeout])
     } catch (e) {
       if (e instanceof EngineError) throw new HelloError(`The editor host refused Hello: ${e.message}`)
       throw e

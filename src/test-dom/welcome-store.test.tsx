@@ -152,6 +152,29 @@ describe("Welcome over a real store: recent remotes", () => {
     assert.equal((screen.getByPlaceholderText("~/.ssh/id_ed25519") as HTMLInputElement).value, "~/.ssh/lab")
   })
 
+  test("a recent remote's user fills the SSH form's user field, and is shown in the list", async () => {
+    await renderWithStore(<Welcome />, (api) => {
+      api.remoteRecent = [{ target: "dev@lab", hostPort: 7100, user: "alice" }]
+    })
+    await showRemote()
+    assert.match(document.querySelector(".recent .recent-path")?.textContent ?? "", /user alice/)
+
+    await userEvent.setup().click(document.querySelector(".recent-open") as HTMLElement)
+
+    assert.equal((screen.getByPlaceholderText(/the user the token was made for/) as HTMLInputElement).value, "alice")
+  })
+
+  test("a recent remote with no user clears the user field", async () => {
+    await renderWithStore(<Welcome />, (api) => {
+      api.remoteRecent = [{ target: "dev@lab", hostPort: 7100 }]
+    })
+    await showRemote()
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/the user the token was made for/), "bob")
+    await user.click(document.querySelector(".recent-open") as HTMLElement)
+    assert.equal((screen.getByPlaceholderText(/the user the token was made for/) as HTMLInputElement).value, "")
+  })
+
   test("Remove takes a recent remote off the list, through the API", async () => {
     const h = await renderWithStore(<Welcome />, (api) => {
       api.remoteRecent = [

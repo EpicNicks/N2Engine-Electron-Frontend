@@ -15,7 +15,6 @@ import { MenuItem, Splitter, confirmDialog, modalOpen, showContextMenu, useApp }
 import { GameEndedMessage } from "../shared/api"
 import { followScene } from "./scene-follow"
 import { Viewport } from "./viewport-panel"
-import { HostReadOnlyReason } from "./store"
 
 // Panel sizes, in CSS pixels, kept for the session
 const leftWidth = signal(300)
@@ -26,13 +25,27 @@ const bottomTab = signal<string>("console")
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
-/** The badge that says the host is read-only (nothing can be changed); nothing on a host that can be edited */
+/** The badge that says nothing can be changed (the host is read-only, or the user is a viewer); nothing otherwise */
 export function ReadOnlyBadge() {
   const { store } = useApp()
-  if (!store.hostReadOnly.value) return null
+  const reason = store.hostReadOnlyReason.value
+  if (reason === null) return null
   return (
-    <span class="read-only-badge" role="status" title={`This editor can't change anything: ${HostReadOnlyReason}`}>
+    <span class="read-only-badge" role="status" title={`This editor can't change anything: ${reason}`}>
       Read-only
+    </span>
+  )
+}
+
+/** Who the host says is connected and in what role ("alice (editor)"); nothing on a host that names no user */
+export function UserBadge() {
+  const { store } = useApp()
+  const user = store.hostUser.value
+  const role = store.hostRole.value
+  if (user === "" || role === null) return null
+  return (
+    <span class="user-badge" role="status" title={`Signed in to the host as ${user}, with the ${role} role`}>
+      {user} ({role})
     </span>
   )
 }
@@ -45,7 +58,7 @@ export function SceneButtons() {
   const loaded = store.scene.value
   // A read-only host refuses all four (they make, load or write a scene): disabled, not hidden
   const hostReadOnly = store.hostReadOnly.value
-  const readOnlyTip = hostReadOnly ? `Not available: ${HostReadOnlyReason}` : undefined
+  const readOnlyTip = hostReadOnly ? `Not available: ${store.hostReadOnlyReason.value}` : undefined
   // A scene command may have made a file (the host's assetsChanged follows too)
   const done = (result: unknown) => {
     if (result) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
@@ -117,7 +130,7 @@ function PlayButtons() {
         disabled={!play.canPlay.value}
         title={
           store.hostReadOnly.value
-            ? `Not available: ${HostReadOnlyReason}`
+            ? `Not available: ${store.hostReadOnlyReason.value}`
             : store.remote.value
             ? "Play mode needs a local engine: it launches a second N2EditorHost on this machine, from the project's folder"
             : store.scene.value
@@ -222,6 +235,7 @@ function Toolbar() {
           {store.sceneLabel.value}
         </span>
       )}
+      <UserBadge />
       <ReadOnlyBadge />
       <div class="separator" />
       <SceneButtons />

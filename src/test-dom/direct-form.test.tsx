@@ -167,3 +167,22 @@ test("the typed token is cleared out of the form once it is sent", async () => {
   })
   await waitFor(() => assert.equal(token.value, ""))
 })
+
+test("a typed user is sent with the token and the fingerprint; without one the settings carry no user", async () => {
+  const h = await openDirectForm({ kind: "trusted", fingerprint: FINGERPRINT })
+  await fill(h, "10.0.0.5", "7000", "secret")
+  await h.user.type(screen.getByPlaceholderText(/the user the token was made for/), "  alice ")
+  await h.user.click(screen.getByRole("button", { name: "Connect" }))
+  await waitFor(() => assert.equal(h.connects.length, 1))
+  assert.deepEqual(h.connects[0], {
+    settings: { host: "10.0.0.5", port: 7000, tls: true, fingerprint: FINGERPRINT, user: "alice" },
+    token: "secret",
+  })
+})
+
+test("the user field is a plain text field, so it is not the token", async () => {
+  await openDirectForm(undefined)
+  const user = screen.getByPlaceholderText(/the user the token was made for/) as HTMLInputElement
+  assert.equal(user.type, "text")
+  assert.equal((screen.getByPlaceholderText(/N2_EDITOR_TOKEN/) as HTMLInputElement).type, "password")
+})

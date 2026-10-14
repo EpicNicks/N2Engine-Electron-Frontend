@@ -300,7 +300,7 @@ export class ProjectSession {
       this.deps.log?.(`SSH tunnel to ${label} opened (pid ${tunnel.pid ?? "?"}, local port ${tunnel.localPort})`)
 
       try {
-        await this.deps.engine.connectTo(tunnel.localPort, token)
+        await this.deps.engine.connectTo(tunnel.localPort, token, settings.user === undefined ? {} : { user: settings.user })
       } catch (e) {
         // Did ssh die between the forward and Hello? Then its exit says why, not the closed connection
         const exited = tunnel.exit ?? ((await waitForExit(tunnel, ConnectFailureExitWaitMs)) ? tunnel.exit : null)
@@ -365,7 +365,7 @@ export class ProjectSession {
         throw new Error(message)
       }
       try {
-        await this.deps.engine.connectTo(settings.port, token, { host: settings.host, tlsFingerprint: fingerprint })
+        await this.deps.engine.connectTo(settings.port, token, { host: settings.host, tlsFingerprint: fingerprint, ...(settings.user === undefined ? {} : { user: settings.user }) })
       } catch (e) {
         this.deps.engine.close()
         if (this.disposed) throw new CancelledError("Cancelled: the editor is closing")

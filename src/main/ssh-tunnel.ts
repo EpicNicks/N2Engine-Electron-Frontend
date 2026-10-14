@@ -16,6 +16,7 @@
 import { ChildProcess, SpawnOptions, spawn as nodeSpawn } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
+import { parseEditorUser } from "./editor-user"
 import { HostExit, LineSplitter, describeExit } from "./host-launcher"
 
 /** What the user types for a remote engine, without the token (these are saved as recent remotes) */
@@ -28,6 +29,8 @@ export interface RemoteSettings {
   identityFile?: string
   /** The port the remote N2EditorHost listens on (its --port) */
   hostPort: number
+  /** Who connects to a host with a tokens file (sent in Hello); not the ssh user in target, and not secret */
+  user?: string
 }
 
 const MaxFieldLength = 256
@@ -99,6 +102,8 @@ export function parseRemoteSettings(value: unknown): RemoteSettings {
     if (identity) throw new Error(identity)
     settings.identityFile = file as string
   }
+  const user = parseEditorUser(input.user)
+  if (user !== undefined) settings.user = user
   return settings
 }
 

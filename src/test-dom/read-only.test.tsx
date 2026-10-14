@@ -6,10 +6,10 @@ import { screen, act } from "@testing-library/preact"
 import userEvent from "@testing-library/user-event"
 import type { ServerInfo } from "../shared/api"
 import { ipcError } from "../shared/api"
-import { EditorStore, HostReadOnlyReason, StoreApi } from "../renderer/store"
+import { EditorStore, HostReadOnlyReason, StoreApi, ViewerReason } from "../renderer/store"
 import { HierarchyState } from "../renderer/hierarchy-state"
 import { HierarchyPanel } from "../renderer/hierarchy-panel"
-import { ReadOnlyBadge, SceneButtons } from "../renderer/editor"
+import { ReadOnlyBadge, SceneButtons, UserBadge } from "../renderer/editor"
 import { ErrorBanner } from "../renderer/ui"
 import { assetMenu } from "../renderer/assets-panel"
 import { followWriteGuard } from "../renderer/write-guard"
@@ -18,13 +18,15 @@ import { renderWithApp, stubApp } from "./helpers"
 const scene = { path: "res://scenes/a.scene", name: "a", uuid: "u1", revision: 1, savedRevision: 1 }
 
 /** An EditorStore over a fake page API: connected to a host whose ServerInfo says readOnly (or, for a 1.10 host, false) */
-async function connectedStore(readOnly: boolean) {
+async function connectedStore(readOnly: boolean, who: { user: string; role: string } = { user: "", role: "" }) {
   const info: ServerInfo = {
-    protocolVersion: "1.11.0",
+    protocolVersion: "1.12.0",
     engineVersion: "1.0.0",
     capabilities: [],
     projectLoaded: true,
     readOnly,
+    user: who.user,
+    role: who.role,
   }
   let connected = false
   const listeners: Array<(connected: boolean) => void> = []
@@ -144,6 +146,126 @@ describe("a denial the host sends", () => {
     act(() => store.reportError("Failed to save", ipcError({ error: "read-only host: SaveSceneToFile is not allowed", code: "readOnly" })))
     assert.equal(screen.getByRole("status").textContent, "Read-only")
     assert.equal((screen.getByText("Save scene") as HTMLButtonElement).disabled, true)
+  })
+})
+
+describe("the signed-in user", () => {
+  test("the badge shows the user and role", async () => {
+    const store = await connectedStore(false, { user: "alice", role: "editor" })
+    renderWithApp(<UserBadge />, { store })
+    assert.equal(screen.getByRole("status").textContent, "alice (editor)")
+  })
+
+  test("a host that names no user (no tokens file, or before 1.12) shows no user badge", async () => {
+    const store = await connectedStore(false)
+    renderWithApp(<UserBadge />, { store })
+    assert.equal(screen.queryByRole("status"), null)
+  })
+
+  test("the --token-env user is shown as an admin", async () => {
+    const store = await connectedStore(false, { user: "token", role: "admin" })
+    renderWithApp(<UserBadge />, { store })
+    assert.equal(screen.getByRole("status").textContent, "token (admin)")
+  })
+})
+
+describe("a viewer", () => {
+  test("is read-only through the same guard: no writes, so no Play either, with its own reason", async () => {
+    const store = await connectedStore(false, { user: "vic", role: "viewer" })
+    assert.equal(store.hostRole.value, "viewer")
+    assert.equal(store.hostReadOnly.value, true)
+    assert.equal(store.canWrite.value, false)
+    assert.equal(store.canEdit.value, false)
+    assert.equal(store.readOnlyReason.value, ViewerReason)
+  })
+
+  test("the scene buttons are disabled and say why, and the badges show the user and Read-only", async () => {
+    const store = await connectedStore(false, { user: "vic", role: "viewer" })
+    renderWithApp(
+      <>
+        <UserBadge />
+        <ReadOnlyBadge />
+        <SceneButtons />
+      </>,
+      { store, assets: {} }
+    )
+    for (const name of ["New scene", "Open scene", "Save scene", "Save as..."]) {
+      const button = screen.getByText(name) as HTMLButtonElement
+      assert.equal(button.disabled, true, name)
+      assert.ok(button.title.includes(ViewerReason), name)
+    }
+    const badges = screen.getAllByRole("status").map((el) => el.textContent)
+    assert.deepEqual(badges, ["vic (viewer)", "Read-only"])
+  })
+
+  test("the hierarchy's Add is disabled through the write guard", async () => {
+    const store = await connectedStore(false, { user: "vic", role: "viewer" })
+    const hierarchy = hierarchyOf()
+    const stop = followWriteGuard(store, { inspector: { setReadOnly: () => {} }, hierarchy })
+    renderWithApp(<HierarchyPanel />, { store, hierarchy })
+    assert.equal((screen.getByText("+ Add") as HTMLButtonElement).disabled, true)
+    assert.equal(hierarchy.readOnlyReason.value, ViewerReason)
+    stop()
+  })
+
+  test("Open Scene in the asset menu is disabled", async () => {
+    const store = await connectedStore(false, { user: "vic", role: "viewer" })
+    const row = {
+      kind: "asset",
+      depth: 0,
+      path: "res://scenes/a.scene",
+      asset: { uuid: "u2", path: "res://scenes/a.scene", type: "Scene" },
+    } as never
+    const scene = itemOf(assetMenu(stubApp({ store }), row, () => {}), "Open Scene")
+    assert.ok(scene)
+    assert.equal(scene.disabled, true)
+  })
+})
+
+describe("an editor, and a host that names no role", () => {
+  test("an editor can write", async () => {
+    const store = await connectedStore(false, { user: "eve", role: "editor" })
+    assert.equal(store.hostRole.value, "editor")
+    assert.equal(store.canWrite.value, true)
+    renderWithApp(<SceneButtons />, { store, assets: {} })
+    assert.equal((screen.getByText("Save scene") as HTMLButtonElement).disabled, false)
+  })
+
+  test("a 1.11 host's empty role counts as admin and can write", async () => {
+    const store = await connectedStore(false)
+    assert.equal(store.hostRole.value, "admin")
+    assert.equal(store.canWrite.value, true)
+  })
+
+  test("a role this editor does not know is treated as a viewer", async () => {
+    const store = await connectedStore(false, { user: "x", role: "auditor" })
+    assert.equal(store.hostRole.value, "viewer")
+    assert.equal(store.canWrite.value, false)
+  })
+
+  test("a viewer on a read-only host gets the host's reason", async () => {
+    const store = await connectedStore(true, { user: "vic", role: "viewer" })
+    assert.equal(store.readOnlyReason.value, HostReadOnlyReason)
+  })
+})
+
+describe("a forbidden denial", () => {
+  test("shows the host's message in the banner, and does not turn the UI read-only", async () => {
+    const store = await connectedStore(false, { user: "eve", role: "editor" })
+    renderWithApp(
+      <>
+        <ErrorBanner />
+        <ReadOnlyBadge />
+        <SceneButtons />
+      </>,
+      { store, assets: {} }
+    )
+    const message = "forbidden: Shutdown needs the admin role"
+    act(() => store.reportError("Failed to stop the host", ipcError({ error: message, code: "forbidden" })))
+    assert.match(screen.getByRole("alert").textContent ?? "", /Shutdown needs the admin role/)
+    assert.equal(screen.queryByRole("status"), null)
+    assert.equal(store.canWrite.value, true)
+    assert.equal((screen.getByText("Save scene") as HTMLButtonElement).disabled, false)
   })
 })
 

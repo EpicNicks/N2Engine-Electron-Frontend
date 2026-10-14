@@ -33,7 +33,8 @@ function HostLocationLine() {
 
 function describeSaved(settings: RemoteSettings): string {
   const ssh = settings.sshPort ? ` (ssh port ${settings.sshPort})` : ""
-  return `${settings.target}, host port ${settings.hostPort}${ssh}`
+  const user = settings.user ? `, user ${settings.user}` : ""
+  return `${settings.target}, host port ${settings.hostPort}${ssh}${user}`
 }
 
 /** The remote engine's connection form through an SSH tunnel. The token is asked each time: it lives in this form until Connect, and is never saved. */
@@ -44,6 +45,7 @@ function SshForm() {
   const [sshPort, setSshPort] = useState("")
   const [identityFile, setIdentityFile] = useState("")
   const [hostPort, setHostPort] = useState("")
+  const [user, setUser] = useState("")
   const [token, setToken] = useState("")
   const recent = store.recentRemotes.value
 
@@ -54,6 +56,7 @@ function SshForm() {
     setSshPort(settings.sshPort ? String(settings.sshPort) : "")
     setIdentityFile(settings.identityFile ?? "")
     setHostPort(String(settings.hostPort))
+    setUser(settings.user ?? "")
   }
   const connect = async () => {
     const settings = {
@@ -61,6 +64,7 @@ function SshForm() {
       sshPort: port(sshPort),
       identityFile: identityFile.trim() || undefined,
       hostPort: port(hostPort),
+      user: user.trim() || undefined,
     }
     const secret = token
     // Out of the form at once: a failed attempt asks for it again, and nothing keeps it
@@ -119,6 +123,18 @@ function SshForm() {
           placeholder="~/.ssh/id_ed25519"
           value={identityFile}
           onInput={(e) => setIdentityFile(e.currentTarget.value)}
+          disabled={busy}
+          autocomplete="off"
+          spellcheck={false}
+        />
+      </label>
+      <label>
+        User (optional: for a host with a tokens file)
+        <input
+          type="text"
+          placeholder="the user the token was made for"
+          value={user}
+          onInput={(e) => setUser(e.currentTarget.value)}
           disabled={busy}
           autocomplete="off"
           spellcheck={false}
@@ -194,6 +210,7 @@ function DirectForm() {
   const [port, setPort] = useState("")
   const [tls, setTls] = useState(true)
   const [fingerprint, setFingerprint] = useState("")
+  const [user, setUser] = useState("")
   const [token, setToken] = useState("")
   const [prompt, setPrompt] = useState<PinPrompt | null>(null)
 
@@ -211,6 +228,7 @@ function DirectForm() {
 
   const connectWith = async (expected: string | undefined) => {
     const settings: DirectRemoteSettings = { host: hostName, port: portNumber, tls, fingerprint: expected }
+    if (user.trim() !== "") settings.user = user.trim()
     const secret = token
     // Out of the form at once: a failed attempt asks for it again, and nothing keeps it
     setToken("")
@@ -284,6 +302,18 @@ function DirectForm() {
         </label>
       )}
       {tls && fingerprintBad && <p class="note problem">That isn't a SHA-256 fingerprint: 64 hex digits.</p>}
+      <label>
+        User (optional: for a host with a tokens file)
+        <input
+          type="text"
+          placeholder="the user the token was made for"
+          value={user}
+          onInput={(e) => setUser(e.currentTarget.value)}
+          disabled={busy}
+          autocomplete="off"
+          spellcheck={false}
+        />
+      </label>
       <label>
         Access token
         <input

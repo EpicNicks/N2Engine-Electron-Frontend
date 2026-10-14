@@ -4,6 +4,7 @@
 // any other address is refused: the access token and the project would cross the network in the clear. Node only, so
 // it is unit tested.
 import { isLoopbackHost, normaliseFingerprint } from "../protocol/tls-pin"
+import { parseEditorUser } from "./editor-user"
 import type { DirectRemoteSettings } from "../shared/api"
 import { pinKey } from "./pin-store"
 import type { Pin } from "./pin-store"
@@ -47,6 +48,8 @@ export function parseDirectRemoteSettings(value: unknown): DirectRemoteSettings 
     if (!input.tls) throw new Error("A fingerprint needs TLS")
     settings.fingerprint = fingerprint
   }
+  const user = parseEditorUser(input.user)
+  if (user !== undefined) settings.user = user
   return settings
 }
 

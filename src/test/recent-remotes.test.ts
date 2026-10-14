@@ -30,6 +30,21 @@ describe("RecentRemotes", () => {
     assert.deepEqual(recent.list(), [{ target: "a@x", hostPort: 1, identityFile: "/new" }])
   })
 
+  test("the user is remembered with the remote, and a later connect without one replaces it", () => {
+    const file = path.join(dir, "recent-remotes.json")
+    const recent = new RecentRemotes(file)
+    recent.add({ target: "a@x", hostPort: 1, user: "alice" })
+    assert.deepEqual(new RecentRemotes(file).list(), [{ target: "a@x", hostPort: 1, user: "alice" }])
+    recent.add({ target: "a@x", hostPort: 1 })
+    assert.deepEqual(new RecentRemotes(file).list(), [{ target: "a@x", hostPort: 1 }])
+  })
+
+  test("a user that can't be one is dropped with its entry on read", () => {
+    const file = path.join(dir, "recent-remotes.json")
+    fs.writeFileSync(file, JSON.stringify([{ target: "a@x", hostPort: 1, user: "bad user" }, { target: "b@x", hostPort: 2 }]))
+    assert.deepEqual(new RecentRemotes(file).list(), [{ target: "b@x", hostPort: 2 }])
+  })
+
   test("saves only the settings: no token, whatever the caller passes", () => {
     const file = path.join(dir, "recent-remotes.json")
     new RecentRemotes(file).add({ target: "a@x", hostPort: 1, token: "s3cret", password: "p" } as never)
