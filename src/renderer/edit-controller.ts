@@ -47,6 +47,8 @@ export interface JumpOptions {
   onProgress?(done: number, total: number): void
   /** Asked before each step: true stops the jump there (the steps already done stay done) */
   cancelled?(): boolean
+  /** The history the target was chosen from: when the fresh read differs, nothing is sent (outcome "changed", 0 steps) */
+  expected?: { cursor: number; total: number }
 }
 
 export type JumpOutcome = "completed" | "cancelled" | "disabled" | "changed" | "refused"
@@ -204,6 +206,9 @@ export class EditController implements EditActions {
     const status = this.deps.history.value
     const cursor = status.undoCount
     const total = status.undoCount + status.redoCount
+    if (options.expected && (options.expected.cursor !== cursor || options.expected.total !== total)) {
+      return report({ outcome: "changed", done: 0, total: 0 })
+    }
     const plan = planJump(cursor, total, Math.min(Math.max(target, 0), total))
     let done = 0
     const finish = (outcome: JumpOutcome): void => report({ outcome, done, total: plan.steps })

@@ -151,8 +151,11 @@ export class HistoryModel {
           this.progress.value = { done, total, cancelling: this.cancelRequested }
         },
         cancelled: () => this.cancelRequested,
+        expected: current === null ? undefined : { cursor: current.cursor, total: current.entries.length },
       })
-      if (result.outcome === "changed") {
+      if (result.outcome === "changed" && result.total === 0) {
+        this.error.value = "The history changed before the jump started (another client edited): nothing was done, pick the row again"
+      } else if (result.outcome === "changed") {
         this.error.value = `The history changed while jumping (another client edited): stopped after ${result.done} of ${result.total} steps`
       } else if (result.outcome === "disabled") {
         this.error.value = `Editing became unavailable: stopped after ${result.done} of ${result.total} steps`

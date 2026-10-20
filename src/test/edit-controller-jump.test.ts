@@ -105,6 +105,16 @@ describe("EditController.jumpTo", () => {
     assert.deepEqual(h.log, [])
   })
 
+  test("the history differs from the one the target was chosen from: nothing is sent", async () => {
+    const h = fakeHistoryHost(four)
+    const result = await h.controller.jumpTo(0, { expected: { cursor: 2, total: 4 } })
+    assert.deepEqual(result, { outcome: "changed", done: 0, total: 0 })
+    assert.equal(h.log.filter((l) => l === "undo" || l === "redo").length, 0)
+    assert.equal(h.host().cursor, 3)
+    const ok = await h.controller.jumpTo(2, { expected: { cursor: 3, total: 4 } })
+    assert.equal(ok.outcome, "completed")
+  })
+
   test("a jump is exclusive: a second one is refused, undo and redo asked meanwhile are ignored", async () => {
     const h = fakeHistoryHost(four)
     const first = h.controller.jumpTo(0)
