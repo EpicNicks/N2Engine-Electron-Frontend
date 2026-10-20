@@ -13,7 +13,7 @@ import { BridgeAdvice, BridgeError, safeRole } from "./errors"
 import { componentToJsonSchema } from "./jsonschema"
 import * as limits from "./limits"
 import { encodePng, fitSize } from "./png"
-import { Budget } from "./scrub"
+import { Budget, envelopeJson } from "./scrub"
 import { BridgeName, BridgeVersion, SupportedSpecRevisions } from "./version"
 
 /** The sentence every tool description carries (and the server's instructions repeat) */
@@ -754,7 +754,7 @@ const readTextAsset = tool({
     let slice = ""
     for (;;) {
       slice = s.str(bytes.subarray(range.start, range.end).toString("utf8"), { multiline: true, maxChars: limits.TextAssetMaxBytes * 8 })
-      if (Buffer.byteLength(JSON.stringify(slice)) <= limits.TextAssetMaxBytes + 1024 || wanted <= 16) break
+      if (Buffer.byteLength(envelopeJson(slice)) <= limits.TextAssetMaxBytes + 1024 || wanted <= 16) break
       wanted = Math.floor(wanted * 0.9)
       range = utf8Range(bytes, offset, wanted)
     }

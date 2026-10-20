@@ -166,9 +166,22 @@ export class Bridge {
     }
     let project: ProjectInfoResponse | null = null
     try {
-      project = await opened.client.getProjectInfo()
+      const ms = this.options.callTimeoutMs ?? DefaultCallTimeoutMs
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new BridgeError("timeout", `The host did not answer within ${Math.round(ms / 1000)} s.`, BridgeAdvice.timeout)), ms)
+      })
+      try {
+        project = await Promise.race([opened.client.getProjectInfo(), stalled])
+      } finally {
+        clearTimeout(timer)
+      }
       this.scrubber.setRoots(project.rootPath, project.userDataPath)
-    } catch {
+    } catch (e) {
+      if (e instanceof BridgeError && e.code === "timeout") {
+        opened.client.close()
+        throw e
+      }
       // A host without a project has none to describe; the tools say so
     }
     const link = Object.assign(opened, { project, types: null as ComponentSchema[] | null, session: { viewport: null } as SessionState })

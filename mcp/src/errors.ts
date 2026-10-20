@@ -122,6 +122,9 @@ export function mapError(error: unknown, context: ErrorContext, scrubber: Scrubb
   }
   const raw = error instanceof Error ? error.message : String(error)
   const code = (error as { code?: unknown } | null)?.code
+  if (/TLS handshake|certificate|Connection closed before it opened/i.test(raw)) {
+    return new BridgeError("host_unavailable", "The TLS connection to the host failed.", Advice.unavailable, undefined, error)
+  }
   if (error instanceof Error && ConnectionLostTexts.some((t) => raw.startsWith(t))) {
     return new BridgeError("connection_lost", "The connection to the host was lost.", Advice.connection, undefined, error)
   }
@@ -130,9 +133,6 @@ export function mapError(error: unknown, context: ErrorContext, scrubber: Scrubb
   }
   if (/^(Refusing a plaintext|The pinned fingerprint)/.test(raw)) {
     return new BridgeError("host_unavailable", "The connection settings are not acceptable (TLS with a pinned fingerprint is required).", Advice.unavailable, undefined, error)
-  }
-  if (/TLS handshake|certificate|Connection closed before it opened/i.test(raw)) {
-    return new BridgeError("host_unavailable", "The TLS connection to the host failed.", Advice.unavailable, undefined, error)
   }
   return new BridgeError("internal", `An unexpected error ended the call${where}.`, Advice.internal, undefined, error)
 }

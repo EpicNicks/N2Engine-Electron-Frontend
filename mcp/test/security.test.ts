@@ -319,6 +319,8 @@ describe("every protocol refusal is an actionable tool error", () => {
     }
     assert.equal(mapError(new TypeError(raw), {}, s).code, "internal")
     assert.equal(mapError(Object.assign(new Error(raw), { code: "ECONNREFUSED" }), {}, s).code, "host_unavailable")
+    assert.equal(mapError(new Error("Connection closed before the TLS handshake finished"), {}, s).code, "host_unavailable")
+    assert.equal(mapError(new Error("TLS handshake timed out"), {}, s).code, "host_unavailable")
     assert.equal(mapError(new FingerprintMismatchError("a".repeat(64), null), {}, s).code, "fingerprint_mismatch")
     assert.equal(mapError(new HelloError("The editor host speaks protocol 2.0.0, x"), {}, s).code, "incompatible_protocol")
   })

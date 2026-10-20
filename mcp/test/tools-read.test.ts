@@ -206,6 +206,15 @@ describe("read tools against a fake host", () => {
     assert.equal(r.structuredContent.truncated, false)
   })
 
+  test("n2_read_text_asset: markup-heavy text still comes back as a shorter truncated slice", async () => {
+    h.host.texts.set("res://ui/menu.xml", "<a>&</a>".repeat(40000))
+    const r = await h.call("n2_read_text_asset", { path: "res://ui/menu.xml", length: 102400 })
+    assert.notEqual(r.isError, true)
+    assert.equal(r.structuredContent.truncated, true)
+    assert.ok(r.structuredContent.data.length < 102400)
+    assert.ok(typeof r.structuredContent.nextCursor === "string")
+  })
+
   test("n2_get_console: the latest lines, then only what is new; level and contains filter", async () => {
     const c = await startHarness()
     c.host.addLogEvents(["info", "starting"], ["warn", "texture missing"], ["error", "Lua error in Player.lua"], ["info", "ready"])
