@@ -15,6 +15,10 @@ import {
   buildTree,
   childrenOf,
   clickSelect,
+  FilterMode,
+  filterHierarchy,
+  filteredRows,
+  parseQuery,
   contextSelect,
   emptySelection,
   planMoves,
@@ -68,7 +72,18 @@ export class HierarchyState {
   readonly tree = computed(() => buildTree(this.response.value?.nodes ?? []))
   /** The objects whose children are shown */
   readonly expanded = signal<ReadonlySet<string>>(new Set())
-  readonly rows = computed(() => visibleRows(this.tree.value, this.expanded.value))
+  /** The search text (hierarchy-tree.ts parseQuery); "" shows the whole tree */
+  readonly query = signal("")
+  /** How a search's result is shown: the tree cut down to matches and ancestors, or a flat list */
+  readonly filterMode = signal<FilterMode>("tree")
+  /** The search's result over the current tree (inactive for an empty or all-ignored query) */
+  readonly filter = computed(() => filterHierarchy(this.tree.value, parseQuery(this.query.value)))
+  readonly rows = computed(() => {
+    const filter = this.filter.value
+    return filter.active
+      ? filteredRows(this.tree.value, filter, this.filterMode.value)
+      : visibleRows(this.tree.value, this.expanded.value)
+  })
   readonly selection = signal<Selection>(emptySelection)
   /** The object whose name is being edited */
   readonly renaming = signal<string | null>(null)
@@ -179,6 +194,41 @@ export class HierarchyState {
     await this.refresh()
   }
 
+  // ==================== Search ====================
+
+  /** Sets the search text; "" (or only ignored tokens) shows the whole tree again. A rename in progress ends. */
+  setQuery(text: string): void {
+    if (text === this.query.value) return
+    batch(() => {
+      this.query.value = text
+      this.renaming.value = null
+    })
+  }
+
+  setFilterMode(mode: FilterMode): void {
+    if (mode === this.filterMode.value) return
+    batch(() => {
+      this.filterMode.value = mode
+      this.renaming.value = null
+    })
+  }
+
+  /** Whether a search is narrowing the rows: drag-and-drop reparenting is off then (the places it names are not all shown) */
+  get filtering(): boolean {
+    return this.filter.value.active
+  }
+
+  /**
+   * The selected objects the actions (delete, duplicate) work on: only those with a row shown. A search can hide a
+   * selected object, and what nobody sees is never deleted or copied.
+   */
+  private actingIds(): ReadonlySet<string> {
+    const ids = this.selection.value.ids
+    if (!this.filtering) return ids
+    const shown = new Set(this.rows.value.map((row) => row.id))
+    return new Set([...ids].filter((id) => shown.has(id)))
+  }
+
   // ==================== Selection and expansion ====================
 
   /** The object the inspector shows */
@@ -260,6 +310,13 @@ export class HierarchyState {
   /** Arrow right: opens the primary object, or goes to its first child when it is open */
   expandPrimary(): void {
     const id = this.primaryId
+    if (this.filtering) {
+      // A search opens every ancestor of a match itself: Right goes to the first child that is shown
+      const rows = this.rows.value
+      const at = rows.findIndex((row) => row.id === id)
+      if (at >= 0 && rows[at].hasChildren) this.click(rows[at + 1].id)
+      return
+    }
     if (!this.isShown(id) || childrenOf(this.tree.value, id).length === 0) return
     if (!this.expanded.value.has(id)) this.expand(id)
     else this.click(childrenOf(this.tree.value, id)[0])
@@ -269,6 +326,12 @@ export class HierarchyState {
   collapsePrimary(): void {
     const id = this.primaryId
     if (!this.isShown(id)) return
+    if (this.filtering) {
+      // Nothing closes under a search; Left goes to the parent when it has a row
+      const parent = this.tree.value.parents.get(id)
+      if (parent !== undefined && parent !== RootId && this.isShown(parent)) this.click(parent)
+      return
+    }
     if (this.expanded.value.has(id) && childrenOf(this.tree.value, id).length > 0) this.toggleExpanded(id)
     else {
       const parent = this.tree.value.parents.get(id)
@@ -294,6 +357,8 @@ export class HierarchyState {
     await this.refresh() // the newest read: it has the new object, whichever read it was
     batch(() => {
       if (this.tree.value.nodes.has(id)) {
+        // The new object may not match the search: the search ends so the object is shown, to be renamed
+        this.query.value = ""
         this.reveal(id)
         this.renaming.value = id
       }
@@ -362,7 +427,7 @@ export class HierarchyState {
   duplicateSelected(): Promise<void> {
     return this.exclusive<void>(undefined, async () => {
       this.assertEditable()
-      const ids = topLevel(this.tree.value, this.selection.value.ids)
+      const ids = topLevel(this.tree.value, this.actingIds())
       if (ids.length === 0) return
       const copies: string[] = []
       try {
@@ -391,7 +456,7 @@ export class HierarchyState {
     return this.exclusive(false, async () => {
       this.assertEditable()
       const tree = this.tree.value
-      const ids = topLevel(tree, this.selection.value.ids)
+      const ids = topLevel(tree, this.actingIds())
       if (ids.length === 0) return false
       const count = tree.order.filter(
         (id) => ids.includes(id) || ancestorsOf(tree, id).some((a) => ids.includes(a))
@@ -419,6 +484,7 @@ export class HierarchyState {
   move(draggedIds: readonly string[], target: DropTarget): Promise<boolean> {
     return this.exclusive(false, async () => {
       this.assertEditable()
+      if (this.filtering) return false // the drop places a search hides are not all shown: no reparenting under a search
       const moves = planMoves(this.tree.value, draggedIds, target)
       if (moves === null || moves.length === 0) return false
       try {
@@ -438,7 +504,7 @@ export class HierarchyState {
   /** What a drag that starts on the object carries: the selection when it holds the object, else just the object */
   dragIds(id: string): string[] {
     const selection = this.selection.value
-    return selection.ids.has(id) ? topLevel(this.tree.value, selection.ids) : [id]
+    return selection.ids.has(id) ? topLevel(this.tree.value, this.actingIds()) : [id]
   }
 
   private async setProperties(id: string, properties: { name: string } | { active: boolean }): Promise<void> {

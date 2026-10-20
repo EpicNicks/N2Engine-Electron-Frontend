@@ -70,6 +70,8 @@ export interface Row {
   depth: number
   hasChildren: boolean
   expanded: boolean
+  /** The object's path ("Parent / Child"), set only on the rows of a filtered list (see filteredRows) */
+  path?: string
 }
 
 /** The rows the panel shows: the objects whose ancestors are all expanded, depth-first */
@@ -273,4 +275,120 @@ export function planMoves(tree: HierarchyTree, draggedIds: readonly string[], ta
     list = next
   }
   return moves
+}
+
+// ==================== Search and filter ====================
+
+/**
+ * A parsed search. Whitespace separates tokens and every token has to hold (AND): `t:Type` (a component type name
+ * contains it), `tag:x` (the tag contains it), `layer:N` (the layer is N), anything else a part of the name. All
+ * comparisons ignore case. A token with an empty value (`t:`) or a non-number layer is ignored, so a half-typed
+ * token doesn't empty the list.
+ */
+export interface HierarchyQuery {
+  names: readonly string[]
+  types: readonly string[]
+  tags: readonly string[]
+  layers: readonly number[]
+}
+
+export const emptyQuery: HierarchyQuery = { names: [], types: [], tags: [], layers: [] }
+
+export function parseQuery(text: string): HierarchyQuery {
+  const names: string[] = []
+  const types: string[] = []
+  const tags: string[] = []
+  const layers: number[] = []
+  for (const token of text.toLowerCase().split(/\s+/)) {
+    if (token === "") continue
+    const colon = token.indexOf(":")
+    const key = colon > 0 ? token.slice(0, colon) : ""
+    const value = colon > 0 ? token.slice(colon + 1) : ""
+    if (key === "t" || key === "tag" || key === "layer") {
+      if (value === "") continue
+      if (key === "t") types.push(value)
+      else if (key === "tag") tags.push(value)
+      else if (/^\d{1,9}$/.test(value)) layers.push(Number(value))
+    } else names.push(token)
+  }
+  return { names, types, tags, layers }
+}
+
+/** Whether the query has anything to filter by */
+export const isQueryActive = (query: HierarchyQuery): boolean =>
+  query.names.length + query.types.length + query.tags.length + query.layers.length > 0
+
+export function nodeMatches(node: HierarchyNode, query: HierarchyQuery): boolean {
+  const name = node.name.toLowerCase()
+  if (!query.names.every((part) => name.includes(part))) return false
+  if (query.types.length > 0) {
+    const types = node.components.map((type) => type.toLowerCase())
+    if (!query.types.every((part) => types.some((type) => type.includes(part)))) return false
+  }
+  const tag = node.tag.toLowerCase()
+  if (!query.tags.every((part) => tag.includes(part))) return false
+  return query.layers.every((layer) => node.layer === layer)
+}
+
+/** The result of a search over the tree */
+export interface HierarchyFilter {
+  active: boolean
+  /** The objects that match (empty when the query is not active) */
+  matches: ReadonlySet<string>
+  /** The matches and their ancestors */
+  shown: ReadonlySet<string>
+}
+
+export const noFilter: HierarchyFilter = { active: false, matches: new Set(), shown: new Set() }
+
+/** Searches the tree: one pass over the objects, and each ancestor chain is walked only up to a known one, so O(n) */
+export function filterHierarchy(tree: HierarchyTree, query: HierarchyQuery): HierarchyFilter {
+  if (!isQueryActive(query)) return noFilter
+  const matches = new Set<string>()
+  const shown = new Set<string>()
+  for (const id of tree.order) {
+    const node = tree.nodes.get(id)!
+    if (!nodeMatches(node, query)) continue
+    matches.add(id)
+    for (let current: string | undefined = id; current !== undefined && current !== RootId && !shown.has(current); ) {
+      shown.add(current)
+      current = tree.parents.get(current)
+    }
+  }
+  return { active: true, matches, shown }
+}
+
+/** How a search's result is shown: the tree cut down to the matches and their ancestors, or a flat list of the matches */
+export type FilterMode = "tree" | "list"
+
+/**
+ * The rows of a search. Tree: the matches and their ancestors, depth-first, every ancestor open (what is under a match
+ * is not shown unless it matches too). List: the matches in tree order, all at depth 0, each with its path.
+ */
+export function filteredRows(tree: HierarchyTree, filter: HierarchyFilter, mode: FilterMode): Row[] {
+  if (mode === "list") {
+    const names = new Map<string, string>()
+    const pathOf = (id: string): string => {
+      const known = names.get(id)
+      if (known !== undefined) return known
+      const parent = tree.parents.get(id) ?? RootId
+      const own = tree.nodes.get(id)?.name ?? id
+      const path = parent === RootId ? own : `${pathOf(parent)} / ${own}`
+      names.set(id, path)
+      return path
+    }
+    const rows: Row[] = []
+    for (const id of tree.order) {
+      if (filter.matches.has(id)) rows.push({ id, depth: 0, hasChildren: false, expanded: false, path: pathOf(id) })
+    }
+    return rows
+  }
+  const rows: Row[] = []
+  const visit = (id: string, depth: number): void => {
+    const kids = childrenOf(tree, id).filter((kid) => filter.shown.has(kid))
+    rows.push({ id, depth, hasChildren: kids.length > 0, expanded: kids.length > 0 })
+    for (const kid of kids) visit(kid, depth + 1)
+  }
+  for (const root of childrenOf(tree, RootId)) if (filter.shown.has(root)) visit(root, 0)
+  return rows
 }

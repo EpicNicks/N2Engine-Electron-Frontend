@@ -142,6 +142,7 @@ describe("the default actions", () => {
         "hierarchy.previous",
         "hierarchy.extendNext",
         "hierarchy.extendPrevious",
+        "hierarchy.search",
         "hierarchy.expand",
         "hierarchy.collapse",
         "viewport.frame",
