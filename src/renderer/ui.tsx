@@ -3,6 +3,7 @@
 import { ComponentChildren, createContext } from "preact"
 import { useContext, useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
+import { PanelFrameContext } from "./layout/panel-frame"
 import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
 import type { AssetsState } from "./assets-state"
@@ -61,9 +62,17 @@ export function Panel(props: {
   contentClass?: string
   children?: ComponentChildren
 }) {
+  // In a layout (layout/layout-view.tsx) the header drags the panel to another stack or region and has its menu
+  const frame = useContext(PanelFrameContext)
   return (
     <section class={`panel ${props.class ?? ""}`}>
-      <div class="panel-header">
+      <div
+        class="panel-header"
+        draggable={frame !== null ? true : undefined}
+        onDragStart={frame?.dragStart}
+        onDragEnd={frame?.dragEnd}
+        onContextMenu={frame?.contextMenu}
+      >
         {props.icon && <span aria-hidden="true">{props.icon}</span>}
         <span>{props.title}</span>
         {props.actions && <span class="panel-actions">{props.actions}</span>}
@@ -226,43 +235,105 @@ export type MenuItem =
   /** A line between groups of items */
   | { separator: true }
 
-const menu = signal<{ x: number; y: number; items: MenuItem[] } | null>(null)
+interface OpenMenu {
+  x: number
+  y: number
+  items: MenuItem[]
+  /** Opened from the keyboard: the menu takes the focus (and gives it back), and its first item is marked */
+  keyboard: boolean
+  opener: HTMLElement | null
+}
 
-export function showContextMenu(x: number, y: number, items: MenuItem[]): void {
-  menu.value = items.length > 0 ? { x, y, items } : null
+const menu = signal<OpenMenu | null>(null)
+/** The item the arrow keys marked (an index into items), or -1 */
+const menuMark = signal(-1)
+let menuElement: HTMLElement | null = null
+
+/** Indexes of the items a key can choose */
+function choosable(items: MenuItem[]): number[] {
+  return items.flatMap((item, i) => ("separator" in item || item.disabled ? [] : [i]))
+}
+
+export function showContextMenu(x: number, y: number, items: MenuItem[], options: { keyboard?: boolean } = {}): void {
+  const keyboard = options.keyboard === true
+  menuMark.value = keyboard ? (choosable(items)[0] ?? -1) : -1
+  menu.value =
+    items.length > 0 ? { x, y, items, keyboard, opener: document.activeElement as HTMLElement | null } : null
+}
+
+/** Closes the menu; one that had the focus gives it back to what opened it */
+function closeMenu(): void {
+  const current = menu.value
+  if (!current) return
+  const refocus = current.keyboard && menuElement !== null && menuElement.contains(document.activeElement)
+  menu.value = null
+  if (refocus) current.opener?.focus?.()
 }
 
 export function ContextMenu() {
   useEffect(() => {
-    const hide = () => (menu.value = null)
+    const onKeyDown = (e: KeyboardEvent) => {
+      const current = menu.value
+      if (!current) return
+      const items = choosable(current.items)
+      const at = items.indexOf(menuMark.value)
+      // The arrow keys mark an item, Enter chooses it; any other key closes the menu, as it always did
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
+        e.preventDefault()
+        if (items.length === 0) return
+        if (e.key === "Home") menuMark.value = items[0]
+        else if (e.key === "End") menuMark.value = items[items.length - 1]
+        else if (e.key === "ArrowDown") menuMark.value = items[(at + 1) % items.length]
+        else menuMark.value = items[(at - 1 + items.length) % items.length]
+      } else if ((e.key === "Enter" || e.key === " ") && at >= 0) {
+        e.preventDefault()
+        const item = current.items[items[at]]
+        closeMenu()
+        if (!("separator" in item)) item.action()
+      } else {
+        closeMenu()
+      }
+    }
+    const hide = () => closeMenu()
     document.addEventListener("click", hide)
-    document.addEventListener("keydown", hide)
+    document.addEventListener("keydown", onKeyDown)
     window.addEventListener("blur", hide)
     return () => {
       document.removeEventListener("click", hide)
-      document.removeEventListener("keydown", hide)
+      document.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("blur", hide)
     }
   }, [])
   const current = menu.value
+  useEffect(() => {
+    if (current?.keyboard) menuElement?.focus()
+  }, [current])
   if (!current) return null
   // Kept inside the window (an item is about 28px high and the menu about 260px wide)
   const left = Math.max(0, Math.min(current.x, window.innerWidth - 260))
   const top = Math.max(0, Math.min(current.y, window.innerHeight - current.items.length * 28 - 12))
   return (
-    <div class="context-menu" style={{ left: `${left}px`, top: `${top}px` }} role="menu">
+    <div
+      class="context-menu"
+      style={{ left: `${left}px`, top: `${top}px` }}
+      role="menu"
+      tabIndex={-1}
+      ref={(el) => {
+        menuElement = el
+      }}
+    >
       {current.items.map((item, i) =>
         "separator" in item ? (
           <div class="context-menu-separator" role="separator" key={i} />
         ) : (
           <div
-            class={item.disabled ? "context-menu-item disabled" : "context-menu-item"}
+            class={`context-menu-item${item.disabled ? " disabled" : ""}${menuMark.value === i ? " marked" : ""}`}
             role="menuitem"
             aria-disabled={item.disabled === true}
             key={item.label}
             onClick={(e) => {
               if (item.disabled) return e.stopPropagation() // the menu stays
-              menu.value = null
+              closeMenu()
               item.action()
             }}
           >

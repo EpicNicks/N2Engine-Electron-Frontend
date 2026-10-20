@@ -77,9 +77,18 @@
       .editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       .main-container { flex: 1; display: flex; overflow: hidden; min-height: 0; }
       .left-panel, .right-panel { display: flex; flex-direction: column; flex-shrink: 0; min-width: 0; background: #252526; }
-      .right-panel .hierarchy-panel { flex: 0 0 30%; }
-      .right-panel .inspector-panel { flex: 1; }
-      .right-panel .engine-panel { flex: 0 0 auto; max-height: 30%; }
+      .center-region { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+      /* A stack of tabs: its share of the region is set inline from the panel shown (the right region: hierarchy 30%, inspector the rest, engine as high as its content, up to 30%) */
+      .panel-group { display: flex; flex-direction: column; overflow: hidden; min-height: 0; min-width: 0; }
+      .panel-group + .panel-group { border-top: 1px solid #444; }
+      .panel-group.drop-hover { outline: 2px solid #0078d4; outline-offset: -2px; }
+      .tab-panel { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+      .tab-panel[hidden] { display: none; }
+      /* Where a tab dragged to an empty region lands (only while a tab is being dragged) */
+      .drop-zone { flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #2d2d2d; color: #888; font-size: 11px; text-transform: uppercase; border: 1px dashed #666; }
+      .drop-zone.left, .drop-zone.right { width: 48px; }
+      .drop-zone.bottom, .drop-zone.center { height: 32px; }
+      .drop-zone.drop-hover { border-color: #0078d4; color: #ccc; }
       .center-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
       .splitter { flex-shrink: 0; background: #444; transition: background 0.15s; }
@@ -89,7 +98,6 @@
 
       /* Panels */
       .panel { display: flex; flex-direction: column; overflow: hidden; min-height: 0; min-width: 0; flex: 1; }
-      .panel + .panel { border-top: 1px solid #444; }
       .panel-header {
         background: #333;
         padding: 6px 10px;
@@ -107,6 +115,7 @@
         overflow: hidden;
       }
       .panel-header > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+      .panel-header[draggable="true"] { cursor: grab; }
       .panel-actions { margin-left: auto; display: flex; gap: 4px; }
       .panel-header button { padding: 2px 8px; font-size: 11px; text-transform: none; }
       .panel-content { flex: 1; overflow: auto; padding: 4px; min-height: 0; }
@@ -153,6 +162,7 @@
         user-select: none;
       }
       .tab:hover { background: #333; }
+      .tab:focus-visible { outline: 1px solid #0078d4; outline-offset: -1px; }
       .tab.active { background: #1e1e1e; border-bottom: 2px solid #0078d4; }
       .tab .close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 16px; line-height: 1; }
       .tab .close:hover { background: #555; }
@@ -436,7 +446,8 @@
         z-index: 10000;
       }
       .context-menu-item { padding: 6px 12px; cursor: pointer; font-size: 13px; color: #ccc; }
-      .context-menu-item:hover { background: #094771; }
+      .context-menu:focus { outline: none; }
+      .context-menu-item:hover, .context-menu-item.marked { background: #094771; }
       .context-menu-item.disabled { color: #777; cursor: default; }
       .context-menu-item.disabled:hover { background: none; }
       .context-menu-separator { height: 1px; background: #444; margin: 4px 0; }
