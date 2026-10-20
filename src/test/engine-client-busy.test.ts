@@ -98,6 +98,8 @@ describe("EngineClient connect against a host that answers Hello with busy", () 
       assert.equal(e.holderRole, "viewer")
       assert.equal(e.code, "busy")
       assert.equal(e.message, "The host is busy with another session (a viewer session)")
+      assert.equal(new HostBusyError("admin").message, "The host is busy with another session (an admin session)")
+      assert.equal(new HostBusyError("editor").message, "The host is busy with another session (an editor session)")
       return true
     })
     assert.equal(client.isConnected, false)

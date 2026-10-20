@@ -136,7 +136,7 @@ describe("ProjectSession direct-address remote", () => {
       t.engine.fail = new HostBusyError("editor")
       await assert.rejects(
         t.session.connectDirect({ host: "h", port: 7000, tls: true, fingerprint: A }, "s3cret-token"),
-        (e: unknown) => e instanceof HostBusyError && errorCode(e) === "busy" && /busy with another session \(a editor session\)/.test((e as Error).message)
+        (e: unknown) => e instanceof HostBusyError && errorCode(e) === "busy" && /busy with another session \(an editor session\)/.test((e as Error).message)
       )
       assert.equal(t.session.state.status, "failed")
       assert.equal(t.session.state.message, null, "no error line for a wait")

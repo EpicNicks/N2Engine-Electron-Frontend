@@ -139,7 +139,7 @@ export class HostBusyError extends Error {
     super(
       holderRole === undefined
         ? "The host is busy with another session"
-        : `The host is busy with another session (a ${holderRole} session)`
+        : `The host is busy with another session (${/^[aeiou]/i.test(holderRole) ? "an" : "a"} ${holderRole} session)`
     )
     this.name = "HostBusyError"
   }
