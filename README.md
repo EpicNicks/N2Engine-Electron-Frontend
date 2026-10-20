@@ -253,7 +253,7 @@ The state machine is `src/main/play-session.ts` and the page's side is `src/rend
 
 ## Read-only hosts
 
-Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.13.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
+Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.14.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
 
 - **What the host says.** A host started with `--read-only` answers every command that is not a read with a refusal (`SetComponentFields`, `OpenScene`, `Undo`, `WritePlaySnapshot`, `Shutdown` and so on; the viewport camera and the viewport size are reads). `ServerInfo.readOnly` (read from Hello) says so up front. The editor asks for error codes in Hello (`errorCodes: true`), so a refusal arrives as `ErrorCoded` (message and code `readOnly` or, for later per-user roles, `forbidden`) and rejects with an `EngineError` whose `code` is set; a 1.10 host, or any other failure, sends a plain `Error` and the `code` is `undefined`. An unknown code is treated like a plain error.
 - **The badge.** While `ServerInfo.readOnly` is true (`EditorStore.hostReadOnly`) the toolbar shows a **Read-only** badge.
@@ -348,3 +348,13 @@ npm run sync-protocol -- <path to N2Engine> # or anywhere else (or set N2ENGINE_
 ```
 
 This runs `editor-server/protocol/generators/generate_typescript.py --out src/protocol/protocol.generated.ts`, so nothing in the engine repo changes. `src/protocol/codec.ts` builds each command's spec from the generated codecs, so a new command gets one with no hand-written layout; add the `EngineClient` method, and add it to `EngineCommands` and `EngineCommandNames` in `src/shared/api.ts` if the page should be able to call it.
+
+### Protocol 1.14.0: Lua editor extensions (typed client only)
+
+Protocol 1.14.0 (engine E-X2, PR #189) adds the host's Lua editor extensions. This editor speaks them at the protocol level only: **there is no extension UI yet** (no Tools menu, form dialog, trust prompt or Extensions dialog; those are a later item). What exists, in `src/protocol/extensions.ts` and `EngineClient`:
+
+- **Commands.** `listEditorExtensions()` (`ListEditorExtensions`, 0x80, a read), `getEditorUi()` (`GetEditorUi`, 0x81, a read) and `reloadEditorExtensions()` (`ReloadEditorExtensions`, 0x84, admin only). Each returns an `ExtensionsResult`: `ok` with a typed value, `unsupported`, or `error` with a kind and the host's message; none of them throws. The JSON answers are parsed defensively (unknown fields ignored, missing ones defaulted, an unknown state counts as failed and an unknown `minRole` as admin, a shape that is not an object is a `malformed` error). They are not on the IPC API (`src/shared/api.ts`) yet: the main-process client has them, the renderer does not.
+- **Capability.** `EngineClient.hasCapability("editorExtensions")` reads `ServerInfo.capabilities`. Against a host without it (any host before 1.14.0) the three helpers answer `unsupported` without sending anything, so such a host is unaffected. A host that has the capability but was not started with `--editor-extensions` answers `enabled: false` and nothing listed, which is not an error.
+- **Error codes.** `extensionsDisabled`, `extensionFailed` and `extensionFaulted` become the kinds `disabled`, `failed` and `faulted`, distinct from `forbidden`, `readOnly` and `busy` (which is `other` here). The code is the contract, never the message. `extensionFailed` and `extensionFaulted` are reserved in 1.14.0: nothing answers them until the commands that run an extension come.
+- **Event.** `extensionsChanged` (with `uiRevision`, 0 when missing) is parsed with the other state events; `EditorStore.extensionsUiRevision` and `extensionsChangeCount` carry it for whatever will show extensions (the revision resets to null when the connection changes). Nothing in the editor reads them yet.
+- **Not covered.** `InvokeMenuItem` (0x82), `InvokeInspectorAction` (0x83) and the `extensionOutput` event are not in 1.14.0, and inspector sections are always empty, so none is modelled.

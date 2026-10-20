@@ -29,9 +29,9 @@ describe("the golden ErrorCoded vector (protocol 1.13)", () => {
     responses: Array<{ response: string; payload: string; fields: { message: string; code: string } }>
   }
 
-  test("the vectors and the client are at 1.13.0", () => {
-    assert.equal(vectors.protocolVersion, "1.13.0")
-    assert.equal(PROTOCOL_VERSION, "1.13.0")
+  test("the vectors and the client are at the same version (1.14.0)", () => {
+    assert.equal(vectors.protocolVersion, "1.14.0")
+    assert.equal(PROTOCOL_VERSION, "1.14.0")
   })
 
   test("the vector decodes, and a busy answer round-trips through the same codec", () => {

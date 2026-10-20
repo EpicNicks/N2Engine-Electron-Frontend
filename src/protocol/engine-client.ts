@@ -40,6 +40,16 @@ import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
 import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
 import { AudioSamples } from "../audio-stream"
+import {
+  EditorExtensionsCapability,
+  ExtensionsInfo,
+  ExtensionsResult,
+  ExtensionsUi,
+  extensionErrorKindOf,
+  hasCapability,
+  parseExtensionsInfo,
+  parseExtensionsUi,
+} from "./extensions"
 import { TlsSocketFactory, connectPinnedTls, isLoopbackHost, normaliseFingerprint } from "./tls-pin"
 
 /** Type ids 0xC0-0xFE are reserved for frames the server sends unprompted (events), never responses */
@@ -777,6 +787,56 @@ export class EngineClient {
   /** Play host: key, mouse button, pointer and scroll events, at most 1024, applied in order or not at all */
   sendInput(events: InputEvent[]): Promise<void> {
     return this.send(Commands.SendInput, { events })
+  }
+
+  // ==================== Editor extensions (protocol 1.14.0) ====================
+
+  /** Whether the connected host's Hello answer lists the capability (false when not connected) */
+  hasCapability(name: string): boolean {
+    return hasCapability(this.serverInfo?.capabilities, name)
+  }
+
+  /**
+   * The host's Lua editor extensions: a ListEditorExtensions answer, validated. "unsupported", without sending
+   * anything, when the host lacks the editorExtensions capability (a host before 1.14.0). A host without
+   * --editor-extensions answers ok with enabled false. Never throws: a refusal or a bad answer is an error result.
+   */
+  listEditorExtensions(): Promise<ExtensionsResult<ExtensionsInfo>> {
+    return this.extensionCommand(Commands.ListEditorExtensions, (r) => parseExtensionsInfo(r.info))
+  }
+
+  /** The menu items the extensions declared (the captured UI, no Lua runs); like listEditorExtensions otherwise */
+  getEditorUi(): Promise<ExtensionsResult<ExtensionsUi>> {
+    return this.extensionCommand(Commands.GetEditorUi, (r) => parseExtensionsUi(r.ui))
+  }
+
+  /**
+   * Loads every extension file again (an Admin command: another role gets the forbidden kind, a read-only host the
+   * readOnly one, a host without --editor-extensions the disabled one); like listEditorExtensions otherwise
+   */
+  reloadEditorExtensions(): Promise<ExtensionsResult<ExtensionsInfo>> {
+    return this.extensionCommand(Commands.ReloadEditorExtensions, (r) => parseExtensionsInfo(r.info))
+  }
+
+  private async extensionCommand<Response, T>(
+    spec: CommandSpec<Record<string, never>, Response>,
+    parse: (response: Response) => T | null
+  ): Promise<ExtensionsResult<T>> {
+    if (!this.hasCapability(EditorExtensionsCapability)) return { status: "unsupported" }
+    try {
+      const value = parse(await this.send(spec, {}))
+      if (value === null) return { status: "error", kind: "malformed", message: `${spec.name}: the answer is not valid` }
+      return { status: "ok", value }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      if (e instanceof EngineError) {
+        const code = e.code
+        return code === undefined
+          ? { status: "error", kind: "other", message }
+          : { status: "error", kind: extensionErrorKindOf(code), message, code }
+      }
+      return { status: "error", kind: "other", message }
+    }
   }
 
   // ==================== Engine Health ====================
