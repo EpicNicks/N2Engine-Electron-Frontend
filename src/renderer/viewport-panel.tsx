@@ -3,11 +3,12 @@
 // logic are unit tested. This file is DOM glue only. Controls: viewport-input.ts.
 import { useEffect, useRef } from "preact/hooks"
 import { effect, untracked } from "@preact/signals-core"
-import { isTextEntry } from "./edit-actions"
+import { keymap } from "./keymap"
 import { useApp } from "./ui"
 import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
 import { followViewportSelection } from "./viewport-selection"
-import { FlyKeys, pointerActionFor, shortcutFor, wheelPixels, PointerAction } from "./viewport-input"
+import { pointerActionFor, wheelPixels, PointerAction } from "./viewport-input"
+import { ViewportKeyboard } from "./viewport-keys"
 import { InputForwarder, scrollLines } from "./play-input"
 import { ViewportRenderer, editTarget, gameTarget } from "./viewport-renderer"
 import { framePixelOf } from "./viewport-size"
@@ -78,9 +79,14 @@ export function Viewport() {
     const host = container.current!
     const frame = canvas.current!
     const over = overlay.current!
-    const keys = new FlyKeys()
+    // The fly keys and the viewport's shortcuts (viewport-keys.ts); the host adapter reads the gesture and the view
+    const kb = new ViewportKeyboard({
+      gesture: () => gesture?.action ?? null,
+      endGesture: () => endGesture(),
+      frameSelected: () => viewport.frameSelected().catch(reportFailure("Failed to frame the selection")),
+      live: () => play.live.peek(),
+    })
     let gesture: Gesture | null = null
-    let boost = false
     let flyFrame: number | null = null
     let flyTime = 0
 
@@ -166,14 +172,14 @@ export function Viewport() {
       if (gesture?.action !== "look") return
       const dt = Math.min(0.1, (now - flyTime) / 1000)
       flyTime = now
-      if (keys.any) viewport.fly(keys.direction(), dt, boost)
+      if (kb.keys.any) viewport.fly(kb.keys.direction(), dt, kb.boost)
       flyFrame = requestAnimationFrame(flyTick)
     }
 
     function endGesture(): void {
       const ended = gesture
       gesture = null
-      keys.clear()
+      kb.keys.clear()
       if (flyFrame !== null) cancelAnimationFrame(flyFrame)
       flyFrame = null
       host.style.cursor = ""
@@ -210,7 +216,7 @@ export function Viewport() {
       } else if (action === "look") {
         host.style.cursor = "grabbing"
         flyTime = performance.now()
-        boost = e.shiftKey
+        kb.boost = e.shiftKey
         flyFrame = requestAnimationFrame(flyTick)
       } else {
         host.style.cursor = "grabbing"
@@ -236,7 +242,7 @@ export function Viewport() {
           viewport.orbit(dx, dy)
           break
         case "look":
-          boost = e.shiftKey
+          kb.boost = e.shiftKey
           viewport.look(dx, dy)
           break
         case "pan":
@@ -256,7 +262,7 @@ export function Viewport() {
       if (!gesture || gesture.pointerId !== e.pointerId) return
       const ended = gesture
       gesture = null
-      keys.clear()
+      kb.keys.clear()
       if (flyFrame !== null) cancelAnimationFrame(flyFrame)
       flyFrame = null
       host.style.cursor = ""
@@ -297,34 +303,21 @@ export function Viewport() {
         if (forwarder.key(e.code, true)) e.preventDefault()
         return
       }
-      if (isTextEntry(e.target as HTMLElement | null)) return
-      boost = e.shiftKey
-      if (e.code === "Escape" && gesture?.action === "select") {
-        e.preventDefault()
-        endGesture()
-        return
-      }
-      if (gesture?.action === "look" && keys.down(e.code)) {
-        e.preventDefault()
-        return
-      }
-      if (shortcutFor(e) === "frameSelected") {
-        e.preventDefault()
-        viewport.frameSelected().catch(reportFailure("Failed to frame the selection"))
-      }
+      // A fly key while looking is taken here (and prevented, so no shortcut takes it too); F and Escape are the keymap's
+      // (viewport.frame, viewport.cancel), registered below
+      if (kb.keyDown(e)) e.preventDefault()
     }
     const onKeyUp = (e: KeyboardEvent): void => {
       if (play.live.peek()) {
         if (forwarder.key(e.code, false)) e.preventDefault()
         return
       }
-      boost = e.shiftKey
-      keys.up(e.code)
+      kb.keyUp(e)
     }
     const onBlur = (): void => {
       // Focus left the game view (or the window): nothing stays held down in the game
       forwarder.releaseAll()
-      keys.clear()
+      kb.keys.clear()
       if (gesture) endGesture()
     }
     const onContextMenu = (e: Event): void => e.preventDefault()
@@ -334,6 +327,7 @@ export function Viewport() {
     host.addEventListener("pointerup", onPointerUp)
     host.addEventListener("pointercancel", onBlur)
     host.addEventListener("wheel", onWheel, { passive: false })
+    const unregisterKeys = kb.register(keymap, host)
     host.addEventListener("keydown", onKeyDown)
     host.addEventListener("keyup", onKeyUp)
     host.addEventListener("blur", onBlur)
@@ -408,6 +402,7 @@ export function Viewport() {
       host.removeEventListener("pointerup", onPointerUp)
       host.removeEventListener("pointercancel", onBlur)
       host.removeEventListener("wheel", onWheel)
+      unregisterKeys()
       host.removeEventListener("keydown", onKeyDown)
       host.removeEventListener("keyup", onKeyUp)
       host.removeEventListener("blur", onBlur)
@@ -419,7 +414,7 @@ export function Viewport() {
 
   const connected = store.connected.value
   return (
-    <div class="viewport-container" ref={container} tabIndex={0} aria-label="Viewport">
+    <div class="viewport-container" ref={container} tabIndex={0} aria-label="Viewport" data-keymap-scope="viewport">
       <canvas class="viewport" ref={canvas} width={800} height={600} />
       <canvas class="viewport-overlay-canvas" ref={overlay} width={800} height={600} />
       {!connected && <div class="viewport-overlay">{store.busy.value ?? store.hostSummary.value}</div>}

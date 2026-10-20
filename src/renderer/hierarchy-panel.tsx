@@ -6,6 +6,8 @@ import { signal } from "@preact/signals"
 import { EntityDragEffect, EntityDragType } from "./drag-types"
 import { CreatePresets } from "./hierarchy-state"
 import { DropPosition, DropTarget, RootId, canDrop, resolveDrop } from "./hierarchy-tree"
+import { keymap } from "./keymap"
+import { useKeymapActions } from "./keymap-hooks"
 import { Empty, MenuItem, Panel, showContextMenu, useApp } from "./ui"
 
 /** What the drag in progress carries (empty when none, or when it isn't one of ours) */
@@ -93,36 +95,41 @@ export function HierarchyPanel() {
   const duplicate = () => hierarchy.duplicateSelected().catch(fail("Failed to duplicate"))
   const remove = () => hierarchy.deleteSelected().catch(fail("Failed to delete"))
 
+  // The keys (the keymap's hierarchy scope: the list has the focus). The name being typed keeps its keys (the keymap
+  // doesn't fire these in a text field); the active checkbox, say, doesn't take them from the list.
+  useKeymapActions(
+    {
+      // A read-only hierarchy (a running game) takes the key and does nothing (the keymap prevents its default); a held
+      // key would repeat delete or duplicate on whatever is selected next, so it acts once
+      "hierarchy.rename": () => {
+        if (!readOnly) hierarchy.beginRename()
+      },
+      "hierarchy.delete": (e) => {
+        if (!readOnly && !e.repeat) void remove()
+      },
+      "hierarchy.duplicate": (e) => {
+        if (!readOnly && !e.repeat) void duplicate()
+      },
+      "hierarchy.next": () => void hierarchy.step(1, false),
+      "hierarchy.previous": () => void hierarchy.step(-1, false),
+      "hierarchy.extendNext": () => void hierarchy.step(1, true),
+      "hierarchy.extendPrevious": () => void hierarchy.step(-1, true),
+      "hierarchy.expand": () => void hierarchy.expandPrimary(),
+      "hierarchy.collapse": () => void hierarchy.collapsePrimary(),
+    },
+    list
+  )
+
   const rowMenu = (id: string): MenuItem[] =>
     readOnly
       ? [{ label: `Read only: ${hierarchy.readOnlyReason.value}`, action: () => {}, disabled: true }]
       : [
-          { label: "Rename (F2)", action: () => hierarchy.beginRename(id) },
-          { label: "Duplicate (Ctrl+D)", action: duplicate },
-          { label: "Delete (Del)", action: remove },
+          { label: keymap.withChord("Rename", "hierarchy.rename"), action: () => hierarchy.beginRename(id) },
+          { label: keymap.withChord("Duplicate", "hierarchy.duplicate"), action: duplicate },
+          { label: keymap.withChord("Delete", "hierarchy.delete"), action: remove },
           { separator: true },
           ...createItems(id),
         ]
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    // Only the name being typed keeps its keys (the active checkbox, say, doesn't take them from the list)
-    if ((e.target as HTMLElement).classList.contains("hierarchy-rename")) return
-    const ctrl = e.ctrlKey || e.metaKey
-    const isDelete = e.key === "Delete"
-    const isDuplicate = ctrl && e.key.toLowerCase() === "d"
-    if (readOnly && (e.key === "F2" || isDelete || isDuplicate)) return void e.preventDefault()
-    // A held key would repeat the action on whatever is selected next
-    if (e.repeat && (isDelete || isDuplicate)) return void e.preventDefault()
-    if (e.key === "F2") hierarchy.beginRename()
-    else if (isDelete) void remove()
-    else if (isDuplicate) void duplicate()
-    else if (e.key === "ArrowDown") hierarchy.step(1, e.shiftKey)
-    else if (e.key === "ArrowUp") hierarchy.step(-1, e.shiftKey)
-    else if (e.key === "ArrowRight") hierarchy.expandPrimary()
-    else if (e.key === "ArrowLeft") hierarchy.collapsePrimary()
-    else return
-    e.preventDefault()
-  }
 
   /** The drop a drag over a row (or the empty space) means, or null when it isn't allowed or isn't our drag */
   const dropAt = (overId: string | null, position: DropPosition): DropTarget | null => {
@@ -266,7 +273,7 @@ export function HierarchyPanel() {
         tabIndex={0}
         role="tree"
         aria-multiselectable="true"
-        onKeyDown={onKeyDown}
+        data-keymap-scope="hierarchy"
         onContextMenu={(e) => {
           e.preventDefault()
           if (canCreate) showContextMenu(e.clientX, e.clientY, createItems(RootId))

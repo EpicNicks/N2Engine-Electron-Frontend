@@ -4,6 +4,7 @@ import { ComponentChildren, createContext } from "preact"
 import { useContext, useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { PanelFrameContext } from "./layout/panel-frame"
+import type { KeymapScope, ShortcutRow } from "./keymap"
 import type { EditorStore } from "./store"
 import type { SceneState } from "./scene-state"
 import type { AssetsState } from "./assets-state"
@@ -60,12 +61,14 @@ export function Panel(props: {
   actions?: ComponentChildren
   class?: string
   contentClass?: string
+  /** The keymap scope the panel's keys belong to (keymap.ts): set on the panel, so a focus anywhere in it is in that scope */
+  keymapScope?: KeymapScope
   children?: ComponentChildren
 }) {
   // In a layout (layout/layout-view.tsx) the header drags the panel to another stack or region and has its menu
   const frame = useContext(PanelFrameContext)
   return (
-    <section class={`panel ${props.class ?? ""}`}>
+    <section class={`panel ${props.class ?? ""}`} data-keymap-scope={props.keymapScope}>
       <div
         class="panel-header"
         draggable={frame !== null ? true : undefined}
@@ -345,13 +348,14 @@ export function ContextMenu() {
   )
 }
 
-/** Whether a dialog (prompt, confirm, unsaved changes, autosave) is open: keys meant for the editor mustn't act then */
+/** Whether a dialog (prompt, confirm, unsaved changes, autosave, the shortcuts list) is open: keys meant for the editor mustn't act then */
 export function modalOpen(): boolean {
   return (
     promptRequest.value !== null ||
     confirmRequest.value !== null ||
     unsavedRequest.value !== null ||
-    autosaveRequest.value !== null
+    autosaveRequest.value !== null ||
+    shortcutsRequest.value !== null
   )
 }
 
@@ -459,6 +463,85 @@ export function AutosaveDialog() {
           </button>
           <button ref={restore} onClick={() => close("restore")}>
             Restore
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==================== Keyboard shortcuts (read only) ====================
+
+const shortcutsRequest = signal<ShortcutRow[] | null>(null)
+
+/** Shows the list of shortcuts (keymap.describe()): the actions with their current chords; nothing in it can be changed */
+export function showShortcutsDialog(rows: ShortcutRow[]): void {
+  shortcutsRequest.value = rows
+}
+
+export function closeShortcutsDialog(): void {
+  shortcutsRequest.value = null
+}
+
+export function ShortcutsDialog() {
+  const rows = shortcutsRequest.value
+  const close = useRef<HTMLButtonElement>(null)
+  const opener = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (rows === null) return
+    opener.current = document.activeElement as HTMLElement | null
+    close.current?.focus()
+    // The focus goes back to what had it (the Window button) when the list closes
+    return () => opener.current?.focus?.()
+  }, [rows === null])
+  if (rows === null) return null
+
+  const scopes = [...new Set(rows.map((row) => row.scope))]
+  return (
+    <div class="modal-overlay" onClick={(e) => e.target === e.currentTarget && closeShortcutsDialog()}>
+      <div
+        class="modal shortcuts-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") closeShortcutsDialog()
+        }}
+      >
+        <table class="shortcuts-table">
+          <caption>Keyboard shortcuts</caption>
+          {scopes.map((scope) => (
+            <tbody key={scope}>
+              <tr>
+                <th scope="colgroup" colSpan={2} class="shortcuts-scope">
+                  {rows.find((row) => row.scope === scope)!.scopeTitle}
+                </th>
+              </tr>
+              {rows
+                .filter((row) => row.scope === scope)
+                .map((row) => (
+                  <tr key={row.id} data-action={row.id}>
+                    <th scope="row" class="shortcuts-action">
+                      {row.title}
+                    </th>
+                    <td class="shortcuts-chords">
+                      {row.chords.length === 0
+                        ? "Not bound"
+                        : row.chords.map((chord, i) => (
+                            <span key={chord}>
+                              {i > 0 && " or "}
+                              <kbd>{chord}</kbd>
+                            </span>
+                          ))}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          ))}
+        </table>
+        <div class="modal-buttons">
+          <button ref={close} onClick={closeShortcutsDialog}>
+            Close
           </button>
         </div>
       </div>
