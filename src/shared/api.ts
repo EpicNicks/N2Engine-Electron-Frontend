@@ -598,7 +598,7 @@ export interface EditMenuApi {
 
 /**
  * What an IPC handler returns: errors are carried as data so the page sees the original message. code is the host's
- * ErrorCoded code (protocol 1.11, "readOnly" or "forbidden") when it refused a command with one.
+ * ErrorCoded code (protocol 1.11, "readOnly" or "forbidden"; "busy" for a Hello, 1.13) when it refused with one.
  */
 export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string; code?: string }
 

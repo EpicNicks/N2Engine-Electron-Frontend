@@ -1,10 +1,11 @@
 // The welcome screen, in two modes. Local engine: open a project, create one (N2EditorHost --create, engine #90),
 // reopen a recent one, and say where N2EditorHost is. Remote engine (frontend issue #21): connect to a host that is
 // already running, through an SSH tunnel the editor opens (user@host, ports, identity file and the access token).
-import { useState } from "preact/hooks"
+import { useEffect, useState } from "preact/hooks"
 import type { DirectRemoteSettings, PinInspection, RemoteSettings } from "../shared/api"
 import { formatFingerprint, isLoopbackHost, normaliseFingerprint } from "../protocol/fingerprint"
 import { basename } from "./paths"
+import { BusyRetryNotice } from "./connection-notices"
 import { useApp } from "./ui"
 
 function HostLocationLine() {
@@ -391,6 +392,8 @@ function RemoteForm() {
   const [transport, setTransport] = useState<RemoteTransport>("ssh")
   const { store } = useApp()
   const busy = store.busy.value !== null
+  // Leaving the connect screen ends a retry of a busy host (its timer and the token it holds)
+  useEffect(() => () => store.cancelBusyRetry(), [store])
   return (
     <>
       <div class="mode-switch" role="tablist">
@@ -416,6 +419,7 @@ function RemoteForm() {
         </button>
       </div>
       {transport === "ssh" ? <SshForm /> : <DirectForm />}
+      <BusyRetryNotice />
     </>
   )
 }

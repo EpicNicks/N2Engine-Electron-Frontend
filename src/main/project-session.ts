@@ -29,6 +29,7 @@ import type { RecentRemotes } from "./recent-remotes"
 import type { EngineTarget } from "./engine-ipc"
 import type { PinStore } from "./pin-store"
 import { FingerprintMismatchError } from "../protocol/tls-pin"
+import { HostBusyError } from "../protocol/engine-client"
 import { describeDirect, describeMismatch, parseDirectRemoteSettings, requiredFingerprint } from "./direct-remote"
 import { SshTunnel, TunnelOptions, describeRemote, parseRemoteSettings } from "./ssh-tunnel"
 
@@ -307,6 +308,11 @@ export class ProjectSession {
         const output = tunnel.lastOutput
         if (this.tunnel === tunnel) this.killHost()
         else tunnel.kill()
+        // A busy host is a wait, not a failure: the typed error (and its code) goes on as is, with no console error line
+        if (!exited && e instanceof HostBusyError) {
+          this.setState({ status: "failed", mode: "local", projectPath: null, message: null })
+          throw e
+        }
         const message = exited
           ? `The SSH tunnel to ${label} ${describeExit(exited)} before the editor could connect${output}`
           : `The tunnel is up, but connecting to the host through it failed: ${e instanceof Error ? e.message : String(e)}${output}`
@@ -369,6 +375,11 @@ export class ProjectSession {
       } catch (e) {
         this.deps.engine.close()
         if (this.disposed) throw new CancelledError("Cancelled: the editor is closing")
+        if (e instanceof HostBusyError) {
+          // A wait, not a failure: the typed error (and its code) goes on as is, with no console error line
+          this.setState({ status: "failed", mode: "local", projectPath: null, message: null })
+          throw e
+        }
         if (e instanceof FingerprintMismatchError) {
           return failed(describeMismatch(label, e.expected, e.actual, pinned !== undefined))
         }

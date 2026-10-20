@@ -28,6 +28,8 @@ async function openDirectForm(inspection: PinInspection | undefined): Promise<Ha
   renderWithApp(<Welcome />, {
     store: {
       busy: signal<string | null>(null),
+      busyRetry: signal(null),
+      cancelBusyRetry: () => {},
       welcomeMode: signal<"local" | "remote">("remote"),
       recentRemotes: signal([]),
       inspectDirect: async (host, port) => {

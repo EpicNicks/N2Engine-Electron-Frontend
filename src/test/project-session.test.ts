@@ -12,6 +12,8 @@ import {
 } from "../main/host-launcher"
 import { CancelledError, EngineConnection, ProjectSession, ProjectSessionDeps } from "../main/project-session"
 import type { EngineTarget } from "../main/engine-ipc"
+import { errorCode } from "../main/ipc"
+import { HostBusyError } from "../protocol/engine-client"
 import type { SshTunnel, TunnelOptions } from "../main/ssh-tunnel"
 
 /** The HostProcess surface ProjectSession uses */
@@ -567,6 +569,18 @@ function remoteSetup(overrides: Partial<ProjectSessionDeps> = {}) {
 }
 
 describe("ProjectSession remote mode", () => {
+  test("a host answering busy through the tunnel keeps its typed error and code, closes the tunnel, and logs no error", async () => {
+    const { session, engine, states, tunnels } = remoteSetup()
+    engine.connectTo = async () => {
+      throw new HostBusyError()
+    }
+    await assert.rejects(session.connectRemote(remote, "s3cret-token"), (e: unknown) => e instanceof HostBusyError && errorCode(e) === "busy")
+    assert.equal(tunnels[0].killed, 1, "nothing is left open between tries")
+    assert.equal(session.state.status, "failed")
+    assert.equal(session.state.message, null)
+    assert.ok(!JSON.stringify(states).includes("s3cret-token"))
+  })
+
   test("connecting opens the tunnel, connects through its local port with the token, and remembers the remote", async () => {
     const { session, engine, states, tunnels, opened, remembered, launches, getRoot } = remoteSetup()
     const name = await session.connectRemote(remote, "s3cret-token")

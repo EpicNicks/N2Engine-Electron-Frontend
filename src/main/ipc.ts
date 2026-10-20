@@ -8,9 +8,12 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-/** The ErrorCoded code of an EngineError (the host's denial: "readOnly", "forbidden"); undefined for any other error */
+/**
+ * The ErrorCoded code of an EngineError (the host's denial: "readOnly", "forbidden") or of a HostBusyError ("busy",
+ * the answer to a Hello); undefined for any other error
+ */
 export function errorCode(e: unknown): string | undefined {
-  if (!(e instanceof Error) || e.name !== "EngineError") return undefined
+  if (!(e instanceof Error) || (e.name !== "EngineError" && e.name !== "HostBusyError")) return undefined
   const code = (e as { code?: unknown }).code
   return typeof code === "string" && code !== "" ? code : undefined
 }

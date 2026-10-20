@@ -3,6 +3,7 @@
 import { useEffect } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { effect } from "@preact/signals-core"
+import { ConnectionLostNotice } from "./connection-notices"
 import { ConsolePanel } from "./console-panel"
 import { editActions, editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
 import { HierarchyPanel } from "./hierarchy-panel"
@@ -402,6 +403,7 @@ export function Editor() {
   return (
     <div class="editor">
       <Toolbar />
+      <ConnectionLostNotice />
       <div class="main-container">
         <aside class="left-panel" style={{ width: `${leftWidth.value}px` }}>
           <AssetsPanel />

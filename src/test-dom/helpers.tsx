@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact"
 import { render, type RenderResult } from "@testing-library/preact"
 import { AppContext, type AppState } from "../renderer/ui"
 import { EditorStore } from "../renderer/store"
+import type { ConnectRetryOptions } from "../renderer/connect-retry"
 import { FakeApi, FakeTimers, fakeStoreApi } from "../test/fake-store-api"
 
 /** What a test provides: some members of some of the page's state objects, each with some of its members */
@@ -50,12 +51,13 @@ export interface StoreHarness {
 export async function renderWithStore(
   ui: ComponentChildren,
   setup: (api: FakeApi) => void = () => {},
-  overrides: AppOverrides = {}
+  overrides: AppOverrides = {},
+  retry: ConnectRetryOptions = {}
 ): Promise<RenderResult & StoreHarness> {
   const api = fakeStoreApi()
   setup(api)
   const timers = new FakeTimers()
-  const store = new EditorStore(api, { timers, now: () => 0 })
+  const store = new EditorStore(api, { timers, now: () => 0 }, retry)
   await store.load()
   const result = renderWithApp(ui, { ...overrides, store })
   return Object.assign(result, { api, store, timers })
