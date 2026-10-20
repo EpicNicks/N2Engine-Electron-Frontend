@@ -332,6 +332,8 @@ export function Editor() {
     return new LayoutController(registry, new LayoutPersistence(browserStore(), registry))
   }, [])
   useEffect(() => () => layout.dispose(), [layout])
+  // The window closing or reloading does not unmount the tree: save what is waiting then
+  useEffect(() => layout.flushOnUnload(window), [layout])
   const connected = store.connected.value
   useEffect(() => {
     if (!connected) return

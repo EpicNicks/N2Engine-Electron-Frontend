@@ -150,6 +150,9 @@ function frameOf(props: ViewProps, id: string): PanelFrame {
 function TabBar(props: ViewProps & { region: RegionId; groupIndex: number; tabs: string[]; active: string }) {
   const { controller, dynamic, region, groupIndex, tabs, active } = props
   const domId = (i: number) => `layout-${region}-${groupIndex}-tab-${i}`
+  const registry = registryOf(controller)
+  // A hidden panel that is unmounted has no tabpanel element for aria-controls to name
+  const hasPanel = (id: string) => id === active || !(registry.get(id)?.unmountWhenHidden || isDynamicId(id))
 
   const activate = (id: string) => {
     controller.activate(id)
@@ -202,7 +205,7 @@ function TabBar(props: ViewProps & { region: RegionId; groupIndex: number; tabs:
             id={domId(i)}
             data-tab-id={id}
             aria-selected={selected}
-            aria-controls={`layout-${region}-${groupIndex}-panel-${i}`}
+            aria-controls={hasPanel(id) ? `layout-${region}-${groupIndex}-panel-${i}` : undefined}
             tabIndex={selected ? 0 : -1}
             title={info.title}
             key={id}
@@ -295,7 +298,7 @@ function Stacks(props: ViewProps & { region: RegionId }) {
   return (
     <>
       {groups.map((group, i) => (
-        <Stack {...props} groupIndex={i} group={group} key={group.tabs[0]} />
+        <Stack {...props} groupIndex={i} group={group} key={i} />
       ))}
     </>
   )

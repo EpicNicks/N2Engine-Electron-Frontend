@@ -202,6 +202,37 @@ describe("tabs", () => {
     assert.equal(hidden.hidden, true)
   })
 
+  test("moving a stack's first tab out keeps the stack's other panels mounted", async () => {
+    const { controller } = renderLayout()
+    act(() => controller.move("hierarchy", { region: "left", group: 0 }))
+    await waitFor(() => assert.ok(events.includes("mount hierarchy")))
+    events = []
+    act(() => controller.move("assets", { region: "right", group: 0 }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.ok(!events.includes("unmount hierarchy"), "hierarchy was not remounted: " + events.join(", "))
+  })
+
+  test("a tab whose panel is not mounted has no aria-controls, and the others name an existing tabpanel", () => {
+    const { controller } = renderLayout()
+    act(() => controller.move("viewport", { region: "bottom", group: 0 }))
+    const tabs = within(region("bottom")!).getAllByRole("tab")
+    for (const tab of tabs) {
+      const controls = tab.getAttribute("aria-controls")
+      if (tab.getAttribute("aria-selected") === "true") assert.ok(document.getElementById(controls!), "the shown tab names its panel")
+      else if (controls !== null) assert.ok(document.getElementById(controls), "aria-controls never names a missing element")
+    }
+  })
+
+  test("a layout change waiting to be saved is saved when the window is hidden or closed", () => {
+    const { controller, store } = renderLayout()
+    const detach = controller.flushOnUnload(window)
+    act(() => controller.setSize("left", 333))
+    assert.equal(store.get(projectLayoutKey(Project)), null, "still waiting")
+    window.dispatchEvent(new Event("pagehide"))
+    assert.ok(store.get(projectLayoutKey(Project)), "saved")
+    detach()
+  })
+
   test("a tab bar shows a closable tab's close button, and it closes the panel", () => {
     renderLayout()
     const consoleTab = within(region("bottom")!).getByRole("tab")

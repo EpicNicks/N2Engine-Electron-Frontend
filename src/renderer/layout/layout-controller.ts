@@ -190,6 +190,17 @@ export class LayoutController {
     this.save()
   }
 
+  /** Saves what is waiting when the window is hidden, closed or reloaded (the tree is not unmounted then); returns the detach */
+  flushOnUnload(target: EventTarget): () => void {
+    const save = () => this.flush()
+    target.addEventListener("pagehide", save)
+    target.addEventListener("beforeunload", save)
+    return () => {
+      target.removeEventListener("pagehide", save)
+      target.removeEventListener("beforeunload", save)
+    }
+  }
+
   /** Saves what is waiting and stops: the editor is closing (or another project is opening) */
   dispose(): void {
     this.flush()
