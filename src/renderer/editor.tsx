@@ -1,30 +1,19 @@
-// The editor's layout once a project is open: the toolbar, then assets | viewport over the console and text files |
-// hierarchy, inspector and engine, with splitters between them.
-import { useEffect } from "preact/hooks"
-import { signal } from "@preact/signals"
-import { effect } from "@preact/signals-core"
+// The editor once a project is open: the toolbar, then the panels in their regions (layout/layout-view.tsx), by default
+// assets | viewport over the console and text files | hierarchy, inspector and engine, with splitters between them.
+import { useEffect, useMemo } from "preact/hooks"
 import { ConnectionLostNotice } from "./connection-notices"
-import { ConsolePanel } from "./console-panel"
+import { TextEditor } from "./assets-panel"
 import { editActions, editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
-import { HierarchyPanel } from "./hierarchy-panel"
-import { InspectorPanel } from "./inspector-panel"
-import { AssetsPanel, TextEditor } from "./assets-panel"
 import { isDirty } from "./assets-state"
-import { EnginePanel } from "./panels"
+import { builtinPanels } from "./layout/builtin-panels"
+import { LayoutController } from "./layout/layout-controller"
+import { DynamicPrefix } from "./layout/layout-model"
+import { DynamicTab, EditorLayout, WindowButton } from "./layout/layout-view"
+import { LayoutPersistence, browserStore } from "./layout/layout-storage"
 import { basename } from "./paths"
-import { MenuItem, Splitter, confirmDialog, modalOpen, showContextMenu, useApp } from "./ui"
+import { MenuItem, confirmDialog, modalOpen, showContextMenu, useApp } from "./ui"
 import { GameEndedMessage } from "../shared/api"
 import { followScene } from "./scene-follow"
-import { Viewport } from "./viewport-panel"
-
-// Panel sizes, in CSS pixels, kept for the session
-const leftWidth = signal(300)
-const rightWidth = signal(300)
-const bottomHeight = signal(220)
-/** The bottom panel's tab: the console, or an open script's path */
-const bottomTab = signal<string>("console")
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 /** The badge that says nothing can be changed (the host is read-only, or the user is a viewer); nothing otherwise */
 export function ReadOnlyBadge() {
@@ -208,7 +197,7 @@ function EditButton() {
   )
 }
 
-function Toolbar() {
+function Toolbar({ layout }: { layout: LayoutController }) {
   const { store, audio } = useApp()
   const host = store.host.value
   const busy = store.busy.value
@@ -241,6 +230,7 @@ function Toolbar() {
       <div class="separator" />
       <SceneButtons />
       <EditButton />
+      <WindowButton controller={layout} />
       <div class="separator" />
       <PlayButtons />
       <div class="separator" />
@@ -273,70 +263,6 @@ function Toolbar() {
       <span class={`status ${store.connected.value ? "connected" : host.status}`} title={title}>
         {busy ?? summary}
       </span>
-    </div>
-  )
-}
-
-function BottomPanel() {
-  const { assets } = useApp()
-  const scripts = assets.tabs.value
-  const active = assets.activeTab.value
-  // Unsaved text is never closed without asking
-  const closeTab = async (path: string) => {
-    const tab = assets.tabs.value.find((t) => t.path === path)
-    if (tab && isDirty(tab) && !(await confirmDialog(`${basename(path)} has unsaved changes.`, "Close without saving"))) {
-      return
-    }
-    assets.closeText(path)
-  }
-  // Opening a script shows it
-  useEffect(() => {
-    if (active) bottomTab.value = active
-  }, [active])
-  const tab =
-    bottomTab.value === "console" || scripts.some((s) => s.path === bottomTab.value) ? bottomTab.value : "console"
-
-  return (
-    <div class="bottom-panel" style={{ height: `${bottomHeight.value}px` }}>
-      <div class="tab-bar" role="tablist">
-        <div
-          class={tab === "console" ? "tab active" : "tab"}
-          role="tab"
-          aria-selected={tab === "console"}
-          onClick={() => (bottomTab.value = "console")}
-        >
-          Console
-        </div>
-        {scripts.map((script) => (
-          <div
-            class={tab === script.path ? "tab active" : "tab"}
-            role="tab"
-            aria-selected={tab === script.path}
-            title={script.path}
-            key={script.path}
-            onClick={() => {
-              assets.activeTab.value = script.path
-              bottomTab.value = script.path
-            }}
-          >
-            <span>
-              {basename(script.path)}
-              {isDirty(script) ? " •" : ""}
-            </span>
-            <span
-              class="close"
-              aria-label={`Close ${basename(script.path)}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                closeTab(script.path)
-              }}
-            >
-              ×
-            </span>
-          </div>
-        ))}
-      </div>
-      {tab === "console" ? <ConsolePanel /> : <TextEditor path={tab} />}
     </div>
   )
 }
@@ -400,30 +326,69 @@ export function Editor() {
     }
   }, [store.projectPath.value])
 
+  // The layout: where the panels are, remembered per project (layout/). The project's id comes from the host.
+  const layout = useMemo(() => {
+    const registry = builtinPanels()
+    return new LayoutController(registry, new LayoutPersistence(browserStore(), registry))
+  }, [])
+  useEffect(() => () => layout.dispose(), [layout])
+  // The window closing or reloading does not unmount the tree: save what is waiting then
+  useEffect(() => layout.flushOnUnload(window), [layout])
+  const connected = store.connected.value
+  useEffect(() => {
+    if (!connected) return
+    let stale = false
+    window.engine.getProjectInfo().then(
+      (info) => {
+        if (!stale && isStorageKeyPart(info.project.projectId)) layout.setProject(info.project.projectId)
+      },
+      // Without the id the layout is the user default's and isn't remembered for this project
+      (e) => console.error("Failed to get the project's id for the layout:", e)
+    )
+    return () => {
+      stale = true
+    }
+  }, [connected, store.projectPath.value])
+
+  // The open text files are tabs of the bottom region: opening one shows it, and closing the last unsaved one asks first
+  const scripts = assets.tabs.value
+  const activeScript = assets.activeTab.value
+  const dynamic = scripts.map(
+    (script): DynamicTab => ({
+      id: DynamicPrefix + script.path,
+      label: basename(script.path),
+      title: script.path,
+      dirty: isDirty(script),
+      render: () => <TextEditor path={script.path} />,
+      // Unsaved text is never closed without asking
+      close: async () => {
+        const tab = assets.tabs.value.find((t) => t.path === script.path)
+        if (tab && isDirty(tab) && !(await confirmDialog(`${basename(script.path)} has unsaved changes.`, "Close without saving"))) {
+          return
+        }
+        assets.closeText(script.path)
+      },
+      activate: () => {
+        assets.activeTab.value = script.path
+      },
+    })
+  )
+  const dynamicKey = JSON.stringify(dynamic.map((t) => t.id))
+  useEffect(() => layout.setDynamicTabs(dynamic.map((t) => t.id)), [dynamicKey])
+  useEffect(() => {
+    if (activeScript) layout.showDynamic(DynamicPrefix + activeScript)
+  }, [activeScript])
+
   return (
     <div class="editor">
-      <Toolbar />
+      <Toolbar layout={layout} />
       <ConnectionLostNotice />
-      <div class="main-container">
-        <aside class="left-panel" style={{ width: `${leftWidth.value}px` }}>
-          <AssetsPanel />
-        </aside>
-        <Splitter direction="vertical" onDrag={(dx) => (leftWidth.value = clamp(leftWidth.value + dx, 150, 500))} />
-        <div class="center-panel">
-          <Viewport />
-          <Splitter
-            direction="horizontal"
-            onDrag={(dy) => (bottomHeight.value = clamp(bottomHeight.value - dy, 80, 700))}
-          />
-          <BottomPanel />
-        </div>
-        <Splitter direction="vertical" onDrag={(dx) => (rightWidth.value = clamp(rightWidth.value - dx, 200, 600))} />
-        <aside class="right-panel" style={{ width: `${rightWidth.value}px` }}>
-          <HierarchyPanel />
-          <InspectorPanel />
-          <EnginePanel />
-        </aside>
-      </div>
+      <EditorLayout controller={layout} dynamic={new Map(dynamic.map((t) => [t.id, t]))} />
     </div>
   )
+}
+
+/** A project id is a UUID; anything else isn't used to name a stored layout */
+function isStorageKeyPart(id: unknown): id is string {
+  return typeof id === "string" && /^[0-9a-zA-Z-]{1,64}$/.test(id)
 }

@@ -52,6 +52,11 @@ describe("frame targets", () => {
   })
 })
 
+// Waits for a condition, up to 2 s, so a slow CI machine does not fail a fixed sleep.
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 400 && !done(); i++) await new Promise((resolve) => setTimeout(resolve, 5))
+}
+
 describe("a game's frames after a failure", () => {
   test("a transient failure is retried a few times in a row, and a frame starts the count again", () => {
     const policy = new FrameRetryPolicy(3)
@@ -78,14 +83,14 @@ describe("a game's frames after a failure", () => {
       isConnected: () => true,
     })
     scheduler.start()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await until(() => errors.length > 0)
     assert.equal(errors.length, 1)
     assert.equal(scheduler.isRunning, false, "a failed frame stops it")
     // The game ended; the editor view's source takes over and the renderer starts it
     fail = false
     scheduler.stop()
     scheduler.start()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await until(() => shown.length > 0)
     assert.deepEqual(shown, [1])
     scheduler.stop()
   })
