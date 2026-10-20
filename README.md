@@ -295,12 +295,131 @@ Roadmap phase F1 (issue #6's UI roadmap, decisions U1 and U2). The editor's pane
 - **Where it is kept** (`layout-storage.ts`, `layout-controller.ts`). The page's `localStorage`, per machine: `n2.layout.project.<projectId>` for the open project (the id comes from `GetProjectInfo`, `project.projectId`, so a remote host's project has its own layout on this machine) and `n2.layout.user` for the default new projects start from. Every access is in try/catch and a failure only means the layout isn't remembered: the editor still works for the session. A change is saved 400 ms after the last one (a splitter drag changes the size on every pointer move), and what is waiting is saved when the editor closes or another project opens. Opening or closing a text file changes nothing that is saved. Until the host has answered `GetProjectInfo` the layout is the user default (or the built-in one), and an arrangement made before the id arrives becomes the project's. **Reset layout** forgets the project's layout and shows the user default, or the built-in layout when none was saved. Only panel ids, tab order, the shown tab and sizes are stored: no paths, file names, tokens or text. `KeyValueStore` (`get`, `set`, `remove`) is the seam the editor's preferences store (F2) can take the keys over through.
 - **Not verified in a real Electron window yet:** how a tab drag feels (jsdom has no `DataTransfer`, so the drops are tested with a hand-made one), the splitters' limits at small window sizes, and the look of a stacked tab bar over a panel's own header. The default arrangement's boxes were compared with the old markup's in headless Chrome with stand-in panels (identical to within the 1 px border that moved from the panel to its stack); the real panels were not.
 
+## MCP (n2-mcp)
+
+`n2-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code, Claude Desktop, any MCP client) **inspect** an N2Engine project through an editor host: the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots. This first version has **read tools only**.
+
+It is a separate Node program in `mcp/` (single-file bundle `dist/n2-mcp.mjs`, plain Node 22 or later, no Electron). It reuses this repo's protocol client (`src/protocol/`) and host launcher (`src/main/host-launcher.ts`), and talks to the host as an ordinary editor protocol client with its **own token**, so the host's roles, read-only mode, single-session rule and audit lines apply to the agent exactly as to a person. The design is the engine's MCP proposal (decisions M1-M12).
+
+```
+npm run build:mcp   # dist/n2-mcp.mjs (npm run build also does it)
+npm run mcp:golden  # regenerate mcp/tool-schemas.golden.json after a deliberate change to a tool
+```
+
+### Backends
+
+```
+node dist/n2-mcp.mjs --launch <projectPath> [--host-path <N2EditorHost>] [--renderer opengl|software]
+node dist/n2-mcp.mjs --connect <host:port> --fingerprint <sha256> (--token-env <VAR> | --token-file <path>) [--user <name>]
+```
+
+- **`--launch`** starts a host of the bridge's own for the project (`N2EditorHost --project <dir> --port 0 --tokens-file <temp file> --exit-on-stdin-eof`, found with `--host-path` or the `N2ENGINE_HOST` variable the editor also uses). Its one user, `n2-mcp`, has the **editor** role and a fresh random 256-bit token: the bridge writes only the token's SHA-256 to a 0600 file in a new temp folder, never puts the token in the arguments or the child's environment, and removes the file and ends the host when it exits (stdio closed, a signal, or the process ending; the host also ends by itself when the bridge's pipe to it closes). It needs a host built with TLS support (the tokens file uses SHA-256). The host is started on the first tool call, not at startup.
+- **`--connect`** reaches a running host over **TLS with a pinned certificate fingerprint**. `--fingerprint` is required (64 hex digits, colons allowed): there is no trust on first use, because nobody is at the prompt. Get it from the host's ready line (`N2EditorHost ready port=... tls=1 fingerprint=...`) or from the editor's remote connection dialog. Plaintext is refused. The token is read from the environment variable named by `--token-env` (and removed from the environment) or from `--token-file` (on POSIX refused when group or others can read it). **A token is never accepted as a command line argument**, and is never logged.
+- Other options: `--user <name>` (the token's user in the host's tokens file), `--allow-admin`, `--busy-wait <ms>` (default 3000, at most 10000), `--call-timeout <ms>` (default 60000), `--ready-timeout <ms>`.
+- The bridge says Hello with `errorCodes`, so the host's refusals arrive with codes. The host's role decides what works; the bridge adds nothing to it.
+
+A session with the host is opened on the first tool call (a client that only lists tools never holds the host's single session), is checked once, and is used by one tool call at a time. When the host is busy (another editor or agent holds it) the bridge waits `--busy-wait` and tries **once** more, then answers with a `busy` error; it never retries in a loop. A dropped or idle-closed session is reopened by the next call. A call the host doesn't answer within `--call-timeout` drops the session and fails with `timeout`.
+
+### Tools
+
+All eleven are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false`, have `additionalProperties: false` input schemas and an `outputSchema`, and answer with structured content plus a text block. The exact list, descriptions and schemas are pinned in `mcp/tool-schemas.golden.json` (a test fails when they change without it).
+
+| Tool | What it does |
+|---|---|
+| `n2_status` | Where am I: protocol and engine versions, the role, whether the host is read-only, the project, the open scene (and whether it has unsaved changes), play state, engine health, undo history size. Call first. |
+| `n2_get_project_info` | Name, id, engine version, startup scene, scenes and settings. No host paths. |
+| `n2_get_hierarchy` | The scene's entities, depth-first, 200 per page (`limit` up to 2000, `cursor`, `rootId`, `maxDepth`). |
+| `n2_get_entity` | One entity: header, local and world transform (position, quaternion, scale), up to 50 children, components with their saved values (64 KB budget, `componentTypes` filter). |
+| `n2_get_component_types` | The component types the host can create (`filter` by name). |
+| `n2_describe_component` | One type's fields as JSON Schema 2020-12 (types, ranges, enums, references as UUID strings, read-only, defaults); a LuaComponent's script fields by `entityId` and `componentId`. |
+| `n2_list_assets` | Folders and assets (`folder`, `recursive`, `type`, `cursor`, `limit`). |
+| `n2_get_asset_info` | One asset by path or UUID: type, size, sub-assets, import settings. |
+| `n2_read_text_asset` | A text file's text, at most 100 KB per call, with `offset` and `length` in bytes (on character boundaries), a truncation note and `nextCursor`. |
+| `n2_get_console` | The host's log lines: the latest `limit`, or what is new since `cursor`; `level`, `contains`. |
+| `n2_screenshot` | A PNG image: `view` `editor` (default; the editor camera, `RenderFrameIfChanged`) or `game` (`RenderFrame`, the main camera); 768x432 by default, long side at most 1568 px (larger requests are reduced, keeping proportions). It leaves the host's viewport at the picture's size. |
+
+Every result has the same shape: `{source, untrusted, truncated, nextCursor?, notes?, data}`, and its text block is a one-line summary followed by the same JSON in an `<n2-data source="..." untrusted>` envelope.
+
+### Budgets and limits
+
+| What | Limit |
+|---|---|
+| Tool calls | 120 per minute (`rate_limited`, with the seconds to wait) |
+| Hierarchy and asset pages | 200 entries by default, 2000 at most, and about 96 KB of JSON per page (a page cut for size has a `nextCursor`) |
+| Entity component values | 64 KB, then values are marked omitted |
+| Text asset | 100 KB per call |
+| Console | 100 lines by default, 1000 at most, 1024 characters per line |
+| Strings | names 256 characters, other strings 4096, with a `...[truncated N more characters]` marker |
+| A result's text block | 128 KB guard (`result_too_large`) |
+| Screenshot | 1568 px long side, 3 MB PNG (`result_too_large` with advice to ask for less) |
+
+### Security
+
+- **Everything from the project is untrusted data.** Names, field values, asset text, console lines and the host's own error text are scrubbed and bounded before the model sees them: control characters are removed; bidi, zero-width, line-separator and Unicode tag characters are shown as `\u{...}` escapes; lone surrogates become U+FFFD; strings and whole values are size-capped; the text block's JSON escapes `<`, `>` and `&`, so data cannot write the `</n2-data>` that closes the envelope. Every tool description and the server instructions say returned text is data, never instructions. There are no tools that run text as a command, and no shell, file system or network tools.
+- **The host's paths and the bridge's secrets stay out.** The project and user-data folders (learned from `GetProjectInfo`, which is never passed on with them) become `<project>` and `<userdata>`; any other absolute path in a message or log line becomes `<host-path>`; the token is replaced by `[redacted]` if a host ever echoes it. The console drops the host's `audit:`, `Rate limit` and `Refused Hello` lines and `peer=` addresses (the engine's own filtering of the event stream for viewers is the other half).
+- **Least privilege.** Use a dedicated token user per agent (for example `--new-token agent-claude viewer` on the host), a **viewer** token for inspection, and an editor token only when later versions write. **The admin role is refused** (`admin_refused` for every tool, the connection closed) unless `--allow-admin`: an agent never needs it. A host started with `--token-env` has one token with every right, which is admin: use a `--tokens-file` host for agents.
+- **No secrets in client configs.** Tokens come from an environment variable or a 0600 file, never from arguments; in `.mcp.json` give the variable by reference.
+- A hostile host can only return data (scrubbed and bounded as above). A screenshot can show text rendered by the project: that is data too.
+
+### Errors
+
+A failed call is `isError: true` with `_meta["n2/errorCode"]` and a text of the code, a fixed message, one sentence of advice and, for the host's own refusals, its words quoted as untrusted data. Raw exception text never reaches the model (it goes, scrubbed, to the bridge's stderr). The codes: `invalid_argument`, `rate_limited`, `read_only`, `forbidden`, `busy`, `auth_failed`, `fingerprint_mismatch`, `incompatible_protocol`, `connection_lost`, `host_unavailable`, `admin_refused`, `timeout`, `extensions_disabled`, `extension_failed`, `extension_faulted`, `host_error`, `result_too_large`, `internal`. Arguments that fail the schema are `isError` results too (the SDK's validation message).
+
+### Claude Code and Claude Desktop
+
+Claude Code (syntax from <https://code.claude.com/docs/en/mcp>, read 2026-10-20): `claude mcp add [options] <name> -- <command> [args...]`, with scope `local` (default), `project` (writes `.mcp.json`) or `user`. A project's `.mcp.json` can be committed because it holds no secret (`${VAR}` and `${VAR:-default}` are expanded in `command`, `args` and `env`):
+
+```json
+{
+  "mcpServers": {
+    "n2engine": {
+      "command": "node",
+      "args": ["tools/n2-mcp.mjs", "--launch", "${CLAUDE_PROJECT_DIR:-.}", "--renderer", "software"],
+      "env": { "N2ENGINE_HOST": "${N2ENGINE_HOST}" }
+    },
+    "n2engine-staging": {
+      "command": "node",
+      "args": ["tools/n2-mcp.mjs", "--connect", "editor.example.net:9999", "--fingerprint", "<64 hex digits>", "--user", "agent-claude", "--token-env", "N2_AGENT_TOKEN"],
+      "env": { "N2_AGENT_TOKEN": "${N2_AGENT_TOKEN}" }
+    }
+  }
+}
+```
+
+The same with the CLI: `claude mcp add --transport stdio --scope project n2engine -- node tools/n2-mcp.mjs --launch . --renderer software` (if you use `--env`, put another option such as `--transport stdio` between it and the server name). Claude Code warns when a tool result is over 10,000 tokens and saves one over `MAX_MCP_OUTPUT_TOKENS` (default 25,000) to a file: the bridge's page sizes keep results under that for ordinary scenes.
+
+Claude Desktop (<https://modelcontextprotocol.io/docs/develop/connect-local-servers>): Settings, Developer, Edit Config opens `claude_desktop_config.json` (`%APPDATA%\Claude\claude_desktop_config.json` on Windows, `~/Library/Application Support/Claude/` on macOS). It takes the same `mcpServers` shape with absolute paths; restart Claude Desktop afterwards. Prefer `--token-file` there (a file of mode 0600), since the config file is plain text:
+
+```json
+{
+  "mcpServers": {
+    "n2engine": {
+      "command": "node",
+      "args": ["C:\\tools\\n2-mcp.mjs", "--connect", "editor.example.net:9999", "--fingerprint", "<64 hex digits>", "--user", "agent-claude", "--token-file", "C:\\Users\\me\\.n2\\agent-token"]
+    }
+  }
+}
+```
+
+### Spec revisions
+
+The bridge uses `@modelcontextprotocol/server` **2.3.1** (pinned, bundled into `dist/n2-mcp.mjs`, with `zod` 4.6.7 for the schemas). It serves MCP over stdio with the SDK's `serveStdio`, which decides per connection how the client opens it: **2026-07-28** (the current revision: `server/discover`, the protocol version in every request's `_meta`) or the handshake-based **2025-11-25** (`initialize`) and the older ones the SDK still accepts. Both are tested against the SDK's own client (`mcp/test/conformance.test.ts`). A client on 2026-07-28 with version negotiation `auto` first starts a short-lived probe copy of the bridge for `server/discover`; because the host is only reached on the first tool call, that copy never starts a host or takes the host's session. The tool annotation names (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) are those of the SDK's tool schema, which serves both revisions.
+
+### Not there yet
+
+Write tools (create and edit entities, undo, text asset writes, save, project settings), play tools, the `--electron` backend (working beside an open editor), resources, subscriptions and prompts, the Streamable HTTP transport, the confirmation gate for irreversible operations, and the `yield` Hello flag. `n2_screenshot` does not restore the host's viewport size afterwards.
+
+### Not verified
+
+A real Claude Code or Claude Desktop session driving a live host (the approval prompts, image rendering, whether output limits truncate); `--launch` against a real N2EditorHost (CI has no engine: the tests use a fake child process and a fake host speaking the real codecs, and the host's `--tokens-file` behaviour is read from the engine's source and docs); a real host's answers to a viewer (the tests use a stand-in that answers `forbidden`); the `.mcp.json` `${VAR}` expansion and the `claude mcp add` syntax, which were read from the docs and not run.
+
 ## Architecture
 
 | Where | What |
 |---|---|
 | `src/protocol/` | The protocol client, with no DOM or Electron dependencies: reading frames (`framing.ts`), one spec per command built from the generated codecs (`codec.ts`), `EngineClient`, the `EventPump` for `PollEvents`, and the generated ids, types and codecs (`protocol.generated.ts`) |
 | `src/main/` | The Electron main process. It launches the project's editor host (`host-launcher.ts`, `project-session.ts`, `host-settings.ts`) and, for play mode, the game's second host (`play-session.ts`, `play-ipc.ts`), opens the SSH tunnel to a remote engine (`ssh-tunnel.ts`, `recent-remotes.ts`, `remote-ipc.ts`; see "Remote engine"), owns the `EngineClient`s (the TCP connection to the host) and the open project's files, keeps the recent projects, and answers the page's IPC calls |
+| `mcp/` | The `n2-mcp` bridge (see MCP (n2-mcp) above): its own tsconfig, bundled to `dist/n2-mcp.mjs`; no Electron. It reuses `src/protocol/` and `src/main/host-launcher.ts` and nothing else of the app |
 | `src/shared/api.ts` | The typed API between the page and the main process: `window.engine` (protocol commands and connection state), `window.host` (the host process: state, restart, stop, locate), `window.remote` (connect to a remote engine, recent remotes), `window.play` (the game: start, stop, pause, step, and the child's frames, audio, events and input) and `window.project` (dialogs, recent projects, the project's text files), the IPC channel names, and the command allowlist |
 | `src/preload/` | Forwards `window.engine`, `window.host`, `window.remote`, `window.play` and `window.project` calls over IPC. Bundled, since a sandboxed preload can require only `electron` |
 | `src/renderer/` | The page, in Preact with `@preact/signals`, bundled by esbuild into `dist/bundle/renderer.js`. `store.ts` (`EditorStore`) holds the editor's state as signals (the open project, recent projects, the host, the connection, what is busy or failed) and its actions; `console-store.ts` holds the console. Both take the page's API as a parameter, so they are tested in Node. The components (`.tsx`) are the welcome screen, the editor layout and its panels. The hierarchy panel's state and rules are `hierarchy-state.ts` and `hierarchy-tree.ts` (see "The hierarchy and scenes"); the inspector's are `inspector-state.ts`, `inspector-fields.ts` and `asset-lookup.ts` (see "The inspector"); undo, redo, edit groups and autosave recovery are `edit-controller.ts`, `edit-groups.ts`, `edit-actions.ts` and `autosave.ts` (see "Undo, redo, edit groups and autosave"); the assets panel and the text editor are `assets-state.ts`, `asset-tree.ts` and `asset-edit.ts` (see "The assets panel"); the inspector's selection and transform are in `scene-state.ts`. The audio player is here too |
@@ -349,6 +468,8 @@ The unit tests cover:
 - the viewport: the camera, the gizmo drags, and picking: the pixel mapping (device pixel ratio, top-left origin, frame size, outside the frame), click against drag, the selection a pick makes (plain, Ctrl, Shift, empty space, a gizmo handle taking the press first), one pick in flight with the newest winning, the bounds union, the selection box (the boxes, one batched call, stale answers, drag echoes), framing from bounds, and the `PickEntity` and `GetEntityBounds` client and IPC argument checks;
 - the layout: the model (move, close, reopen, reset, sizes, text-file tabs, validation of corrupt, unknown, duplicate and newer-version data, migration steps), the controller (debounced saves per project, the user default, reset, storage that throws) and, in the DOM tests, the regions and tab bars, moving by menu, keyboard and drop, the Window menu, restoring a stored layout, unavailable storage, and that a hidden viewport is unmounted and asks for no frames;
 - the audio decoding, jitter buffer and drift correction.
+
+**MCP tests** (`mcp/test/*.test.ts`, bundled by `scripts/bundle-mcp.js --tests` to `dist/mcp-test` and run by `npm test` with `node --test`): the bridge driven by the SDK's own MCP client (both protocol eras) against a fake host (`mcp/test/fake-host.ts`, a real socket server speaking the generated codecs, plain or TLS): every tool, paging and budgets, the scrubbing of untrusted text, error mapping, the admin refusal, the rate limit, the golden tool list, the `--connect` and `--launch` backends (the latter with a fake child process), and the real bundle as a child process over stdio.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, the type check and `npm test` on every push to master and every pull request, and `npm test` again on Windows (where the engine runs, and where the launcher's pipes and kill differ). Another job checks out the engine at the commit pinned in `engine-ref.txt`, regenerates `src/protocol/protocol.generated.ts` and `src/protocol/test-vectors.json`, and fails if either differs from the committed file. When the engine's protocol changes, regenerate (below) and update `engine-ref.txt` to the engine commit you generated from, in the same PR.
 

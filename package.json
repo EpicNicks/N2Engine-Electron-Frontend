@@ -27,6 +27,7 @@
     "@testing-library/user-event": "^14.6.8",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^25.0.3",
+    "ajv": "8.17.1",
     "electron": "^39.2.7",
     "esbuild": "^0.25.12",
     "jsdom": "^30.1.2",

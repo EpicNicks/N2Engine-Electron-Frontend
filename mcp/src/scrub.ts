@@ -22,7 +22,7 @@ const Controls = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g
 
 /** A path of the host's that no result should carry: a drive path, or a UNC path, or a path under a home or temp dir */
 const GenericPaths =
-  /(?:[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/])[^\s"'<>|*?`]*|\/(?:home|Users|root|tmp|var|opt|mnt|srv|etc|usr|proc|private)\/[^\s"'<>|*?`]*/g
+  /(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\[^\s\\/]+[\\/])[^\s"'<>|*?`]*|\/(?:home|Users|root|tmp|var|opt|mnt|srv|etc|usr|proc|private)\/[^\s"'<>|*?`]*/g
 
 export const RedactedPath = "<host-path>"
 export const RedactedSecret = "[redacted]"

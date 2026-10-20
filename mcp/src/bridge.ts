@@ -9,7 +9,7 @@
 import type { EngineClient } from "../../src/protocol/engine-client"
 import { HostBusyError } from "../../src/protocol/engine-client"
 import type { ComponentSchema, ProjectInfoResponse, ServerInfoResponse } from "../../src/protocol/protocol.generated"
-import { BridgeAdvice, BridgeError, mapError } from "./errors"
+import { BridgeAdvice, BridgeError, mapError, safeRole } from "./errors"
 import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs, RateLimitPerMinute } from "./limits"
 import { RateLimiter } from "./ratelimit"
 import type { Scrubber } from "./scrub"
@@ -119,7 +119,7 @@ export class Bridge {
     try {
       return await Promise.race([fn(context), timeout])
     } catch (e) {
-      throw mapError(e, { role: link.info.role, command }, this.scrubber)
+      throw mapError(e, { role: safeRole(link.info.role), command }, this.scrubber)
     } finally {
       clearTimeout(timer)
     }
@@ -149,14 +149,19 @@ export class Bridge {
         throw this.logged(again)
       }
     }
-    if (opened.info.role === "admin" && !this.options.allowAdmin) {
+    // Only a viewer or an editor is served. An admin (every right, and it would preempt a person's session) is refused, and
+    // so is a host that reports no known role: its rights can't be known, so they are taken to be an admin's.
+    const role = safeRole(opened.info.role)
+    if (role !== "viewer" && role !== "editor" && !this.options.allowAdmin) {
       opened.client.close()
       this.refused = new BridgeError(
         "admin_refused",
-        "The host gave the bridge the admin role, which it refuses to serve.",
+        role === "admin"
+          ? "The host gave the bridge the admin role, which it refuses to serve."
+          : "The host did not report a viewer or editor role for the bridge, which it refuses to serve.",
         BridgeAdvice.admin
       )
-      this.log("refusing to serve: the host gave this connection the admin role (start the bridge with --allow-admin to allow it)")
+      this.log(`refusing to serve: the host gave this connection ${role === "admin" ? "the admin role" : "no viewer or editor role"} (start the bridge with --allow-admin to allow it)`)
       throw this.refused
     }
     let project: ProjectInfoResponse | null = null

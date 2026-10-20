@@ -45,6 +45,11 @@ export class BridgeError extends Error {
   }
 }
 
+/** A role the host reported, for a message: only the three the protocol has (the host's own text is never put in a message) */
+export function safeRole(role: string | undefined): string {
+  return role === "viewer" || role === "editor" || role === "admin" ? role : "unknown"
+}
+
 /** Where a failure happened, for the messages */
 export interface ErrorContext {
   /** The host command or tool that failed ("GetEntity") */
@@ -78,7 +83,7 @@ export function mapError(error: unknown, context: ErrorContext, scrubber: Scrubb
   if (error instanceof BridgeError) return error
   const where = context.command ? ` (${context.command})` : ""
   if (error instanceof HostBusyError) {
-    const holder = error.holderRole ? ` (a ${error.holderRole} session)` : ""
+    const holder = error.holderRole ? ` (${/^[aeiou]/.test(error.holderRole) ? "an" : "a"} ${error.holderRole} session)` : ""
     return new BridgeError("busy", `The host is busy with another session${holder}.`, Advice.busy, undefined, error)
   }
   if (error instanceof FingerprintMismatchError) {
@@ -99,7 +104,7 @@ export function mapError(error: unknown, context: ErrorContext, scrubber: Scrubb
       case "readOnly":
         return new BridgeError("read_only", `The host is read-only and refused${where}.`, Advice.readOnly, undefined, error)
       case "forbidden": {
-        const role = context.role ? ` (role ${context.role})` : ""
+        const role = context.role ? ` (role ${safeRole(context.role)})` : ""
         return new BridgeError("forbidden", `The token's role${role} may not run this command${where}.`, Advice.forbidden, undefined, error)
       }
       case "extensionsDisabled":

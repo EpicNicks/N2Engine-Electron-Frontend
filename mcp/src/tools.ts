@@ -9,7 +9,7 @@ import { z } from "zod"
 import { EngineError } from "../../src/protocol/engine-client"
 import type { ComponentSchema } from "../../src/protocol/protocol.generated"
 import type { HostContext } from "./bridge"
-import { BridgeAdvice, BridgeError } from "./errors"
+import { BridgeAdvice, BridgeError, safeRole } from "./errors"
 import { componentToJsonSchema } from "./jsonschema"
 import * as limits from "./limits"
 import { encodePng, fitSize } from "./png"
@@ -188,7 +188,7 @@ const status = tool({
       host: {
         protocolVersion: s.name(ctx.info.protocolVersion),
         engineVersion: s.name(ctx.info.engineVersion),
-        role: s.name(ctx.info.role, 32),
+        role: safeRole(ctx.info.role),
         readOnly: ctx.info.readOnly,
         user: s.name(ctx.info.user, 64),
         projectLoaded: ctx.info.projectLoaded,
@@ -680,7 +680,7 @@ const getAssetInfo = tool({
     return {
       source: "assets",
       untrusted: true,
-      summary: `Asset of type ${s.name(a.type, 64)}, ${a.size} bytes.`,
+      summary: `Asset details, ${a.size} bytes.`,
       data: {
         asset: {
           path: s.str(a.path, { maxChars: 512 }),
@@ -991,7 +991,7 @@ const projectInfo = tool({
     return {
       source: "project",
       untrusted: true,
-      summary: `Project ${s.name(p.name)} with ${scenes.length} scene(s).`,
+      summary: `Project info with ${scenes.length} scene(s).`,
       data: {
         name: s.name(p.name),
         projectId: s.name(p.projectId, 64),

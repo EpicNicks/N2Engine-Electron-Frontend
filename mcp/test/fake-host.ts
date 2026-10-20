@@ -35,6 +35,9 @@ export interface Received {
 
 type Handler = (request: any) => unknown
 
+/** A handler that returns this sends no answer at all (a hung host) */
+export const Silence = Symbol("silence")
+
 export const ProjectRoot = "C:\\Users\\agent\\Games\\Demo"
 export const UserDataRoot = "C:\\Users\\agent\\AppData\\Local\\Demo"
 
@@ -143,6 +146,11 @@ export class FakeHost {
     this.handlers.set(name, handler)
   }
 
+  /** Closes every open connection from the host's side (an idle close, a crash) */
+  dropConnections(): void {
+    for (const socket of this.sockets) socket.destroy()
+  }
+
   count(name: string): number {
     return this.received.filter((r) => r.name === name).length
   }
@@ -245,7 +253,8 @@ export class FakeHost {
         const codec = (RequestCodecs as Record<string, { decode(p: Uint8Array): unknown }>)[name]
         const request = codec ? codec.decode(frame.payload) : {}
         this.received.push({ name, request })
-        socket.write(this.answer(name, request))
+        const answer = this.answer(name, request)
+        if (answer !== null) socket.write(answer)
       }
     })
   }
@@ -282,11 +291,12 @@ export class FakeHost {
     return true
   }
 
-  private answer(name: string, request: unknown): Buffer {
+  private answer(name: string, request: unknown): Buffer | null {
     const handler = this.handlers.get(name)
     try {
       if (!handler) throw new Refusal(`${name} is not implemented by the fake host`)
       const value = handler(request)
+      if (value === Silence) return null
       const responseName = CommandResponse[name as keyof typeof CommandResponse]
       const codec = ResponseCodecs[responseName as keyof typeof ResponseCodecs] as { encode(v: unknown): Uint8Array }
       return Frame(ResponseType[responseName as keyof typeof ResponseType], codec.encode(value ?? {}))
