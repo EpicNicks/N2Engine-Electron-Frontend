@@ -199,10 +199,18 @@ export class HierarchyState {
   /** Sets the search text; "" (or only ignored tokens) shows the whole tree again. A rename in progress ends. */
   setQuery(text: string): void {
     if (text === this.query.value) return
+    const wasFiltering = this.filtering
     batch(() => {
       this.query.value = text
       this.renaming.value = null
     })
+    // A match picked in the search may lie under a collapsed parent: once the search ends, open the way to what is
+    // selected so it still has a row (the expanded set itself is the user's and is untouched while searching)
+    if (wasFiltering && !this.filtering) this.revealSelection()
+  }
+
+  private revealSelection(): void {
+    for (const id of this.selection.value.ids) this.expandAncestors(id)
   }
 
   setFilterMode(mode: FilterMode): void {

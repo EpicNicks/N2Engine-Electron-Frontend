@@ -188,6 +188,16 @@ describe("the hierarchy state under a search", () => {
     assert.equal(state.filtering, false)
   })
 
+  test("selecting a match reveals it: clearing the search leaves its row shown", async () => {
+    const { state } = stateOver()
+    await state.refresh()
+    state.setQuery("hand")
+    state.click("Hand")
+    state.setQuery("")
+    assert.deepEqual(ids(state.rows.value), ["Player", "Arm", "Hand", "Leg", "World", "Sun"])
+    assert.equal(state.primaryId, "Hand")
+  })
+
   test("selection and the arrow keys work on the filtered rows", async () => {
     const { state } = stateOver()
     await state.refresh()

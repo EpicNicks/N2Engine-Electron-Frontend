@@ -67,6 +67,12 @@ export const MaxPatternLength = 200
 /** A regex is tried on at most this much of a line, so a pattern that backtracks badly costs a bounded amount */
 export const MaxRegexInput = 4096
 
+/**
+ * A group that repeats and itself holds a repeat, as in (a+)+ or (.*x)*: the shape behind catastrophic backtracking, which
+ * no length cap bounds (it is exponential in the line) and which cannot be interrupted once running. Refused up front.
+ */
+const NestedRepeat = /\((?:[^()\\]|\\.)*[+*]\??(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,\d*\})/
+
 export interface TextMatcher {
   /** Whether the line passes (everything passes when there is no text, or when the regex is not valid) */
   test(message: string): boolean
@@ -103,6 +109,9 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
   let pattern: RegExp
   try {
     if (search.length > MaxPatternLength) throw new Error(`The pattern is longer than ${MaxPatternLength} characters`)
+    if (NestedRepeat.test(search)) {
+      throw new Error("A repeated group that itself repeats can take far too long: simplify the pattern")
+    }
     pattern = new RegExp(search, matchCase ? "g" : "gi")
   } catch (e) {
     // Half-typed patterns are normal: they filter nothing (the list doesn't flash empty) and the reason shows inline

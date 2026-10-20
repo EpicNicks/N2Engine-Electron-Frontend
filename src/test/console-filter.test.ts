@@ -65,6 +65,17 @@ describe("the text matcher", () => {
     assert.equal(compileMatcher({ search: "(", matchCase: false, regex: false }).error, null)
   })
 
+  test("a nested repeat is refused: no backtracking bomb reaches the matcher", () => {
+    for (const bomb of ["(a+)+$", "(a*)*b", "(.*a){2,}", "(x+x+)+y", "(a|b+)*c"]) {
+      const m = compileMatcher({ search: bomb, matchCase: false, regex: true })
+      assert.ok(m.error, bomb)
+      assert.equal(m.active, false)
+    }
+    for (const fine of ["^load \\d+ files", "(ab)+", "(a|b)*c", "\\(a+\\)+", "a+b+"]) {
+      assert.equal(compileMatcher({ search: fine, matchCase: false, regex: true }).error, null, fine)
+    }
+  })
+
   test("a regex looks at a bounded part of a very long line", () => {
     const m = compileMatcher({ search: "needle$", matchCase: false, regex: true })
     assert.equal(m.test("x".repeat(100000) + "needle"), false)
@@ -306,7 +317,7 @@ describe("the console filters are kept per project", () => {
       hiddenSources: ["game"],
       search: "boom",
       matchCase: true,
-      regex: true,
+      regex: false, // the switch is never kept: a pattern that hangs would hang every launch
       collapse: true,
     })
     detach()
@@ -331,7 +342,7 @@ describe("the console filters are kept per project", () => {
     assert.deepEqual(log.filterState.value, {
       ...DefaultConsoleFilter,
       levels: { info: true, warn: false, error: true },
-      regex: true,
+      regex: false,
     })
     for (const bad of ["{", JSON.stringify({ version: 1, value: 5 }), JSON.stringify({ version: 1, value: { search: "x".repeat(300) } })]) {
       storage.data.set(key, bad)

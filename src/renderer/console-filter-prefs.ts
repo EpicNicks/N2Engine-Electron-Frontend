@@ -42,7 +42,8 @@ export const ConsoleFilterPref: PrefDef<ConsoleFilterPrefValue, "project"> = def
       hiddenSources: v.arrayOf(v.string(40), 32)(raw.hiddenSources) ?? [],
       search: v.string(MaxPatternLength)(raw.search) ?? "",
       matchCase: flag(raw.matchCase, false),
-      regex: flag(raw.regex, false),
+      // Never restored as on: a pattern that hangs the renderer would hang it again on every launch of the project
+      regex: false,
       collapse: flag(raw.collapse, false),
     }
   },
