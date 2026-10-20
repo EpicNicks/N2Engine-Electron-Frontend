@@ -8,6 +8,8 @@ import { FingerprintMismatchError } from "../protocol/tls-pin"
 import { describeMismatch, parseDirectRemoteSettings, requiredFingerprint } from "../main/direct-remote"
 import type { EngineTarget } from "../main/engine-ipc"
 import { PinStore } from "../main/pin-store"
+import { errorCode } from "../main/ipc"
+import { HostBusyError } from "../protocol/engine-client"
 import { EngineConnection, ProjectSession } from "../main/project-session"
 
 const A = "a".repeat(64)
@@ -128,6 +130,24 @@ function setup() {
 }
 
 describe("ProjectSession direct-address remote", () => {
+  test("a host answering busy keeps its typed error and code, is no pin or console failure, and nothing is pinned", async () => {
+    const t = setup()
+    try {
+      t.engine.fail = new HostBusyError("editor")
+      await assert.rejects(
+        t.session.connectDirect({ host: "h", port: 7000, tls: true, fingerprint: A }, "s3cret-token"),
+        (e: unknown) => e instanceof HostBusyError && errorCode(e) === "busy" && /busy with another session \(a editor session\)/.test((e as Error).message)
+      )
+      assert.equal(t.session.state.status, "failed")
+      assert.equal(t.session.state.message, null, "no error line for a wait")
+      assert.equal(t.pins.get("h", 7000), undefined, "a busy host confirmed nothing")
+      assert.ok(!JSON.stringify(t.states).includes("s3cret-token"))
+      assert.ok(!t.logs.join(" ").includes("s3cret-token"))
+    } finally {
+      t.cleanup()
+    }
+  })
+
   test("a host that isn't pinned or confirmed is refused before the engine is touched", async () => {
     const t = setup()
     try {
