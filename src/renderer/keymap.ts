@@ -56,9 +56,8 @@ export interface ActionDef {
   readonly allowInText?: boolean
 }
 
-// The actions that exist today. Names the roadmap reserves for the viewport toolbar and the gizmo modes (FE3, FE4), to
-// be added when those exist, not before: gizmo.translate (W), gizmo.rotate (E), gizmo.scale (R), gizmo.none (Q),
-// gizmo.toggleSpace (X), gizmo.togglePivot (Z); camera bookmarks (Ctrl+Shift+1..9, Shift+1..9); hierarchy.search (Ctrl+F).
+// The actions that exist today. Names the roadmap reserves for later, to be added when they exist, not before:
+// gizmo.toggleSpace (X), gizmo.togglePivot (Z) (FE4); camera bookmarks (Ctrl+Shift+1..9, Shift+1..9); hierarchy.search (Ctrl+F).
 export const DefaultActions: readonly ActionDef[] = [
   { id: "file.save", title: "Save the scene", scope: "global", chords: ["Mod+S"], allowInText: true },
   { id: "edit.undo", title: "Undo", scope: "global", chords: ["Mod+Z"] },
@@ -74,6 +73,10 @@ export const DefaultActions: readonly ActionDef[] = [
   { id: "hierarchy.collapse", title: "Collapse the object", scope: "hierarchy", chords: ["ArrowLeft"] },
   { id: "viewport.frame", title: "Frame the selection", scope: "viewport", chords: ["KeyF"] },
   { id: "viewport.cancel", title: "Cancel the move in progress", scope: "viewport", chords: ["Escape"] },
+  { id: "gizmo.translate", title: "Move tool", scope: "viewport", chords: ["KeyW"] },
+  { id: "gizmo.rotate", title: "Rotate tool", scope: "viewport", chords: ["KeyE"] },
+  { id: "gizmo.scale", title: "Scale tool", scope: "viewport", chords: ["KeyR"] },
+  { id: "gizmo.none", title: "Select only (no gizmo)", scope: "viewport", chords: ["KeyQ"] },
   { id: "assets.applySettings", title: "Apply the import settings", scope: "assets", chords: ["Mod+S"], allowInText: true },
   { id: "text.save", title: "Save the text file", scope: "text", chords: ["Mod+S"], allowInText: true },
 ]
@@ -133,6 +136,16 @@ function normalizeKey(key: string): string {
   return key.length === 1 ? key.toLowerCase() : key
 }
 
+/**
+ * Whether a chord's key is a code for a key's place on the keyboard that is not also a name for what the key does:
+ * KeyA-KeyZ, Digit0-Digit9 and the punctuation and numpad keys. (Named keys such as Escape, ArrowDown, F2 and Delete
+ * are a code and a key alike, and are matched either way.) Such a chord is the physical key, so a layout whose F key
+ * types another letter still frames, and a key that types "f" elsewhere does not.
+ */
+export function isPhysicalCode(key: string): boolean {
+  return /^(Key[A-Z]|Digit\d|Numpad.+|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|IntlBackslash|Semicolon|Quote|Comma|Period|Slash)$/.test(key)
+}
+
 /** One text for chords that are the same ("mod+shift+z"), to find conflicts */
 export function canonicalChord(chord: Chord): string {
   const names = [chord.mod && "Mod", chord.ctrl && "Ctrl", chord.meta && "Cmd", chord.alt && "Alt", chord.shift && "Shift"]
@@ -156,7 +169,9 @@ export function chordMatches(chord: Chord, e: KeyPress): boolean {
     return false
   }
   if (chord.alt !== e.altKey || chord.shift !== e.shiftKey) return false
-  // A code names a physical key (KeyF); a key names what it types (z) or is (ArrowDown)
+  // A code that names a physical key (KeyF, Digit1) is that key whatever the layout types: never what a key types
+  if (isPhysicalCode(chord.key)) return e.code === chord.key
+  // Otherwise a key names what it types (z) or is (ArrowDown, F2)
   if (e.code === chord.key || e.key === chord.key) return true
   const wanted = normalizeKey(chord.key)
   return wanted.length === 1 && e.key.length === 1 && e.key.toLowerCase() === wanted
@@ -197,6 +212,9 @@ export interface Conflict {
   scope: KeymapScope
   actions: string[]
 }
+
+/** The most chords one action can have: what the stored overrides are validated against (KeymapOverridesPref) */
+export const MaxChordsPerAction = 8
 
 export interface BindResult {
   ok: boolean
@@ -357,6 +375,10 @@ export class Keymap {
   bind(id: string, chords: readonly string[]): BindResult {
     const def = this.defs.get(id)
     if (!def) return { ok: false, problems: [`There is no action "${id}"`], conflicts: [] }
+    // The stored overrides are validated against the same limit: a longer list would be dropped when read back
+    if (chords.length > MaxChordsPerAction) {
+      return { ok: false, problems: [`An action can have at most ${MaxChordsPerAction} chords, not ${chords.length}`], conflicts: [] }
+    }
     const parsed: Chord[] = []
     const problems: string[] = []
     for (const text of chords) {
@@ -526,7 +548,7 @@ export const KeymapOverridesPref: PrefDef<Record<string, string[]>, "user"> = de
     if (!isRecord(raw)) return undefined
     const out: Record<string, string[]> = {}
     for (const [id, chords] of Object.entries(raw)) {
-      const list = v.arrayOf(v.string(40), 8)(chords)
+      const list = v.arrayOf(v.string(40), MaxChordsPerAction)(chords)
       if (list !== undefined && id.length <= 80) out[id] = list
     }
     return out

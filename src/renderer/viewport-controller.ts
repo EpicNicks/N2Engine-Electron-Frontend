@@ -1,5 +1,5 @@
 // The viewport's logic apart from the DOM: the editor camera (and how its pose reaches the host), the selected object
-// as the gizmo sees it, the translate drag, frame selected and click to select. The panel (viewport-panel.tsx) only
+// as the gizmo sees it, the gizmo's mode (translate, rotate, scale, none) and its drags, frame selected and click to select. The panel (viewport-panel.tsx) only
 // turns events into calls on it and draws what it says. It works in FRAME pixels (the engine's viewport size, top-left
 // origin), which the panel converts from the page's pointer positions. No DOM: it is given the engine API or a fake,
 // so it is unit tested in Node.
@@ -29,6 +29,17 @@ import {
   hitTestGizmo,
   projectBox,
 } from "./viewport-gizmo"
+import { RotateDrag, RotateGizmoDrag, RotateLayout, formatAngle, hitTestRotate, rotateLayout } from "./viewport-rotate"
+import {
+  ScaleDrag,
+  ScaleGizmoDrag,
+  ScaleHandleId,
+  ScaleLayout,
+  formatRatio,
+  hitTestScale,
+  scaleLayout,
+  worldAxesOf,
+} from "./viewport-scale"
 import { IdentityMat4, Pixel, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
 import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
@@ -72,6 +83,23 @@ export interface ViewportDeps {
    */
   select(entityId: string | null, modifiers: ClickModifiers): void
 }
+
+/** What the gizmo does: the three tools, or none (select only) */
+export type GizmoMode = "translate" | "rotate" | "scale" | "none"
+export const GizmoModes: readonly GizmoMode[] = ["translate", "rotate", "scale", "none"]
+/** What the modes are called where they are shown */
+export const GizmoModeTitles: Readonly<Record<GizmoMode, string>> = {
+  translate: "Move",
+  rotate: "Rotate",
+  scale: "Scale",
+  none: "Select",
+}
+
+/** A handle of any of the gizmos: a translate axis or plane, a rotate ring (its axis), a scale axis or the uniform centre */
+export type AnyHandle = HandleId | ScaleHandleId
+
+/** The drag in progress */
+type ActiveDrag = GizmoDrag | RotateGizmoDrag | ScaleGizmoDrag
 
 /** The camera matrices at a viewport size */
 export interface CameraMatrices {
@@ -128,8 +156,10 @@ export class ViewportController {
    * object that moves); null with no selection
    */
   readonly target = signal<GizmoTarget | null>(null)
-  /** The handle (an axis or a plane) under the pointer, or the one being dragged */
-  readonly hoverHandle = signal<HandleId | null>(null)
+  /** The tool the gizmo is (changed by setMode; the keymap's gizmo.* actions call it) */
+  readonly mode = signal<GizmoMode>("translate")
+  /** The handle under the pointer, or the one being dragged */
+  readonly hoverHandle = signal<AnyHandle | null>(null)
   readonly dragging = signal(false)
   /** The world bounds of the selected objects the host could measure, by id; drawn as boxes */
   readonly selectionBounds = signal<ReadonlyMap<string, Bounds>>(new Map())
@@ -138,7 +168,7 @@ export class ViewportController {
 
   private size: PixelSize | null = null
   private readonly cameraSender: LatestWinsSender<ReturnType<EditorCameraController["toRequest"]>>
-  private drag: GizmoDrag | null = null
+  private drag: ActiveDrag | null = null
   /** The objects a drag of the gizmo moves, as the host last said (the topmost of the selection that have a transform) */
   private movers: GizmoTarget[] = []
   /** What the targets were read for (selectionKeyOf), and each one as last read: only changed ones are read again */
@@ -199,6 +229,20 @@ export class ViewportController {
 
   get isDragging(): boolean {
     return this.drag !== null
+  }
+
+  /**
+   * Changes the tool. Not during a drag (false: the drag is of the tool it began with, and the mode would change under
+   * it); true when the mode is now `mode`. The hovered handle is the old tool's: cleared.
+   */
+  setMode(mode: GizmoMode): boolean {
+    if (this.drag) return false
+    if (mode !== this.mode.peek()) {
+      this.mode.value = mode
+      this.hoverHandle.value = null
+      this.redraw()
+    }
+    return true
   }
 
   /** The viewport's pixel size: the size of the frame on screen, which the host renders at (not the one last asked for) */
@@ -531,14 +575,44 @@ export class ViewportController {
 
   // ==================== Gizmo and picking ====================
 
-  /** Where the gizmo is now; null with no selection, no viewport size or the object behind the camera */
-  layout(): GizmoLayout | null {
+  /**
+   * What every tool's layout needs: the primary object, the camera and the viewport, and where the gizmo is (while
+   * dragging, where the drag has put it, not where the host last said). Null with no selection, no viewport size, a
+   * scene that can't be edited (and no drag in progress) or the wrong tool.
+   */
+  private gizmoSetup(mode: GizmoMode): { target: GizmoTarget; m: CameraMatrices; size: PixelSize; origin: Vec3 } | null {
     const target = this.target.value
     const m = this.matrices()
-    if (!target || !m || !this.size || (!this.drag && !this.deps.canEdit())) return null
-    // While dragging, the object is where the drag has put it, not where the host last said
-    const origin = mat4Translation(target.worldMatrix)
-    return gizmoLayout(m.view, m.viewProjection, this.dragOrigin ?? origin, this.size.width, this.size.height, this.ratio)
+    if (this.mode.value !== mode || !target || !m || !this.size || (!this.drag && !this.deps.canEdit())) return null
+    return { target, m, size: this.size, origin: this.dragOrigin ?? mat4Translation(target.worldMatrix) }
+  }
+
+  /** Where the translate gizmo is now; null unless the tool is Move, and with no selection, no viewport size or the object behind the camera */
+  layout(): GizmoLayout | null {
+    const g = this.gizmoSetup("translate")
+    return g ? gizmoLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio) : null
+  }
+
+  /** Where the rotate gizmo's rings are now; null unless the tool is Rotate (and as layout()) */
+  rotateLayout(): RotateLayout | null {
+    const g = this.gizmoSetup("rotate")
+    return g ? rotateLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio) : null
+  }
+
+  /** Where the scale gizmo's handles are now; null unless the tool is Scale (and as layout()). Its axes are the primary object's own. */
+  scaleLayout(): ScaleLayout | null {
+    const g = this.gizmoSetup("scale")
+    return g
+      ? scaleLayout(g.m.view, g.m.viewProjection, g.origin, worldAxesOf(g.target.worldMatrix), g.size.width, g.size.height, this.ratio)
+      : null
+  }
+
+  /** What the drag in progress has made so far, for the overlay to show ("X +37.5 deg", "Y x1.25"); null for none (a move shows itself) */
+  dragReadout(): string | null {
+    const drag = this.drag
+    if (drag instanceof RotateGizmoDrag) return drag.axis.toUpperCase() + " " + formatAngle(drag.angle)
+    if (drag instanceof ScaleGizmoDrag) return (drag.handle === "uniform" ? "All" : drag.handle.toUpperCase()) + " " + formatRatio(drag.ratio)
+    return null
   }
 
   /** The world position the gizmo is drawn at during a drag (the host's reading of it lags the drag) */
@@ -552,6 +626,8 @@ export class ViewportController {
   boxEdges(): Array<[Pixel, Pixel]> {
     const m = this.matrices()
     if (!m || !this.size) return []
+    // A rotate or scale drag turns the boxes into ones the host's AABBs can't give: they are left off until it ends
+    if (this.drag && !(this.drag instanceof GizmoDrag)) return []
     const selected = new Set(this.selectedIds(this.deps.selected()))
     const edges: Array<[Pixel, Pixel]> = []
     for (const [id, box] of this.selectionBounds.value) {
@@ -565,11 +641,30 @@ export class ViewportController {
   /** The pointer moved without a button: the handle under it lights up */
   hover(pixel: Pixel | null): void {
     if (this.drag) return
-    const layout = pixel ? this.layout() : null
-    const handle = layout && pixel ? hitTestGizmo(layout, pixel, this.ratio) : null
+    const handle = pixel ? this.handleAt(pixel) : null
     if (handle !== this.hoverHandle.value) {
       this.hoverHandle.value = handle
       this.redraw()
+    }
+  }
+
+  /** The handle of the current tool under the pixel; null for none (and with the tool "none") */
+  private handleAt(pixel: Pixel): AnyHandle | null {
+    switch (this.mode.value) {
+      case "translate": {
+        const layout = this.layout()
+        return layout ? hitTestGizmo(layout, pixel, this.ratio) : null
+      }
+      case "rotate": {
+        const layout = this.rotateLayout()
+        return layout ? hitTestRotate(layout, pixel, this.ratio) : null
+      }
+      case "scale": {
+        const layout = this.scaleLayout()
+        return layout ? hitTestScale(layout, pixel, this.ratio) : null
+      }
+      default:
+        return null
     }
   }
 
@@ -579,34 +674,18 @@ export class ViewportController {
    */
   pointerDown(pixel: Pixel, snap: boolean): boolean {
     const target = this.target.value
-    const layout = this.layout()
     const m = this.matrices()
-    const handle = layout ? hitTestGizmo(layout, pixel, this.ratio) : null
+    const handle = this.handleAt(pixel)
     // A press on a handle is the gizmo's, even when no drag can begin from it: it never selects what is behind it
     this.pressed = { pixel, onGizmo: handle !== null }
-    if (!target || !layout || !m || !this.size || !handle || this.movers.length === 0) return false
-    // The objects the drag moves were read for another selection (a change of it is on its way): not this press
+    if (!target || !m || !this.size || !handle || this.movers.length === 0) return false
+    // The objects the drag changes were read for another selection (a change of it is on its way): not this press
     const id = this.deps.selected()
     if (id === null || this.moversKey !== selectionKeyOf(id, this.moveIds(id))) return false
     const origin = mat4Translation(target.worldMatrix)
-    const farPlane = this.camera.farPlane
-    const maxStep = layout.worldLength * MaxStepHandleLengths
-    const { width, height } = this.size
-    const source: DragSource | null = isPlane(handle)
-      ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
-      : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
-    if (!source) return false
-    this.drag = new GizmoDrag(
-      {
-        engine: this.deps.engine,
-        groups: this.deps.groups,
-        onError: (what, e) => this.deps.onError(what, e),
-        onMoved: () => this.frameNeeded(),
-      },
-      this.movers,
-      source,
-      snap
-    )
+    const drag = this.beginDrag(handle, origin, m, pixel, snap)
+    if (!drag) return false
+    this.drag = drag
     this.dragOrigin = origin
     this.dragging.value = true
     this.hoverHandle.value = handle
@@ -614,11 +693,49 @@ export class ViewportController {
     return true
   }
 
+  /** The drag of the current tool on the handle; null when it can't begin (the pointer's ray can't be followed) */
+  private beginDrag(handle: AnyHandle, origin: Vec3, m: CameraMatrices, pixel: Pixel, snap: boolean): ActiveDrag | null {
+    const size = this.size!
+    const { width, height } = size
+    const farPlane = this.camera.farPlane
+    const deps = {
+      engine: this.deps.engine,
+      groups: this.deps.groups,
+      onError: (what: string, e: unknown) => this.deps.onError(what, e),
+      onMoved: () => this.frameNeeded(),
+    }
+    switch (this.mode.value) {
+      case "translate": {
+        const layout = this.layout()
+        if (!layout || handle === "uniform") return null
+        const maxStep = layout.worldLength * MaxStepHandleLengths
+        const source: DragSource | null = isPlane(handle)
+          ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
+          : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
+        return source ? new GizmoDrag(deps, this.movers, source, snap) : null
+      }
+      case "rotate": {
+        const layout = this.rotateLayout()
+        if (!layout || handle === "uniform" || isPlane(handle)) return null
+        const source = RotateDrag.begin(handle, layout, origin, m.viewProjection, pixel, width, height, farPlane)
+        return source ? new RotateGizmoDrag(deps, this.movers, source, origin, snap) : null
+      }
+      case "scale": {
+        const layout = this.scaleLayout()
+        if (!layout || (handle !== "uniform" && isPlane(handle))) return null
+        const source = ScaleDrag.begin(handle, layout, origin, m.viewProjection, pixel, width, height, this.ratio, farPlane)
+        return source ? new ScaleGizmoDrag(deps, this.movers, source, origin, snap) : null
+      }
+      default:
+        return null
+    }
+  }
+
   pointerMove(pixel: Pixel, snap: boolean): void {
     const drag = this.drag
     const target = this.target.value
     if (!drag || !target) return
-    if (drag.update(pixel, snap)) {
+    if (drag.update(pixel, snap) !== null) {
       // The gizmo follows at once, on this side of the round trip
       this.dragOrigin = add(mat4Translation(target.worldMatrix), drag.worldDelta)
       this.redraw()

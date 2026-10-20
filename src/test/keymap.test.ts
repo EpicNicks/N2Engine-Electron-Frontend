@@ -7,6 +7,7 @@ import {
   Keymap,
   KeymapOverridesPref,
   KeymapScopes,
+  MaxChordsPerAction,
   canonicalChord,
   chordMatches,
   formatChord,
@@ -88,6 +89,31 @@ describe("chords", () => {
     assert.equal(chordMatches(chord("Escape"), press("Escape", { code: "Escape" })), true)
   })
 
+  test("a code chord is the physical key only: a key that types the letter somewhere else is not it (non-Latin and Dvorak layouts)", () => {
+    // Russian layout: the physical F key types a Cyrillic letter
+    assert.equal(chordMatches(chord("KeyF"), press("\u0430", { code: "KeyF" })), true, "physical F on a Russian layout")
+    // A key that types "f" but is not the F key (Dvorak: the physical U key types f; Cyrillic layouts have no f at all)
+    assert.equal(chordMatches(chord("KeyF"), press("f", { code: "KeyU" })), false, "types f, is not F")
+    assert.equal(chordMatches(chord("KeyF"), press("F", { code: "KeyU", shiftKey: false })), false, "types F, is not F")
+    // Digits are physical too: a French layout types the digit with Shift, and the symbol without
+    assert.equal(chordMatches(chord("Digit1"), press("&", { code: "Digit1" })), true)
+    assert.equal(chordMatches(chord("Digit1"), press("1", { code: "Numpad1" })), false)
+    // The punctuation and numpad codes are physical as well
+    assert.equal(chordMatches(chord("BracketLeft"), press("[", { code: "Quote" })), false)
+    assert.equal(chordMatches(chord("BracketLeft"), press("x", { code: "BracketLeft" })), true)
+    // A chord written with a character is what the key types, as it was; named keys are the same either way
+    assert.equal(chordMatches(chord("f"), press("f", { code: "KeyU" })), true)
+    assert.equal(chordMatches(chord("F2"), press("F2", { code: "F2" })), true)
+    assert.equal(chordMatches(chord("Escape"), press("Escape", { code: "Escape" })), true)
+    assert.equal(chordMatches(chord("Delete"), press("Delete", { code: "Delete" })), true)
+    // The default frame and tool chords follow the same rule
+    const keymap = new Keymap(DefaultActions)
+    for (const [id, code] of [["viewport.frame", "KeyF"], ["gizmo.translate", "KeyW"], ["gizmo.rotate", "KeyE"], ["gizmo.scale", "KeyR"], ["gizmo.none", "KeyQ"]]) {
+      assert.equal(keymap.chordsOf(id).some((c) => chordMatches(c, press("\u0444", { code }))), true, `${id} on a Cyrillic layout`)
+      assert.equal(keymap.chordsOf(id).some((c) => chordMatches(c, press(code.slice(3).toLowerCase(), { code: "KeyZ" }))), false, `${id} typed from another key`)
+    }
+  })
+
   test("canonical: spellings of one key press are one chord", () => {
     assert.equal(canonicalChord(chord("Mod+Z")), canonicalChord(chord("mod+z")))
     assert.equal(canonicalChord(chord("KeyF")), canonicalChord(chord("F")))
@@ -146,11 +172,25 @@ describe("the default actions", () => {
         "hierarchy.collapse",
         "viewport.frame",
         "viewport.cancel",
+        "gizmo.translate",
+        "gizmo.rotate",
+        "gizmo.scale",
+        "gizmo.none",
         "assets.applySettings",
         "text.save",
       ]
     )
-    assert.equal(DefaultActions.some((a) => a.id.startsWith("gizmo.")), false)
+    // The gizmo's tool keys are the viewport's (W E R Q, as in Unity) and are physical keys; the space and pivot toggles are FE4's
+    const gizmo = DefaultActions.filter((a) => a.id.startsWith("gizmo."))
+    assert.deepEqual(
+      gizmo.map((a) => [a.id, a.scope, a.chords]),
+      [
+        ["gizmo.translate", "viewport", ["KeyW"]],
+        ["gizmo.rotate", "viewport", ["KeyE"]],
+        ["gizmo.scale", "viewport", ["KeyR"]],
+        ["gizmo.none", "viewport", ["KeyQ"]],
+      ]
+    )
   })
 
   test("the saves work in a text field; undo and redo don't (the field has its own)", () => {
@@ -215,6 +255,29 @@ describe("conflicts", () => {
     assert.deepEqual(keymap.formatted("a.two"), ["Ctrl+L", "Alt+L"])
     // Binding an action to what it has already is no conflict with itself
     assert.equal(keymap.bind("a.two", ["Mod+L"]).ok, true)
+  })
+
+  test("bind refuses more chords than the stored overrides allow, and says so, instead of storing what would be dropped on reading", () => {
+    const storage = new MemoryStore()
+    const prefs = new PrefsStore(storage, () => () => {})
+    const keymap = new Keymap(actions)
+    keymap.attachPrefs(prefs.user)
+    const eight = Array.from({ length: MaxChordsPerAction }, (_, i) => `Alt+${i + 1}`)
+    assert.equal(MaxChordsPerAction, 8)
+    assert.equal(keymap.bind("a.two", eight).ok, true, "eight is the limit and is allowed")
+    prefs.flush()
+    // Read back through the validator by a new keymap: all eight survive
+    const again = new Keymap(actions)
+    again.attachPrefs(new PrefsStore(storage).user)
+    assert.equal(again.formatted("a.two").length, 8)
+    const nine = [...eight, "Alt+9"]
+    const refused = keymap.bind("a.two", nine)
+    assert.equal(refused.ok, false)
+    assert.match(refused.problems[0], /at most 8 chords/)
+    assert.equal(keymap.formatted("a.two").length, 8, "the earlier binding is kept")
+    // The same limit as the validator: nine chords are exactly what it drops
+    assert.equal(KeymapOverridesPref.validate({ "a.two": nine })?.["a.two"], undefined)
+    assert.equal(KeymapOverridesPref.validate({ "a.two": eight })?.["a.two"]?.length, 8)
   })
 
   test("bind refuses an action that does not exist and a chord that does not parse, as a whole", () => {
