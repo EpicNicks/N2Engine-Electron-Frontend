@@ -1,7 +1,8 @@
 import "./setup"
 import type { ComponentChildren } from "preact"
 import { render, type RenderResult } from "@testing-library/preact"
-import { AppContext, type AppState } from "../renderer/ui"
+import { AppContext, modalOpen, type AppState } from "../renderer/ui"
+import { keymap } from "../renderer/keymap"
 import { EditorStore } from "../renderer/store"
 import type { ConnectRetryOptions } from "../renderer/connect-retry"
 import { FakeApi, FakeTimers, fakeStoreApi } from "../test/fake-store-api"
@@ -32,6 +33,8 @@ export function stubApp(overrides: AppOverrides): AppState {
 
 /** Renders ui inside the page's AppContext, over the state the test provided */
 export function renderWithApp(ui: ComponentChildren, overrides: AppOverrides = {}): RenderResult {
+  // The editor installs the keymap's dispatcher (editor.tsx); a panel rendered alone gets it here (replacing any earlier one)
+  keymap.install(document, { isModalOpen: modalOpen })
   return render(<AppContext.Provider value={stubApp(overrides)}>{ui}</AppContext.Provider>)
 }
 

@@ -5,10 +5,13 @@ import { defaultLayout } from "../renderer/layout/layout-model"
 import {
   KeyValueStore,
   LayoutPersistence,
+  ProjectLayoutPref,
   UserLayoutKey,
+  UserLayoutPref,
   browserStore,
   projectLayoutKey,
 } from "../renderer/layout/layout-storage"
+import { prefStorageKey } from "../renderer/prefs"
 import { fixtureRegistry, shape } from "./layout-fixture"
 
 const registry = fixtureRegistry()
@@ -65,8 +68,14 @@ function setup(store = new MemoryStore()) {
   return { store, clock, persistence, controller }
 }
 
+/** The layout JSON saved for a project (in the preferences' entry; the layout itself is as it always was), or undefined */
+const storedText = (store: MemoryStore, id: string): string | undefined => {
+  const raw = store.data.get(prefStorageKey(ProjectLayoutPref, id))
+  return raw === undefined ? undefined : JSON.stringify(JSON.parse(raw).value)
+}
+
 const savedShape = (store: MemoryStore, id: string) => {
-  const text = store.data.get(projectLayoutKey(id))
+  const text = storedText(store, id)
   return text === undefined ? null : shape(JSON.parse(text))
 }
 
@@ -90,7 +99,7 @@ describe("LayoutController saving", () => {
     clock.advance(1)
     assert.equal(store.writes, 1, "a burst of changes is one write")
     assert.deepEqual(savedShape(store, A)!.right, [["hierarchy", "assets"], ["inspector"], ["engine"]])
-    assert.equal(JSON.parse(store.data.get(projectLayoutKey(A))!).regions.right.size, 410)
+    assert.equal(JSON.parse(storedText(store, A)!).regions.right.size, 410)
   })
 
   test("a change that keeps being made keeps the save waiting", () => {
@@ -186,9 +195,9 @@ describe("LayoutController reset and the user default", () => {
     controller.setProject(A)
     controller.close("assets")
     controller.flush()
-    assert.ok(store.data.has(projectLayoutKey(A)))
+    assert.ok(storedText(store, A) !== undefined)
     controller.reset()
-    assert.equal(store.data.has(projectLayoutKey(A)), false)
+    assert.equal(storedText(store, A) !== undefined, false)
     assert.deepEqual(shape(controller.layout.value), shape(defaultLayout(registry)))
     assert.deepEqual(controller.layout.value.closed, [])
   })
@@ -199,7 +208,7 @@ describe("LayoutController reset and the user default", () => {
     controller.close("assets")
     controller.reset()
     clock.advance(10_000)
-    assert.equal(store.data.has(projectLayoutKey(A)), false)
+    assert.equal(storedText(store, A) !== undefined, false)
   })
 
   test("reset keeps the open text files", () => {
@@ -216,7 +225,7 @@ describe("LayoutController reset and the user default", () => {
     first.controller.close("engine")
     first.controller.saveAsUserDefault()
     assert.equal(first.controller.hasUserDefault.value, true)
-    assert.ok(first.store.data.has(UserLayoutKey))
+    assert.ok(first.store.data.has(prefStorageKey(UserLayoutPref)))
     const second = setup(first.store)
     assert.equal(second.controller.hasUserDefault.value, true)
     second.controller.setProject(B)
@@ -287,7 +296,7 @@ describe("storage that fails or holds rubbish", () => {
     controller.setDynamicTabs(["text:res://secret/token.lua"])
     controller.move("assets", { region: "right" })
     controller.flush()
-    const text = store.data.get(projectLayoutKey(A))!
+    const text = storedText(store, A)!
     assert.equal(text.includes("secret"), false)
     assert.equal(text.includes("token"), false)
     assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ["closed", "regions", "version"])

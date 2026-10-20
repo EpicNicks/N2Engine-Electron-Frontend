@@ -1,11 +1,13 @@
 // The Assets panel (protocol 1.9.0): the project's folders and assets as the host lists them, with their types and UUIDs;
 // drag an asset onto an asset field of the inspector; make folders and scripts; read and edit an asset's import
 // settings; and the text editor for scripts and other text files (bottom panel tabs). All state is in AssetsState.
+import { useRef } from "preact/hooks"
 import { entriesAfter } from "./console-store"
 import { AssetDragEffect, AssetDragType, assetDragData } from "./drag-types"
 import { isTextAssetPath } from "./asset-edit"
 import { AssetRow, RootFolder, formatModified, formatSize, isFiltering, nameOf, parentOf, shortUuid } from "./asset-tree"
 import { isDirty } from "./assets-state"
+import { useKeymapActions } from "./keymap-hooks"
 import { AppState, Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
 
 /** A glyph for a resource type (the host's names) */
@@ -259,12 +261,6 @@ function ImportSettingsEditor() {
         readOnly={!store.canWrite.value}
         aria-label="Import settings"
         onInput={(e) => assets.editSettings((e.currentTarget as HTMLTextAreaElement).value)}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-            e.preventDefault()
-            if (edited) assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
-          }
-        }}
       />
       {detail.outdated && (
         <div class="asset-warning">The settings changed on the host while you were editing; Apply replaces them.</div>
@@ -300,6 +296,17 @@ export function AssetsPanel() {
   const fail = (what: string) => (e: unknown) => store.reportError(what, e)
   const target = () => targetFolder(assets.selected.value, rows)
 
+  // Ctrl+S applies the import settings being edited, in their field only (anywhere else in the panel it saves the scene)
+  useKeymapActions({
+    "assets.applySettings": (e) => {
+      if (!(e.target as Element | null)?.closest?.(".import-settings-text")) return false
+      const detail = assets.detail.value
+      if (detail && detail.settings !== detail.baseline) {
+        assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
+      }
+    },
+  })
+
   let content
   if (!connected) content = <Empty>Not connected</Empty>
   else if (error && !listing) content = <Empty error>Failed to list the assets: {error}</Empty>
@@ -312,6 +319,7 @@ export function AssetsPanel() {
       title="Assets"
       icon="📁"
       class="assets-panel"
+      keymapScope="assets"
       actions={
         <>
           <button
@@ -366,7 +374,16 @@ export function AssetsPanel() {
 
 /** The editor of a text file open in a bottom-panel tab: Ctrl+S writes it through the host */
 export function TextEditor({ path }: { path: string }) {
+  const { assets } = useApp()
+  // Closed while it was shown: nothing (the inner editor registers its key, which needs its element to exist)
+  return assets.tabs.value.some((t) => t.path === path) ? <OpenTextEditor path={path} /> : null
+}
+
+function OpenTextEditor({ path }: { path: string }) {
   const { store, assets } = useApp()
+  const root = useRef<HTMLDivElement>(null)
+  // Ctrl+S in this editor writes its file (before the scene's save: the text scope is the more specific)
+  useKeymapActions({ "text.save": () => void assets.saveText(path) }, root)
   const tab = assets.tabs.value.find((t) => t.path === path)
   // The reload's errors arrive as log events after the save
   const entries = store.console.entries.value
@@ -380,7 +397,7 @@ export function TextEditor({ path }: { path: string }) {
   else if (dirty) status = "Unsaved changes"
 
   return (
-    <div class="text-editor">
+    <div class="text-editor" ref={root} data-keymap-scope="text">
       {tab.external && (
         <div class="asset-warning text-banner">
           <span>
@@ -420,12 +437,6 @@ export function TextEditor({ path }: { path: string }) {
         readOnly={!store.canWrite.value}
         aria-label={nameOf(path)}
         onInput={(e) => assets.editText(path, (e.currentTarget as HTMLTextAreaElement).value)}
-        onKeyDown={(e) => {
-          if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-            e.preventDefault()
-            save()
-          }
-        }}
       />
       <div class="text-status">
         <span>{path}</span>

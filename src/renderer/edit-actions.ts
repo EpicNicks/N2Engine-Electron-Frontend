@@ -2,9 +2,9 @@
 //
 // The page registers the host's undo and redo (engine #78, phase E6; EditController in edit-controller.ts, set up in
 // index.tsx) by setting `editActions.value = actions`: the toolbar then shows an Edit button with these items
-// (editMenuItems), and Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y call them (editor.tsx, via editShortcutOf) except while a text
-// field has the focus (isTextEntry), where the field's own undo is meant. Nothing registered: no button, and the keys
-// do nothing.
+// (editMenuItems), and Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y call them (editor.tsx, as the keymap's edit.undo and edit.redo)
+// except while a text field has the focus (isTextEntry), where the field's own undo is meant. Nothing registered: no
+// button, and the keys do nothing.
 import { signal } from "@preact/signals-core"
 
 /** What undo and redo do, and whether they can right now */
@@ -26,7 +26,11 @@ export const editActions = signal<EditActions | null>(null)
 
 export type EditShortcut = "undo" | "redo"
 
-/** The shortcut a key press is: Ctrl (or Cmd) Z, Ctrl Shift Z or Ctrl Y; null for any other */
+/**
+ * The shortcut a key press is: Ctrl (or Cmd) Z, Ctrl Shift Z or Ctrl Y; null for any other. The keymap's edit.undo and
+ * edit.redo (keymap.ts) have replaced it in the page; it stays as the reference their default chords are tested
+ * against (keymap.test.ts runs both over the same key presses).
+ */
 export function editShortcutOf(e: {
   key: string
   ctrlKey: boolean

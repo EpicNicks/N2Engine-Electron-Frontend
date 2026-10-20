@@ -5,7 +5,7 @@
 //   right button           look (the fly camera); W A S D move, E and Q go up and down, Shift is faster
 //   Alt + right button     dolly (drag up or down)
 //   wheel                  zoom
-//   F                      frame the selected object
+//   F, Escape              keymap actions (keymap.ts, viewport-keys.ts): frame the selected object, cancel the move in progress
 import type { Vec3 } from "../protocol/protocol.generated"
 import { vec3 } from "./viewport-math"
 
@@ -110,7 +110,11 @@ export class FlyKeys {
 
 export type ViewportShortcut = "frameSelected"
 
-/** The viewport's key shortcuts; nothing for a key with Ctrl, Alt or Meta (those are the editor's) */
+/**
+ * The viewport's key shortcuts before the keymap (nothing for a key with Ctrl, Alt or Meta). The keymap's viewport.frame
+ * (keymap.ts) has replaced it in the page; it stays as the reference the keymap's default chord is tested against
+ * (keymap.test.ts runs both over the same key presses).
+ */
 export function shortcutFor(event: { code: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean }): ViewportShortcut | null {
   if (event.ctrlKey || event.altKey || event.metaKey) return null
   return event.code === "KeyF" ? "frameSelected" : null

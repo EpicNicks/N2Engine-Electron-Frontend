@@ -16,6 +16,12 @@ export function isDynamicId(id: string): boolean {
 
 /** One stack: its tabs in order and the one shown */
 export interface TabGroup {
+  /**
+   * Names the stack for as long as it exists ("s3"), so the view keeps a stack's panels mounted when closing or
+   * moving a tab changes the stacks around it. Saved with the layout; a layout saved before stacks had ids gets them
+   * when it is read (parseLayout), deterministically, so reading it again gives the same ids.
+   */
+  id: string
   tabs: string[]
   active: string
 }
@@ -52,7 +58,7 @@ export const SizeLimits: Readonly<Record<RegionId, SizeLimit>> = {
 export function minimumSize(layout: Layout, registry: PanelRegistry, region: RegionId): number {
   const limit = SizeLimits[region]
   let min = limit.min
-  for (const group of layout.regions[region].groups) {
+  for (const group of layout.regions[region]?.groups ?? []) {
     for (const id of group.tabs) min = Math.max(min, registry.get(id)?.minSize ?? 0)
   }
   return Math.min(min, limit.max)
@@ -65,30 +71,54 @@ export function clampSize(layout: Layout, registry: PanelRegistry, region: Regio
   return Math.min(limit.max, Math.max(minimumSize(layout, registry, region), Math.round(size)))
 }
 
+// ==================== Stack ids ====================
+
+/** The id a new stack gets: "s" and one more than the biggest number any stack of the layout has */
+export function nextStackId(layout: Layout): string {
+  let max = 0
+  for (const region of RegionIds) {
+    for (const group of layout.regions[region]?.groups ?? []) {
+      const match = /^s(\d+)$/.exec(group.id)
+      if (match) max = Math.max(max, Number(match[1]))
+    }
+  }
+  return `s${max + 1}`
+}
+
+/** Adds a stack (with its own id) to the end of a region's stacks, or at an index; returns it */
+function addGroup(layout: Layout, region: RegionId, tabs: string[], active: string, at?: number): TabGroup {
+  const group: TabGroup = { id: nextStackId(layout), tabs, active }
+  const groups = layout.regions[region].groups
+  groups.splice(at ?? groups.length, 0, group)
+  return group
+}
+
 // ==================== The default layout ====================
 
 /** The arrangement the editor always had: the registry's panels in their default regions and stacks */
 export function defaultLayout(registry: PanelRegistry): Layout {
   const regions = {} as Record<RegionId, RegionLayout>
+  const layout: Layout = { version: LayoutVersion, regions, closed: [] }
   for (const region of RegionIds) {
     const byGroup = new Map<number, string[]>()
     for (const def of registry.defaultsOf(region)) {
       const key = def.defaultGroup ?? 0
       byGroup.set(key, [...(byGroup.get(key) ?? []), def.id])
     }
-    const groups = [...byGroup.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, tabs]): TabGroup => ({ tabs, active: tabs[0] }))
-    regions[region] = { groups, size: SizeLimits[region].initial }
+    regions[region] = { groups: [], size: SizeLimits[region].initial }
+    for (const [, tabs] of [...byGroup.entries()].sort((a, b) => a[0] - b[0])) addGroup(layout, region, tabs, tabs[0])
   }
-  return { version: LayoutVersion, regions, closed: [] }
+  return layout
 }
 
 function cloneLayout(layout: Layout): Layout {
   const regions = {} as Record<RegionId, RegionLayout>
   for (const region of RegionIds) {
     const source = layout.regions[region]
-    regions[region] = { groups: source.groups.map((g) => ({ tabs: [...g.tabs], active: g.active })), size: source.size }
+    regions[region] = {
+      groups: source.groups.map((g) => ({ id: g.id, tabs: [...g.tabs], active: g.active })),
+      size: source.size,
+    }
   }
   return { version: layout.version, regions, closed: [...layout.closed] }
 }
@@ -170,6 +200,7 @@ export function parseLayout(
 
     const layout = defaultLayout(registry)
     const seen = new Set<string>()
+    const ids = new Set<string>()
     const sizes = {} as Record<RegionId, unknown>
     for (const region of RegionIds) {
       const entry = regionsRaw[region]
@@ -186,11 +217,23 @@ export function parseLayout(
               tabs.push(id)
             }
             if (tabs.length === 0) continue
-            groups.push({ tabs, active: typeof g.active === "string" && tabs.includes(g.active) ? g.active : tabs[0] })
+            // The stack's saved id when it is usable and not another's; else none yet (given below)
+            const saved = typeof g.id === "string" && /^[0-9a-zA-Z-]{1,32}$/.test(g.id) && !ids.has(g.id) ? g.id : ""
+            if (saved) ids.add(saved)
+            groups.push({
+              id: saved,
+              tabs,
+              active: typeof g.active === "string" && tabs.includes(g.active) ? g.active : tabs[0],
+            })
           }
         }
       }
       layout.regions[region] = { groups, size: SizeLimits[region].initial }
+    }
+
+    // A layout saved before stacks had ids (or with a bad id): ids in reading order, after the ones it has
+    for (const region of RegionIds) {
+      for (const group of layout.regions[region].groups) if (group.id === "") group.id = nextStackId(layout)
     }
 
     const closed: string[] = []
@@ -223,7 +266,7 @@ export function serializeLayout(layout: Layout): Layout {
     const groups: TabGroup[] = []
     for (const group of out.regions[region].groups) {
       const tabs = group.tabs.filter((t) => !isDynamicId(t))
-      if (tabs.length > 0) groups.push({ tabs, active: tabs.includes(group.active) ? group.active : tabs[0] })
+      if (tabs.length > 0) groups.push({ id: group.id, tabs, active: tabs.includes(group.active) ? group.active : tabs[0] })
     }
     out.regions[region].groups = groups
   }
@@ -256,7 +299,7 @@ function placeAtDefault(layout: Layout, registry: PanelRegistry, id: string): vo
   if (!def) return
   const region = layout.regions[def.defaultRegion]
   if (region.groups.length === 0) {
-    region.groups.push({ tabs: [id], active: id })
+    addGroup(layout, def.defaultRegion, [id], id)
   } else if (registry.defaultGroupCount(def.defaultRegion) > 1) {
     // Above the first stack that holds a panel which starts below this one, else at the end
     const mine = def.defaultGroup ?? 0
@@ -266,7 +309,7 @@ function placeAtDefault(layout: Layout, registry: PanelRegistry, id: string): vo
         return other !== undefined && other.defaultRegion === def.defaultRegion && (other.defaultGroup ?? 0) > mine
       })
     )
-    region.groups.splice(below < 0 ? region.groups.length : below, 0, { tabs: [id], active: id })
+    addGroup(layout, def.defaultRegion, [id], id, below < 0 ? region.groups.length : below)
   } else {
     region.groups[0].tabs.push(id)
     region.groups[0].active = id
@@ -287,10 +330,7 @@ export function movePanel(layout: Layout, registry: PanelRegistry, id: string, t
   const region = next.regions[target.region]
   let dest: TabGroup | undefined = target.group === undefined ? region.groups[0] : region.groups[target.group]
   fromGroup.tabs.splice(from.index, 1)
-  if (!dest) {
-    dest = { tabs: [], active: id }
-    region.groups.push(dest)
-  }
+  if (!dest) dest = addGroup(next, target.region, [], id)
   const before = target.before === undefined ? -1 : dest.tabs.indexOf(target.before)
   if (before < 0) dest.tabs.push(id)
   else dest.tabs.splice(before, 0, id)
@@ -346,7 +386,7 @@ export function openDynamic(layout: Layout, id: string): Layout {
   if (locate(layout, id)) return activatePanel(layout, id)
   const next = cloneLayout(layout)
   const bottom = next.regions.bottom
-  if (bottom.groups.length === 0) bottom.groups.push({ tabs: [id], active: id })
+  if (bottom.groups.length === 0) addGroup(next, "bottom", [id], id)
   else {
     bottom.groups[0].tabs.push(id)
     bottom.groups[0].active = id
@@ -366,7 +406,7 @@ export function closeDynamic(layout: Layout, id: string): Layout {
 export function syncDynamic(layout: Layout, ids: readonly string[]): Layout {
   let next = layout
   for (const region of RegionIds) {
-    for (const group of layout.regions[region].groups) {
+    for (const group of layout.regions[region]?.groups ?? []) {
       for (const tab of group.tabs) if (isDynamicId(tab) && !ids.includes(tab)) next = closeDynamic(next, tab)
     }
   }
