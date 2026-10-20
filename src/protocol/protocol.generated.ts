@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.12.0";
+export const PROTOCOL_VERSION = "1.13.0";
 
 // ==================== Types ====================
 

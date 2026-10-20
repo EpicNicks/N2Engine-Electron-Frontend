@@ -393,6 +393,13 @@
       .error-banner pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; max-height: 40vh; overflow: auto; }
       .error-banner button { padding: 0 8px; font-size: 16px; }
 
+      /* A busy host being retried, and a session the host closed */
+      .busy-retry { max-width: 460px; width: 100%; background: #2d2d2d; border: 1px solid #555; border-radius: 4px; padding: 10px 12px; color: #ddd; font-size: 13px; }
+      .busy-retry p { margin: 0 0 8px; }
+      .busy-retry-actions { display: flex; gap: 8px; }
+      .connection-lost { display: flex; gap: 12px; align-items: center; background: #3a3320; border-bottom: 1px solid #7a6a2a; color: #eee; padding: 6px 12px; font-size: 12px; }
+      .connection-lost span { flex: 1; }
+
       /* Busy overlay */
       .busy-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 1500; }
       .busy-box { background: #2d2d2d; border: 1px solid #444; padding: 16px 24px; border-radius: 6px; color: #fff; }

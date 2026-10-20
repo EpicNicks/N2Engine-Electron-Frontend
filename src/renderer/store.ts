@@ -29,6 +29,12 @@ import { errorCodeOf, errorTextOf } from "../shared/api"
 import { AutosaveChoice, describeAutosave, sceneKey, shouldOfferAutosave } from "./autosave"
 import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
 import { basename, normalizeScenePath, scenePathProblem } from "./paths"
+import {
+  BusyRetryState,
+  ConnectRetryOptions,
+  GiveUpAfterMilliseconds,
+  backoffDelayMilliseconds,
+} from "./connect-retry"
 
 /** Questions the store asks the user (the page's dialogs; a fake in tests) */
 export interface Dialogs {
@@ -103,6 +109,15 @@ export function createUnavailableReason(location: HostLocation | null): string |
   return null
 }
 
+/** A remote connect the host answered busy, kept to be tried again */
+interface BusyJob {
+  action: () => Promise<string>
+  after?: () => Promise<void>
+  startedAt: number
+  attempt: number
+  timer: unknown
+}
+
 export type View = "welcome" | "editor"
 
 /** Which way the welcome screen opens an engine: launching a local N2EditorHost, or connecting to a remote one */
@@ -170,6 +185,23 @@ export class EditorStore {
   readonly host: Signal<HostState>
   readonly hostLocation = signal<HostLocation | null>(null)
   readonly connected = signal(false)
+  /**
+   * The remote host answered a connect with busy (another session holds it) and the editor is waiting to try again,
+   * trying, or has given up; null when it isn't (see connectDirect, cancelBusyRetry, retryBusyNow)
+   */
+  readonly busyRetry = signal<BusyRetryState | null>(null)
+  /**
+   * The editor had a remote session open and the host has closed the connection (a network drop, or another session
+   * took the host over: the host sends nothing before it closes, so the two can't be told apart). Not retried by
+   * itself: reconnecting would take the host back from whoever took it.
+   */
+  readonly remoteConnectionLost = computed(
+    () =>
+      this.host.value.mode === "remote" &&
+      this.host.value.status === "running" &&
+      this.projectPath.value !== null &&
+      !this.connected.value
+  )
   readonly serverInfo = signal<ServerInfo | null>(null)
   readonly hostSummary = computed(() => describeHost(this.host.value, this.connected.value))
   /** Why Create New Project is unavailable, or null */
@@ -295,10 +327,27 @@ export class EditorStore {
   /** The connection (this.connections) an autosave question is being asked on: no second one meanwhile; null when none */
   private autosaveAsking: number | null = null
 
+  /** The connect attempt that was answered busy and is being retried (holds its closure, so its token, until it ends) */
+  private busyJob: BusyJob | null = null
+  /** Bumped when a retry is started or cancelled, so an attempt still in flight from an earlier one is ignored */
+  private busyGeneration = 0
+  private readonly retryTimers: NonNullable<ConnectRetryOptions["timers"]>
+  private readonly retryNow: () => number
+  private readonly retryRandom: () => number
+  private readonly giveUpAfterMs: number
+
   constructor(
     private readonly api: StoreApi,
-    consoleOptions: ConsoleStoreOptions = {}
+    consoleOptions: ConsoleStoreOptions = {},
+    retry: ConnectRetryOptions = {}
   ) {
+    this.retryTimers = retry.timers ?? {
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    }
+    this.retryNow = retry.now ?? (() => Date.now())
+    this.retryRandom = retry.random ?? Math.random
+    this.giveUpAfterMs = retry.giveUpAfterMs ?? GiveUpAfterMilliseconds
     this.host = signal(api.host.state())
     this.console = new ConsoleStore((epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents), {
       ...consoleOptions,
@@ -346,9 +395,10 @@ export class EditorStore {
    * further (it isn't kept here, saved or logged). The editor shows once connected; a failure is shown as the error.
    */
   async connectRemote(settings: RemoteSettings, token: string): Promise<void> {
-    const name = await this.run("Connecting to the remote engine...", () => this.api.remote.connect(settings, token))
-    if (name !== undefined) this.projectPath.value = name
-    await this.refreshRecentRemotes()
+    await this.connecting(
+      () => this.api.remote.connect(settings, token),
+      () => this.refreshRecentRemotes()
+    )
   }
 
   /**
@@ -356,12 +406,93 @@ export class EditorStore {
    * The token goes to the main process and no further. Resolves true once connected.
    */
   async connectDirect(settings: DirectRemoteSettings, token: string): Promise<boolean> {
-    const name = await this.run("Connecting to the remote engine...", () =>
-      this.api.remote.connectDirect(settings, token)
-    )
-    if (name === undefined) return false
+    return this.connecting(() => this.api.remote.connectDirect(settings, token))
+  }
+
+  /**
+   * Runs a remote connect. A host that answers busy (ErrorCoded busy: another session holds it) is retried with a
+   * capped exponential backoff, for GiveUpAfterMilliseconds; any other failure (a wrong token, a pin that doesn't
+   * match, an unreachable host) is shown once and never retried. The retry reuses action, which holds the same
+   * settings and token, and is kept in memory only until the connect succeeds, fails otherwise, is cancelled or the
+   * connect screen goes away.
+   */
+  private async connecting(action: () => Promise<string>, after?: () => Promise<void>): Promise<boolean> {
+    this.cancelBusyRetry()
+    return this.tryConnect({ action, after, startedAt: this.retryNow(), attempt: 0, timer: null })
+  }
+
+  private async tryConnect(job: BusyJob): Promise<boolean> {
+    const generation = this.busyGeneration
+    let busyAnswer = false
+    const name = await this.run("Connecting to the remote engine...", job.action, (e) => {
+      if (errorCodeOf(e) !== "busy") return false
+      busyAnswer = true
+      if (generation === this.busyGeneration) this.waitToRetry(job, errorTextOf(e))
+      return true
+    })
+    if (generation !== this.busyGeneration) {
+      // Cancelled while this attempt was in flight: one that got in anyway is closed again
+      if (name !== undefined) void this.api.project.close().catch(() => undefined)
+      return false
+    }
+    if (name === undefined) {
+      if (!busyAnswer) this.dropBusyJob() // failed some other way: shown as the error, not retried
+      return false
+    }
+    this.dropBusyJob()
     this.projectPath.value = name
+    await job.after?.()
     return true
+  }
+
+  /** Schedules the next try of a connect the host answered busy, or gives up when the time is used */
+  private waitToRetry(job: BusyJob, message: string): void {
+    this.busyJob = job
+    const delayMs = backoffDelayMilliseconds(job.attempt, this.retryRandom)
+    job.attempt++
+    if (this.retryNow() + delayMs - job.startedAt > this.giveUpAfterMs) {
+      this.busyRetry.value = { phase: "gaveUp", message, attempt: job.attempt }
+      return
+    }
+    this.busyRetry.value = { phase: "waiting", message, attempt: job.attempt, delayMs }
+    job.timer = this.retryTimers.setTimeout(() => {
+      job.timer = null
+      this.busyRetry.value = { phase: "trying", message, attempt: job.attempt }
+      void this.tryConnect(job)
+    }, delayMs)
+  }
+
+  /** The Retry button after giving up: the same connect, with a fresh time limit */
+  retryBusyNow(): void {
+    const job = this.busyJob
+    if (!job || this.busyRetry.value?.phase !== "gaveUp") return
+    const message = this.busyRetry.value.message
+    job.startedAt = this.retryNow()
+    job.attempt = 0
+    this.busyRetry.value = { phase: "trying", message, attempt: 0 }
+    void this.tryConnect(job)
+  }
+
+  /** Stops retrying a busy host and forgets the connect, token included; nothing else changes */
+  cancelBusyRetry(): void {
+    this.busyGeneration++
+    this.dropBusyJob()
+  }
+
+  private dropBusyJob(): void {
+    const job = this.busyJob
+    if (job?.timer != null) this.retryTimers.clearTimeout(job.timer)
+    this.busyJob = null
+    this.busyRetry.value = null
+  }
+
+  /**
+   * After the host closed a remote session: back to the connect screen, on its remote tab, to connect again. The
+   * token isn't kept anywhere, so it is asked for again, and the editor never reconnects by itself.
+   */
+  async reconnectRemote(): Promise<void> {
+    await this.closeProject()
+    if (this.projectPath.value === null) this.welcomeMode.value = "remote"
   }
 
   /**
@@ -526,7 +657,11 @@ export class EditorStore {
   }
 
   /** Runs an action: busy while it runs, its failure in error (it resolves with undefined then) */
-  private async run<T>(label: string | null, action: () => Promise<T>): Promise<T | undefined> {
+  private async run<T>(
+    label: string | null,
+    action: () => Promise<T>,
+    handled?: (e: unknown) => boolean
+  ): Promise<T | undefined> {
     batch(() => {
       this.error.value = null
       if (label) this.busy.value = label
@@ -534,6 +669,7 @@ export class EditorStore {
     try {
       return await action()
     } catch (e) {
+      if (handled?.(e)) return undefined
       const message = errorTextOf(e)
       this.noteDenial(e)
       // The editor cancelled it itself (stopped or closed while a host started, the page reloaded): no error

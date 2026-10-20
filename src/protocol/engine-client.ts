@@ -111,6 +111,40 @@ export class HelloError extends Error {
   }
 }
 
+/** The ErrorCoded code a host of protocol 1.13 answers a Hello with when another session holds it (the code is the contract) */
+export const BusyCode = "busy"
+
+/** The roles a host names in its busy text; the role is display-only, and only these exact words are ever shown */
+const BusyRoles: readonly string[] = ["admin", "editor", "viewer"]
+
+/**
+ * The role of the session that holds the host, from a busy answer's text ("... (a viewer session); try again later"),
+ * or undefined when the text doesn't name one of the three roles. The text is display-only: nothing but this word
+ * is taken from it, and nothing about what the editor does depends on it.
+ */
+export function busyHolderRole(text: string): string | undefined {
+  const match = /\(an? ([a-z]+) session\)/.exec(text)
+  return match && BusyRoles.includes(match[1]) ? match[1] : undefined
+}
+
+/**
+ * connect()'s Hello was answered with ErrorCoded "busy" (protocol 1.13): the host is serving another session and this
+ * client may not replace it. Not an authentication failure (the token was right) and not a pin mismatch: nothing is
+ * forgotten, no credential is asked for again, and trying again later can work. The message is built here, from a
+ * role that is one of the three known words, never from the host's own text.
+ */
+export class HostBusyError extends Error {
+  readonly code = BusyCode
+  constructor(readonly holderRole?: string) {
+    super(
+      holderRole === undefined
+        ? "The host is busy with another session"
+        : `The host is busy with another session (a ${holderRole} session)`
+    )
+    this.name = "HostBusyError"
+  }
+}
+
 /** After Shutdown is written, how long to wait for the reply (or the server closing) before dropping the socket */
 export const ShutdownGraceMilliseconds = 1000
 
@@ -193,7 +227,8 @@ export class EngineClient {
   /**
    * Connects and says Hello, with options.token when the host has an access token. Resolves with the host's
    * ServerInfo. Rejects, and closes the connection, when the socket fails or Hello does: a HelloError when the host
-   * refused it (a wrong token, an incompatible protocol version) or didn't answer within HelloTimeoutMilliseconds.
+   * refused it (a wrong token, an incompatible protocol version) or didn't answer within HelloTimeoutMilliseconds, a
+   * HostBusyError when it answered ErrorCoded busy (another session holds the host: protocol 1.13).
    */
   async connect(
     host: string = "localhost",
@@ -776,6 +811,7 @@ export class EngineClient {
     try {
       info = await Promise.race([this.send(helloSpec, request), timeout])
     } catch (e) {
+      if (e instanceof EngineError && e.code === BusyCode) throw new HostBusyError(busyHolderRole(e.message))
       if (e instanceof EngineError) throw new HelloError(`The editor host refused Hello: ${e.message}`)
       throw e
     } finally {

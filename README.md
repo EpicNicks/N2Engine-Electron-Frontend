@@ -253,7 +253,7 @@ The state machine is `src/main/play-session.ts` and the page's side is `src/rend
 
 ## Read-only hosts
 
-Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.12.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
+Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.13.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
 
 - **What the host says.** A host started with `--read-only` answers every command that is not a read with a refusal (`SetComponentFields`, `OpenScene`, `Undo`, `WritePlaySnapshot`, `Shutdown` and so on; the viewport camera and the viewport size are reads). `ServerInfo.readOnly` (read from Hello) says so up front. The editor asks for error codes in Hello (`errorCodes: true`), so a refusal arrives as `ErrorCoded` (message and code `readOnly` or, for later per-user roles, `forbidden`) and rejects with an `EngineError` whose `code` is set; a 1.10 host, or any other failure, sends a plain `Error` and the `code` is `undefined`. An unknown code is treated like a plain error.
 - **The badge.** While `ServerInfo.readOnly` is true (`EditorStore.hostReadOnly`) the toolbar shows a **Read-only** badge.
@@ -272,6 +272,15 @@ Protocol 1.12.0 (engine #130, `N2EditorHost --tokens-file`). A host that more th
 - **Editor.** An editor can change the project. The one thing it cannot do is `Shutdown` the host, and the editor offers no way to send it to a remote host (Stop host is only for a host the editor launched itself, whose token is an admin's).
 - **A `forbidden` denial** (a command the role does not allow that the editor did not know to disable) is shown in the error banner with the host's own message, and the edit is put back. It does not turn the whole editor read-only: only a `readOnly` denial does that.
 - **Not verified:** the Electron UI against a live host with a tokens file (the unit and DOM tests use fakes).
+
+## One session at a time: a busy host and a taken-over session
+
+Protocol 1.13.0 (engine #176 and #177, pre-auth slots). A host serves one editor session at a time. A second client whose token is right replaces the session when it is the same user and role (takeover) or has a strictly higher role (admin over editor over viewer, preemption); otherwise it is turned away after up to a second with the error `busy`. A host without a token lets the newest connection take over.
+
+- **Busy.** A Hello answered with ErrorCoded `busy` (the editor always asks for error codes) rejects `EngineClient.connect` with a `HostBusyError`, a different class from `HelloError` (a wrong token or an incompatible version): the token was right, so nothing is forgotten and no credential is asked for again. The code is the contract. The host's text names the role that holds the host (`a viewer session`); only one of the three role words is taken from it, for the message `The host is busy with another session (a viewer session)`, and any other text is not shown.
+- **Retry.** The connect screen shows that message with `It will try again in N s`, and tries again by itself with a capped exponential backoff (1, 2, 4, 8, then 15 s, each cut by a random amount of up to half) for about two minutes, then stops and offers **Retry** (which starts over). **Cancel** stops it at once. The retry (`EditorStore.connectDirect`, `connectRemote`; `connect-retry.ts`) calls the same connect again with the same settings and token, which are held in memory only until it connects, fails otherwise, is cancelled or the connect screen is left; the token is never saved, logged or shown. A wrong token, a pin mismatch, an unreachable host or any other failure is shown once and never retried.
+- **A session the host closed.** When another session takes the host over, the host closes the old session the way it closes any: no message comes first, so the editor can't tell it from a dropped connection. The editor shows `The host closed the connection` with a hint that another client may have taken the session over, and a **Reconnect** button, which returns to the remote connect screen (the token is asked for again). It does not reconnect by itself: that would take the host back from the other session and the two would fight over it.
+- **Not verified:** any of this against a live host (the tests use stand-ins; the engine's issue #149 tracks the live check).
 
 ## Architecture
 
