@@ -95,15 +95,26 @@ export interface HostArgOptions {
   renderer?: string
   /** --play: the snapshot (or res:// scene) the host plays as a game, instead of serving an edit session */
   playFile?: string
+  /**
+   * --tokens-file: a file of per-user tokens (roles) instead of --token-env's single token, which has every right. For
+   * a launcher that wants a host whose one user is less than an admin (the MCP bridge: an editor). The token is then
+   * not in the child's environment; the caller made the file and passes the token to say Hello with as LaunchOptions.token.
+   */
+  tokensFile?: string
+  /** --exit-on-disconnect (the default: true). A launcher that reconnects after an idle close turns it off. */
+  exitOnDisconnect?: boolean
 }
 
 /** The host's arguments: the token travels in the environment, so only the variable's name is here */
 export function buildHostArgs(projectDir: string, options: HostArgOptions = {}): string[] {
   const args = ["--project", projectDir]
   if (options.renderer) args.push("--renderer", options.renderer)
-  args.push("--port", "0", "--token-env", TokenEnvVariable)
+  args.push("--port", "0")
+  if (options.tokensFile) args.push("--tokens-file", options.tokensFile)
+  else args.push("--token-env", TokenEnvVariable)
   if (options.playFile) args.push("--play", options.playFile)
-  args.push("--exit-on-disconnect", "--exit-on-stdin-eof")
+  if (options.exitOnDisconnect !== false) args.push("--exit-on-disconnect")
+  args.push("--exit-on-stdin-eof")
   return args
 }
 
@@ -128,6 +139,10 @@ export interface LaunchOptions {
   renderer?: string
   /** --play <file>: starts a play host (a game) instead of an edit host */
   playFile?: string
+  /** --tokens-file (see HostArgOptions): the token is then the caller's, and not put in the child's environment */
+  tokensFile?: string
+  /** --exit-on-disconnect, default true (see HostArgOptions) */
+  exitOnDisconnect?: boolean
   /** Defaults to generateToken() */
   token?: string
   readyTimeoutMs?: number
@@ -223,7 +238,7 @@ export class HostProcess {
       let child: ChildProcess
       try {
         child = spawn(options.hostPath, buildHostArgs(options.projectDir, options), {
-          env: buildChildEnv(options.env ?? process.env, token),
+          env: options.tokensFile ? (options.env ?? process.env) : buildChildEnv(options.env ?? process.env, token),
           // stdin: a pipe kept open and never written to (see the top of this file)
           stdio: ["pipe", "pipe", "pipe"],
           windowsHide: true,
