@@ -7,7 +7,8 @@ import { MoveTarget, TabGroup, isDynamicId, locate } from "./layout-model"
 import { LayoutController } from "./layout-controller"
 import { PanelDragType, PanelFrame, PanelFrameContext } from "./panel-frame"
 import { dragHas } from "../drag-types"
-import { Empty, MenuItem, Splitter, showContextMenu } from "../ui"
+import { keymap } from "../keymap"
+import { Empty, MenuItem, Splitter, showContextMenu, showShortcutsDialog } from "../ui"
 
 /** A tab that isn't a panel: an open text file. The page says what it is called and shows (editor.tsx) */
 export interface DynamicTab {
@@ -298,7 +299,7 @@ function Stacks(props: ViewProps & { region: RegionId }) {
   return (
     <>
       {groups.map((group, i) => (
-        <Stack {...props} groupIndex={i} group={group} key={i} />
+        <Stack {...props} groupIndex={i} group={group} key={group.id} />
       ))}
     </>
   )
@@ -391,6 +392,8 @@ export function windowMenuItems(controller: LayoutController): MenuItem[] {
   if (controller.hasUserDefault.value) {
     items.push({ label: "Forget the saved default layout", action: () => controller.forgetUserDefault() })
   }
+  items.push({ separator: true })
+  items.push({ label: "Keyboard shortcuts", action: () => showShortcutsDialog(keymap.describe()) })
   return items
 }
 

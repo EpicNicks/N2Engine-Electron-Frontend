@@ -6,7 +6,8 @@ import { useEffect } from "preact/hooks"
 import { render, screen, waitFor, within, fireEvent, act } from "@testing-library/preact"
 import { LayoutController } from "../renderer/layout/layout-controller"
 import { DynamicTab, EditorLayout, WindowButton } from "../renderer/layout/layout-view"
-import { LayoutPersistence, KeyValueStore, projectLayoutKey, UserLayoutKey } from "../renderer/layout/layout-storage"
+import { LayoutPersistence, KeyValueStore, ProjectLayoutPref, UserLayoutPref, projectLayoutKey, UserLayoutKey } from "../renderer/layout/layout-storage"
+import { prefStorageKey } from "../renderer/prefs"
 import { PanelDragType } from "../renderer/layout/panel-frame"
 import { defaultLayout, serializeLayout } from "../renderer/layout/layout-model"
 import { ContextMenu, Panel, showContextMenu } from "../renderer/ui"
@@ -17,6 +18,11 @@ const Project = "11111111-1111-4111-8111-111111111111"
 
 /** What the fake panels did: "mount hierarchy", "unmount viewport" */
 let events: string[] = []
+/** Which test the panels belong to: a panel of an earlier test unmounts late (Preact's effects), and is not this test's event */
+let epoch = 0
+const logFor = (mine: number) => (event: string) => {
+  if (mine === epoch) events.push(event)
+}
 /** The fake viewports mounted so far, each with the frames it asked for while mounted (a stand-in for the renderer's requests) */
 let viewports: { frames: number; running: boolean }[] = []
 const framesAsked = () => viewports.reduce((sum, v) => sum + v.frames, 0)
@@ -25,10 +31,11 @@ type PanelComponent = ComponentType<Record<string, never>>
 
 /** A panel with a Panel frame (a header of its own), like the hierarchy and the inspector */
 function framed(id: string): PanelComponent {
+  const log = logFor(epoch)
   return function Framed() {
     useEffect(() => {
-      events.push(`mount ${id}`)
-      return () => void events.push(`unmount ${id}`)
+      log(`mount ${id}`)
+      return () => void log(`unmount ${id}`)
     }, [])
     return (
       <Panel title={`${id} header`} class={`${id}-panel`}>
@@ -40,16 +47,17 @@ function framed(id: string): PanelComponent {
 
 /** The viewport: no header, and a loop that asks for frames for as long as it is mounted */
 function viewportPanel(): PanelComponent {
+  const log = logFor(epoch)
   return function FakeViewport() {
     useEffect(() => {
-      events.push("mount viewport")
+      log("mount viewport")
       const me = { frames: 0, running: true }
       viewports.push(me)
       const timer = setInterval(() => me.frames++, 5)
       return () => {
         clearInterval(timer)
         me.running = false
-        events.push("unmount viewport")
+        log("unmount viewport")
       }
     }, [])
     return <div class="viewport-container">viewport content</div>
@@ -76,6 +84,7 @@ class MemoryStore implements KeyValueStore {
 }
 
 beforeEach(() => {
+  epoch++
   events = []
   viewports = []
   showContextMenu(0, 0, []) // no menu left open by the test before
@@ -227,9 +236,9 @@ describe("tabs", () => {
     const { controller, store } = renderLayout()
     const detach = controller.flushOnUnload(window)
     act(() => controller.setSize("left", 333))
-    assert.equal(store.get(projectLayoutKey(Project)), null, "still waiting")
+    assert.equal(store.get(prefStorageKey(ProjectLayoutPref, Project)), null, "still waiting")
     window.dispatchEvent(new Event("pagehide"))
-    assert.ok(store.get(projectLayoutKey(Project)), "saved")
+    assert.ok(store.get(prefStorageKey(ProjectLayoutPref, Project)), "saved")
     detach()
   })
 
@@ -427,6 +436,7 @@ describe("the Window menu", () => {
       "Engine",
       "Reset layout",
       "Save layout as the default for new projects",
+      "Keyboard shortcuts",
     ])
     assert.ok((menuItem("Inspector").textContent ?? "").startsWith("\u2713"))
   })
@@ -477,9 +487,9 @@ describe("the Window menu", () => {
     act(() => controller.move("assets", { region: "right" }))
     act(() => controller.setSize("right", 480))
     controller.flush()
-    assert.ok(store.data.has(projectLayoutKey(Project)))
+    assert.ok(store.data.has(prefStorageKey(ProjectLayoutPref, Project)))
     chooseFromWindow("Reset layout")
-    assert.equal(store.data.has(projectLayoutKey(Project)), false)
+    assert.equal(store.data.has(prefStorageKey(ProjectLayoutPref, Project)), false)
     assert.ok(region("left")!.querySelector(".assets-panel"))
     assert.equal(region("right")!.style.width, "300px")
     assert.equal(region("right")!.querySelectorAll(".panel-header").length, 3)
@@ -489,10 +499,10 @@ describe("the Window menu", () => {
     const { store } = renderLayout()
     chooseFromWindow("Inspector")
     chooseFromWindow("Save layout as the default for new projects")
-    assert.ok(store.data.has(UserLayoutKey))
+    assert.ok(store.data.has(prefStorageKey(UserLayoutPref)))
     fireEvent.click(screen.getByRole("button", { name: "Window" }))
     fireEvent.click(menuItem("Forget the saved default layout"))
-    assert.equal(store.data.has(UserLayoutKey), false)
+    assert.equal(store.data.has(prefStorageKey(UserLayoutPref)), false)
   })
 })
 
@@ -501,7 +511,7 @@ describe("saved layouts", () => {
     const store = new MemoryStore()
     const registry = fixtureRegistry()
     let layout = defaultLayout(registry)
-    layout = { ...layout, closed: ["engine"], regions: { ...layout.regions, right: { size: 410, groups: [{ tabs: ["inspector", "assets"], active: "assets" }, { tabs: ["hierarchy"], active: "hierarchy" }] }, left: { size: 200, groups: [] } } }
+    layout = { ...layout, closed: ["engine"], regions: { ...layout.regions, right: { size: 410, groups: [{ id: "s7", tabs: ["inspector", "assets"], active: "assets" }, { id: "s8", tabs: ["hierarchy"], active: "hierarchy" }] }, left: { size: 200, groups: [] } } }
     store.data.set(projectLayoutKey(Project), JSON.stringify(serializeLayout(layout)))
     renderLayout({ store })
     assert.equal(region("left"), null)
@@ -551,7 +561,9 @@ describe("saved layouts", () => {
     controller.flush()
     chooseFromWindow("Save layout as the default for new projects")
     chooseFromWindow("Reset layout")
-    assert.ok(region("left")!.querySelector(".assets-panel"))
+    // Nothing reaches the storage, but the preferences keep the saved default for the session: Reset shows it
+    assert.ok(region("bottom")!.querySelector(".assets-panel"))
+    assert.equal(store.data.size, 0)
   })
 
   test("a splitter size shows in the region and is saved", () => {
@@ -563,7 +575,7 @@ describe("saved layouts", () => {
     assert.equal(region("left")!.style.width, "420px")
     assert.equal(region("bottom")!.style.height, "150px")
     controller.flush()
-    const saved = JSON.parse(store.data.get(projectLayoutKey(Project))!)
+    const saved = JSON.parse(store.data.get(prefStorageKey(ProjectLayoutPref, Project))!).value
     assert.equal(saved.regions.left.size, 420)
     assert.equal(saved.regions.bottom.size, 150)
   })
@@ -655,7 +667,7 @@ describe("text files at the bottom", () => {
     act(() => controller.setDynamicTabs(["text:res://a.lua"]))
     act(() => controller.move("assets", { region: "right" }))
     controller.flush()
-    assert.equal((store.data.get(projectLayoutKey(Project)) ?? "").includes("a.lua"), false)
+    assert.equal((store.data.get(prefStorageKey(ProjectLayoutPref, Project)) ?? "").includes("a.lua"), false)
   })
 })
 
@@ -690,5 +702,57 @@ describe("the editor's registered panels", () => {
     assert.equal(registry.get("inspector")!.sizing, undefined, "flex 1: the rest")
     assert.deepEqual(registry.get("engine")!.sizing, { flex: "0 0 auto", maxHeight: "30%" })
     assert.equal(registry.get("console")!.tabBar, "always")
+  })
+})
+
+describe("stacks keep their panels mounted when other stacks change", () => {
+  const mounts = (id: string) => events.filter((e) => e === `mount ${id}`).length
+  const unmounts = (id: string) => events.filter((e) => e === `unmount ${id}`).length
+
+  test("closing and reopening a panel in a region does not remount the region's other stacks", () => {
+    renderLayout()
+    for (const id of ["hierarchy", "inspector", "engine"]) assert.equal(mounts(id), 1, id)
+    chooseFromWindow("Inspector") // the middle of the right region's three stacks
+    assert.deepEqual(
+      Array.from(region("right")!.querySelectorAll(".panel-header")).map((h) => h.textContent),
+      ["hierarchy header", "engine header"]
+    )
+    assert.equal(unmounts("inspector"), 1)
+    assert.equal(unmounts("hierarchy"), 0)
+    assert.equal(unmounts("engine"), 0)
+    chooseFromWindow("Inspector")
+    assert.equal(mounts("inspector"), 2, "the reopened panel is new")
+    for (const id of ["hierarchy", "engine"]) {
+      assert.equal(mounts(id), 1, `${id} was not remounted`)
+      assert.equal(unmounts(id), 0, id)
+    }
+  })
+
+  test("closing the first stack of a region, and a stack in another region, leaves the rest as they were", () => {
+    renderLayout()
+    chooseFromWindow("Hierarchy")
+    chooseFromWindow("Assets")
+    chooseFromWindow("Console")
+    for (const id of ["inspector", "engine"]) {
+      assert.equal(mounts(id), 1, id)
+      assert.equal(unmounts(id), 0, id)
+    }
+    assert.equal(mounts("viewport"), 1)
+    assert.equal(unmounts("viewport"), 0)
+  })
+
+  test("a layout saved without stack ids (release F1) shows the same, and stays mounted when a stack closes", () => {
+    const store = new MemoryStore()
+    const registry = fixtureRegistry<PanelComponent>(componentOf)
+    const old = JSON.parse(JSON.stringify(serializeLayout(defaultLayout(registry))))
+    for (const r of Object.values<{ groups: Record<string, unknown>[] }>(old.regions)) for (const g of r.groups) delete g.id
+    store.data.set(projectLayoutKey(Project), JSON.stringify(old))
+    renderLayout({ store })
+    assert.deepEqual(
+      Array.from(region("right")!.querySelectorAll(".panel-header")).map((h) => h.textContent),
+      ["hierarchy header", "inspector header", "engine header"]
+    )
+    chooseFromWindow("Hierarchy")
+    for (const id of ["inspector", "engine"]) assert.equal(unmounts(id), 0, id)
   })
 })

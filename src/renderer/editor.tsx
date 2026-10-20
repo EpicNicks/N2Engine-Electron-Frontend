@@ -3,13 +3,17 @@
 import { useEffect, useMemo } from "preact/hooks"
 import { ConnectionLostNotice } from "./connection-notices"
 import { TextEditor } from "./assets-panel"
-import { editActions, editMenuItems, editShortcutOf, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
+import { editActions, editMenuItems, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
 import { isDirty } from "./assets-state"
+import { globalActionHandlers } from "./global-actions"
+import { keymap } from "./keymap"
+import { useKeymapActions } from "./keymap-hooks"
+import { appPrefs } from "./prefs"
 import { builtinPanels } from "./layout/builtin-panels"
 import { LayoutController } from "./layout/layout-controller"
 import { DynamicPrefix } from "./layout/layout-model"
 import { DynamicTab, EditorLayout, WindowButton } from "./layout/layout-view"
-import { LayoutPersistence, browserStore } from "./layout/layout-storage"
+import { LayoutPersistence } from "./layout/layout-storage"
 import { basename } from "./paths"
 import { MenuItem, confirmDialog, modalOpen, showContextMenu, useApp } from "./ui"
 import { GameEndedMessage } from "../shared/api"
@@ -272,41 +276,19 @@ export function Editor() {
 
   // The panels follow the connection, the selection, the assets and the scene's changes (scene-follow.ts)
   useEffect(() => followScene({ store, scene, hierarchy, inspector, assets }), [])
-  // Ctrl+S saves the scene (the script editor handles the key first, for its file)
+  // The one keyboard dispatcher (keymap.ts), over the document; what the keys do is registered by the actions' owners
+  // (here the scene's save, undo and redo; the panels register their own). A dialog open stops every shortcut.
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "s")
-        return
-      e.preventDefault()
-      // Not under a dialog (its own field's key), and not twice at once
-      if (modalOpen() || (e.target as HTMLElement | null)?.closest?.(".modal")) return
-      if (!store.scene.value || store.busy.value !== null) return
-      // A name or a value being typed is committed first, so the saved scene has it
-      const target = e.target as HTMLElement | null
-      if (target?.classList?.contains("hierarchy-rename") || target?.closest?.(".inspector-panel")) target.blur()
-      // And what the inspector edited a moment ago is sent
-      void hierarchy.renameSettled
-        .then(() => inspector.flush())
-        .then(() => store.saveScene())
-        .then((saved) => saved && assets.refresh().catch(() => {}))
+    keymap.setMac(isMacPlatform(navigator.userAgent))
+    const detachPrefs = keymap.attachPrefs(appPrefs().user)
+    const detach = keymap.install(document, { isModalOpen: modalOpen })
+    return () => {
+      detach()
+      detachPrefs()
     }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
   }, [])
-  // Undo and redo (E6, edit-actions.ts): nothing is registered yet. A text field keeps its own undo.
+  useKeymapActions(globalActionHandlers({ store, hierarchy, inspector, assets }))
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const shortcut = editShortcutOf(e)
-      const actions = editActions.value
-      if (e.defaultPrevented || shortcut === null || actions === null || modalOpen()) return
-      // Only a field that takes text has its own undo; a checkbox, a slider or a select hasn't
-      if (isTextEntry(e.target as HTMLElement | null)) return
-      e.preventDefault()
-      // A held key repeats: one undo is running and one is waiting, which is enough
-      if (e.repeat && actions.busy?.()) return
-      void runEditAction(actions, shortcut, (what, err) => store.reportError(what, err))
-    }
-    window.addEventListener("keydown", onKeyDown)
     // macOS: the application menu's Undo and Redo (the menu owns Cmd+Z there); a text field keeps its own undo
     window.editMenu.onCommand((command) => {
       const actions = editActions.value
@@ -317,7 +299,6 @@ export function Editor() {
         void runEditAction(actions, command, (what, err) => store.reportError(what, err))
       }
     })
-    return () => window.removeEventListener("keydown", onKeyDown)
   }, [])
   useEffect(() => {
     return () => {
@@ -329,11 +310,12 @@ export function Editor() {
   // The layout: where the panels are, remembered per project (layout/). The project's id comes from the host.
   const layout = useMemo(() => {
     const registry = builtinPanels()
-    return new LayoutController(registry, new LayoutPersistence(browserStore(), registry))
+    return new LayoutController(registry, new LayoutPersistence(appPrefs(), registry))
   }, [])
   useEffect(() => () => layout.dispose(), [layout])
   // The window closing or reloading does not unmount the tree: save what is waiting then
   useEffect(() => layout.flushOnUnload(window), [layout])
+  useEffect(() => appPrefs().flushOnUnload(window), [])
   const connected = store.connected.value
   useEffect(() => {
     if (!connected) return
