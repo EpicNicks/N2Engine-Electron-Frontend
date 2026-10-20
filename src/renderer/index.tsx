@@ -28,6 +28,7 @@ import {
   ContextMenu,
   ErrorBanner,
   PromptDialog,
+  ShortcutsDialog,
   UnsavedDialog,
   autosaveDialog,
   confirmDialog,
@@ -61,6 +62,7 @@ function App({ app }: { app: AppState }) {
       <ConfirmDialog />
       <UnsavedDialog />
       <AutosaveDialog />
+      <ShortcutsDialog />
       <ContextMenu />
     </AppContext.Provider>
   )

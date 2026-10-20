@@ -35,7 +35,7 @@ export function ConsolePanel() {
   }, [visible])
 
   return (
-    <div class="console-panel">
+    <div class="console-panel" data-keymap-scope="console">
       <div class="console-toolbar">
         {(Object.keys(LevelLabels) as LogLevel[]).map((level) => (
           <label class={`console-filter ${level}`} key={level}>

@@ -6,7 +6,8 @@ import { useEffect } from "preact/hooks"
 import { render, screen, waitFor, within, fireEvent, act } from "@testing-library/preact"
 import { LayoutController } from "../renderer/layout/layout-controller"
 import { DynamicTab, EditorLayout, WindowButton } from "../renderer/layout/layout-view"
-import { LayoutPersistence, KeyValueStore, projectLayoutKey, UserLayoutKey } from "../renderer/layout/layout-storage"
+import { LayoutPersistence, KeyValueStore, ProjectLayoutPref, UserLayoutPref, projectLayoutKey, UserLayoutKey } from "../renderer/layout/layout-storage"
+import { prefStorageKey } from "../renderer/prefs"
 import { PanelDragType } from "../renderer/layout/panel-frame"
 import { defaultLayout, serializeLayout } from "../renderer/layout/layout-model"
 import { ContextMenu, Panel, showContextMenu } from "../renderer/ui"
@@ -227,9 +228,9 @@ describe("tabs", () => {
     const { controller, store } = renderLayout()
     const detach = controller.flushOnUnload(window)
     act(() => controller.setSize("left", 333))
-    assert.equal(store.get(projectLayoutKey(Project)), null, "still waiting")
+    assert.equal(store.get(prefStorageKey(ProjectLayoutPref, Project)), null, "still waiting")
     window.dispatchEvent(new Event("pagehide"))
-    assert.ok(store.get(projectLayoutKey(Project)), "saved")
+    assert.ok(store.get(prefStorageKey(ProjectLayoutPref, Project)), "saved")
     detach()
   })
 
@@ -427,6 +428,7 @@ describe("the Window menu", () => {
       "Engine",
       "Reset layout",
       "Save layout as the default for new projects",
+      "Keyboard shortcuts",
     ])
     assert.ok((menuItem("Inspector").textContent ?? "").startsWith("\u2713"))
   })
@@ -477,9 +479,9 @@ describe("the Window menu", () => {
     act(() => controller.move("assets", { region: "right" }))
     act(() => controller.setSize("right", 480))
     controller.flush()
-    assert.ok(store.data.has(projectLayoutKey(Project)))
+    assert.ok(store.data.has(prefStorageKey(ProjectLayoutPref, Project)))
     chooseFromWindow("Reset layout")
-    assert.equal(store.data.has(projectLayoutKey(Project)), false)
+    assert.equal(store.data.has(prefStorageKey(ProjectLayoutPref, Project)), false)
     assert.ok(region("left")!.querySelector(".assets-panel"))
     assert.equal(region("right")!.style.width, "300px")
     assert.equal(region("right")!.querySelectorAll(".panel-header").length, 3)
@@ -489,10 +491,10 @@ describe("the Window menu", () => {
     const { store } = renderLayout()
     chooseFromWindow("Inspector")
     chooseFromWindow("Save layout as the default for new projects")
-    assert.ok(store.data.has(UserLayoutKey))
+    assert.ok(store.data.has(prefStorageKey(UserLayoutPref)))
     fireEvent.click(screen.getByRole("button", { name: "Window" }))
     fireEvent.click(menuItem("Forget the saved default layout"))
-    assert.equal(store.data.has(UserLayoutKey), false)
+    assert.equal(store.data.has(prefStorageKey(UserLayoutPref)), false)
   })
 })
 
@@ -501,7 +503,7 @@ describe("saved layouts", () => {
     const store = new MemoryStore()
     const registry = fixtureRegistry()
     let layout = defaultLayout(registry)
-    layout = { ...layout, closed: ["engine"], regions: { ...layout.regions, right: { size: 410, groups: [{ tabs: ["inspector", "assets"], active: "assets" }, { tabs: ["hierarchy"], active: "hierarchy" }] }, left: { size: 200, groups: [] } } }
+    layout = { ...layout, closed: ["engine"], regions: { ...layout.regions, right: { size: 410, groups: [{ id: "s7", tabs: ["inspector", "assets"], active: "assets" }, { id: "s8", tabs: ["hierarchy"], active: "hierarchy" }] }, left: { size: 200, groups: [] } } }
     store.data.set(projectLayoutKey(Project), JSON.stringify(serializeLayout(layout)))
     renderLayout({ store })
     assert.equal(region("left"), null)
@@ -551,7 +553,9 @@ describe("saved layouts", () => {
     controller.flush()
     chooseFromWindow("Save layout as the default for new projects")
     chooseFromWindow("Reset layout")
-    assert.ok(region("left")!.querySelector(".assets-panel"))
+    // Nothing reaches the storage, but the preferences keep the saved default for the session: Reset shows it
+    assert.ok(region("bottom")!.querySelector(".assets-panel"))
+    assert.equal(store.data.size, 0)
   })
 
   test("a splitter size shows in the region and is saved", () => {
@@ -563,7 +567,7 @@ describe("saved layouts", () => {
     assert.equal(region("left")!.style.width, "420px")
     assert.equal(region("bottom")!.style.height, "150px")
     controller.flush()
-    const saved = JSON.parse(store.data.get(projectLayoutKey(Project))!)
+    const saved = JSON.parse(store.data.get(prefStorageKey(ProjectLayoutPref, Project))!).value
     assert.equal(saved.regions.left.size, 420)
     assert.equal(saved.regions.bottom.size, 150)
   })
@@ -655,7 +659,7 @@ describe("text files at the bottom", () => {
     act(() => controller.setDynamicTabs(["text:res://a.lua"]))
     act(() => controller.move("assets", { region: "right" }))
     controller.flush()
-    assert.equal((store.data.get(projectLayoutKey(Project)) ?? "").includes("a.lua"), false)
+    assert.equal((store.data.get(prefStorageKey(ProjectLayoutPref, Project)) ?? "").includes("a.lua"), false)
   })
 })
 

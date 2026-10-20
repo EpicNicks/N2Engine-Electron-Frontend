@@ -4,7 +4,11 @@
 import "./dom-globals"
 import { afterEach } from "node:test"
 import { cleanup } from "@testing-library/preact"
+import { keymap } from "../renderer/keymap"
 
 afterEach(() => {
   cleanup()
+  // The page's one keyboard dispatcher (installed by a test through helpers.tsx) doesn't outlive the test
+  keymap.uninstall()
+  keymap.resetAll()
 })
