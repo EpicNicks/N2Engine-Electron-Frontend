@@ -18,6 +18,11 @@ const Project = "11111111-1111-4111-8111-111111111111"
 
 /** What the fake panels did: "mount hierarchy", "unmount viewport" */
 let events: string[] = []
+/** Which test the panels belong to: a panel of an earlier test unmounts late (Preact's effects), and is not this test's event */
+let epoch = 0
+const logFor = (mine: number) => (event: string) => {
+  if (mine === epoch) events.push(event)
+}
 /** The fake viewports mounted so far, each with the frames it asked for while mounted (a stand-in for the renderer's requests) */
 let viewports: { frames: number; running: boolean }[] = []
 const framesAsked = () => viewports.reduce((sum, v) => sum + v.frames, 0)
@@ -26,10 +31,11 @@ type PanelComponent = ComponentType<Record<string, never>>
 
 /** A panel with a Panel frame (a header of its own), like the hierarchy and the inspector */
 function framed(id: string): PanelComponent {
+  const log = logFor(epoch)
   return function Framed() {
     useEffect(() => {
-      events.push(`mount ${id}`)
-      return () => void events.push(`unmount ${id}`)
+      log(`mount ${id}`)
+      return () => void log(`unmount ${id}`)
     }, [])
     return (
       <Panel title={`${id} header`} class={`${id}-panel`}>
@@ -41,16 +47,17 @@ function framed(id: string): PanelComponent {
 
 /** The viewport: no header, and a loop that asks for frames for as long as it is mounted */
 function viewportPanel(): PanelComponent {
+  const log = logFor(epoch)
   return function FakeViewport() {
     useEffect(() => {
-      events.push("mount viewport")
+      log("mount viewport")
       const me = { frames: 0, running: true }
       viewports.push(me)
       const timer = setInterval(() => me.frames++, 5)
       return () => {
         clearInterval(timer)
         me.running = false
-        events.push("unmount viewport")
+        log("unmount viewport")
       }
     }, [])
     return <div class="viewport-container">viewport content</div>
@@ -77,6 +84,7 @@ class MemoryStore implements KeyValueStore {
 }
 
 beforeEach(() => {
+  epoch++
   events = []
   viewports = []
   showContextMenu(0, 0, []) // no menu left open by the test before
@@ -694,5 +702,57 @@ describe("the editor's registered panels", () => {
     assert.equal(registry.get("inspector")!.sizing, undefined, "flex 1: the rest")
     assert.deepEqual(registry.get("engine")!.sizing, { flex: "0 0 auto", maxHeight: "30%" })
     assert.equal(registry.get("console")!.tabBar, "always")
+  })
+})
+
+describe("stacks keep their panels mounted when other stacks change", () => {
+  const mounts = (id: string) => events.filter((e) => e === `mount ${id}`).length
+  const unmounts = (id: string) => events.filter((e) => e === `unmount ${id}`).length
+
+  test("closing and reopening a panel in a region does not remount the region's other stacks", () => {
+    renderLayout()
+    for (const id of ["hierarchy", "inspector", "engine"]) assert.equal(mounts(id), 1, id)
+    chooseFromWindow("Inspector") // the middle of the right region's three stacks
+    assert.deepEqual(
+      Array.from(region("right")!.querySelectorAll(".panel-header")).map((h) => h.textContent),
+      ["hierarchy header", "engine header"]
+    )
+    assert.equal(unmounts("inspector"), 1)
+    assert.equal(unmounts("hierarchy"), 0)
+    assert.equal(unmounts("engine"), 0)
+    chooseFromWindow("Inspector")
+    assert.equal(mounts("inspector"), 2, "the reopened panel is new")
+    for (const id of ["hierarchy", "engine"]) {
+      assert.equal(mounts(id), 1, `${id} was not remounted`)
+      assert.equal(unmounts(id), 0, id)
+    }
+  })
+
+  test("closing the first stack of a region, and a stack in another region, leaves the rest as they were", () => {
+    renderLayout()
+    chooseFromWindow("Hierarchy")
+    chooseFromWindow("Assets")
+    chooseFromWindow("Console")
+    for (const id of ["inspector", "engine"]) {
+      assert.equal(mounts(id), 1, id)
+      assert.equal(unmounts(id), 0, id)
+    }
+    assert.equal(mounts("viewport"), 1)
+    assert.equal(unmounts("viewport"), 0)
+  })
+
+  test("a layout saved without stack ids (release F1) shows the same, and stays mounted when a stack closes", () => {
+    const store = new MemoryStore()
+    const registry = fixtureRegistry<PanelComponent>(componentOf)
+    const old = JSON.parse(JSON.stringify(serializeLayout(defaultLayout(registry))))
+    for (const r of Object.values<{ groups: Record<string, unknown>[] }>(old.regions)) for (const g of r.groups) delete g.id
+    store.data.set(projectLayoutKey(Project), JSON.stringify(old))
+    renderLayout({ store })
+    assert.deepEqual(
+      Array.from(region("right")!.querySelectorAll(".panel-header")).map((h) => h.textContent),
+      ["hierarchy header", "inspector header", "engine header"]
+    )
+    chooseFromWindow("Hierarchy")
+    for (const id of ["inspector", "engine"]) assert.equal(unmounts(id), 0, id)
   })
 })

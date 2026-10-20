@@ -476,3 +476,90 @@ describe("the hierarchy while it is read-only", () => {
     assert.equal((screen.getByLabelText("A active") as HTMLInputElement).disabled, false)
   })
 })
+
+describe("the hierarchy's keys are keymap actions (hierarchy scope)", () => {
+  test("the list is the hierarchy scope, and the panel's keys are registered with the page's keymap", async () => {
+    await renderHierarchy("A,B")
+    assert.equal(list().getAttribute("data-keymap-scope"), "hierarchy")
+  })
+
+  test("Shift+Down and Shift+Up extend the selection by a row", async () => {
+    await renderHierarchy("A,B,C")
+    fireEvent.click(rowOf("A"))
+    fireEvent.keyDown(list(), { key: "ArrowDown", shiftKey: true })
+    assert.deepEqual([isSelected("A"), isSelected("B"), isSelected("C")], [true, true, false])
+    fireEvent.keyDown(list(), { key: "ArrowDown", shiftKey: true })
+    assert.deepEqual([isSelected("A"), isSelected("B"), isSelected("C")], [true, true, true])
+    fireEvent.keyDown(list(), { key: "ArrowUp", shiftKey: true })
+    assert.deepEqual([isSelected("A"), isSelected("B"), isSelected("C")], [true, true, false])
+  })
+
+  test("Cmd+D duplicates too (Ctrl or Cmd, as it always did)", async () => {
+    const h = await renderHierarchy("A,B")
+    fireEvent.click(rowOf("A"))
+    fireEvent.keyDown(list(), { key: "d", metaKey: true })
+    await waitFor(() => assert.deepEqual(h.host.calls, ["duplicateEntity id-A"]))
+  })
+
+  test("a key that repeats because it is held (Delete, Ctrl+D) acts once; F2 is not held-key guarded", async () => {
+    const h = await renderHierarchy("A,B,C")
+    fireEvent.click(rowOf("A"))
+    fireEvent.keyDown(list(), { key: "Delete" })
+    await waitFor(() => assert.deepEqual(names(), ["B", "C"]))
+    fireEvent.keyDown(list(), { key: "Delete", repeat: true })
+    fireEvent.keyDown(list(), { key: "d", ctrlKey: true, repeat: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepEqual(h.host.calls, ["destroyEntity id-A"])
+    assert.deepEqual(names(), ["B", "C"])
+  })
+
+  test("the held key's default is prevented even though nothing is done (as the old handler did)", async () => {
+    await renderHierarchy("A,B")
+    fireEvent.click(rowOf("A"))
+    assert.equal(fireEvent.keyDown(list(), { key: "Delete", repeat: true }), false)
+    assert.equal(fireEvent.keyDown(list(), { key: "ArrowDown" }), false)
+    assert.equal(fireEvent.keyDown(list(), { key: "x" }), true, "a key that is not a shortcut is left alone")
+  })
+
+  test("typing in the name field never fires a shortcut (Delete, F2, Ctrl+D, the arrows)", async () => {
+    const h = await renderHierarchy("A,B")
+    await userEvent.setup().click(rowOf("A"))
+    fireEvent.keyDown(list(), { key: "F2" })
+    const input = (await screen.findByLabelText("Name")) as HTMLInputElement
+    for (const init of [{ key: "Delete" }, { key: "F2" }, { key: "d", ctrlKey: true }, { key: "ArrowDown" }]) {
+      fireEvent.keyDown(input, init)
+    }
+    assert.deepEqual(h.host.calls, [])
+    assert.equal(screen.queryByRole("alertdialog"), null)
+    assert.ok(screen.queryByLabelText("Name"), "still renaming")
+    assert.deepEqual(names(), ["A", "B"])
+  })
+
+  test("a key pressed outside the list (the panel's Add button) is not the hierarchy's", async () => {
+    const h = await renderHierarchy("A,B")
+    fireEvent.click(rowOf("A"))
+    fireEvent.keyDown(screen.getByRole("button", { name: "+ Add" }), { key: "Delete" })
+    assert.deepEqual(h.host.calls, [])
+    assert.deepEqual(names(), ["A", "B"])
+  })
+
+  test("with a dialog open the keys do nothing", async () => {
+    const h = await renderHierarchy("A(A1),B")
+    await userEvent.setup().click(rowOf("A"))
+    fireEvent.keyDown(list(), { key: "Delete" })
+    await screen.findByRole("alertdialog")
+    fireEvent.keyDown(list(), { key: "ArrowDown" })
+    fireEvent.keyDown(list(), { key: "d", ctrlKey: true })
+    assert.equal(isSelected("A"), true, "the selection did not move")
+    assert.deepEqual(h.host.calls, [])
+  })
+
+  test("the row menu shows the chords the keymap has, rebound ones too", async () => {
+    const { keymap } = await import("../renderer/keymap")
+    await renderHierarchy("A,B")
+    assert.equal(keymap.bind("hierarchy.duplicate", ["Mod+Shift+D"]).ok, true)
+    fireEvent.contextMenu(rowOf("B"))
+    assert.deepEqual(menuLabels().slice(0, 3), ["Rename (F2)", "Duplicate (Ctrl+Shift+D)", "Delete (Del)"])
+    keymap.reset("hierarchy.duplicate")
+  })
+})

@@ -5,6 +5,7 @@ import { ConnectionLostNotice } from "./connection-notices"
 import { TextEditor } from "./assets-panel"
 import { editActions, editMenuItems, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
 import { isDirty } from "./assets-state"
+import { globalActionHandlers } from "./global-actions"
 import { keymap } from "./keymap"
 import { useKeymapActions } from "./keymap-hooks"
 import { appPrefs } from "./prefs"
@@ -286,35 +287,7 @@ export function Editor() {
       detachPrefs()
     }
   }, [])
-  /** Runs undo or redo for a key press: false (not taken) while nothing is registered */
-  const runEdit = (which: "undo" | "redo", e: KeyboardEvent): boolean | void => {
-    const actions = editActions.value
-    if (actions === null) return false
-    // A held key repeats: one undo is running and one is waiting, which is enough
-    if (e.repeat && actions.busy?.()) return
-    void runEditAction(actions, which, (what, err) => store.reportError(what, err))
-  }
-  useKeymapActions({
-    // Ctrl+S saves the scene (the text editor and the import settings have their own, which come first in their scope)
-    "file.save": (e) => {
-      // Not under a dialog (its own field's key)
-      if ((e.target as HTMLElement | null)?.closest?.(".modal")) return
-      // Not twice at once
-      if (!store.scene.value || store.busy.value !== null) return
-      // A name or a value being typed is committed first, so the saved scene has it
-      const target = e.target as HTMLElement | null
-      if (target?.classList?.contains("hierarchy-rename") || target?.closest?.(".inspector-panel")) target.blur()
-      // And what the inspector edited a moment ago is sent
-      void hierarchy.renameSettled
-        .then(() => inspector.flush())
-        .then(() => store.saveScene())
-        .then((saved) => saved && assets.refresh().catch(() => {}))
-    },
-    // Undo and redo (E6, edit-actions.ts): nothing is registered yet. A text field keeps its own undo (the keymap
-    // doesn't fire these while one has the focus).
-    "edit.undo": (e) => runEdit("undo", e),
-    "edit.redo": (e) => runEdit("redo", e),
-  })
+  useKeymapActions(globalActionHandlers({ store, hierarchy, inspector, assets }))
   useEffect(() => {
     // macOS: the application menu's Undo and Redo (the menu owns Cmd+Z there); a text field keeps its own undo
     window.editMenu.onCommand((command) => {

@@ -82,7 +82,7 @@ export interface PrefDef<T, S extends PrefScope = PrefScope> {
 }
 
 /** A key name that looks like it names a secret: refused */
-const SecretLooking = /token|secret|passw|credential|api[-_.]?key|private[-_.]?key|auth|bearer|session[-_.]?id/i
+const SecretLooking = /token|secret|passw|passphrase|credential|api[-_.]?key|private[-_.]?key|auth|bearer|session[-_.]?id/i
 
 /** A key name is dotted lowercase words ("keymap.overrides", "layout.default") */
 const KeyName = /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)*$/
