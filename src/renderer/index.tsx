@@ -2,12 +2,13 @@
 // (the engine connection), window.host (the project's editor host process) and window.project (projects and their
 // files) are the typed IPC API the preload exposes (src/shared/api.ts); there is no Node here.
 import { render } from "preact"
-import { effect, untracked } from "@preact/signals-core"
+import { computed, effect, untracked } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
 import { AssetsState, isDirty } from "./assets-state"
 import { assetEntriesOf, nameOf } from "./asset-tree"
 import { EditController } from "./edit-controller"
 import { editActions } from "./edit-actions"
+import { HistoryModel, historyModel } from "./history-state"
 import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
@@ -151,7 +152,7 @@ const app: AppState = {
 }
 
 // Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y): the host's history, after the editor's own pending edits
-editActions.value = new EditController({
+const editController = new EditController({
   engine: window.engine,
   groups,
   history: store.history,
@@ -168,6 +169,19 @@ editActions.value = new EditController({
   refreshHistory: () => store.refreshHistory(),
   syncAfterEdit: () => store.syncAfterEdit(),
   applyResult: (result) => store.applyEditResult(result),
+})
+editActions.value = editController
+// The history panel: the host's history with jumps (sequential undo and redo)
+historyModel.value = new HistoryModel({
+  getHistory: () => window.engine.getHistory(),
+  status: store.history,
+  connected: store.connected,
+  readOnlyReason: store.readOnlyReason,
+  canEdit: store.canEdit,
+  openGroups: groups.openCount,
+  revisions: computed(() => store.scene.value),
+  jump: (target, options) => editController.jumpTo(target, options),
+  timers: window,
 })
 // A play session, or a read-only host, makes the inspector and the hierarchy read-only (the host refuses edits)
 followWriteGuard(store, { inspector: app.inspector, hierarchy })
