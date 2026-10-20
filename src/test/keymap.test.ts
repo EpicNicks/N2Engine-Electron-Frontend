@@ -82,7 +82,7 @@ describe("chords", () => {
     assert.equal(chordMatches(chord("Shift+ArrowDown"), press("ArrowDown")), false)
     assert.equal(chordMatches(chord("KeyF"), press("f", { code: "KeyF" })), true)
     // The same physical key on another layout types another letter: the code still matches
-    assert.equal(chordMatches(chord("KeyF"), press("а", { code: "KeyF" })), true)
+    assert.equal(chordMatches(chord("KeyF"), press("\u0430", { code: "KeyF" })), true)
     assert.equal(chordMatches(chord("KeyF"), press("g", { code: "KeyG" })), false)
     assert.equal(chordMatches(chord("F2"), press("F2", { code: "F2" })), true)
     assert.equal(chordMatches(chord("Escape"), press("Escape", { code: "Escape" })), true)
