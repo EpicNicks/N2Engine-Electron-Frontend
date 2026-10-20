@@ -22,13 +22,13 @@ export interface FollowDeps {
     | "newestSceneRevision"
     | "reportError"
   >
-  scene: Pick<SceneState, "selectedId" | "reset" | "refreshTransform">
-  hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree">
+  scene: Pick<SceneState, "selectedId" | "reset">
+  hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree" | "selection">
   assets: Pick<AssetsState, "reset" | "refresh" | "onAssetsChanged">
   inspector: Pick<
     InspectorState,
     "reset" | "loadTypes" | "loadAssets" | "select" | "applyChange" | "refreshLuaFields"
-  >
+  > & { multi: Pick<InspectorState["multi"], "select"> }
 }
 
 /** Starts the effects; returns what stops them */
@@ -65,6 +65,15 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
       untracked(() => inspector.select(id)).catch((e) => store.reportError("Failed to read the object", e))
     }),
 
+    // Several objects selected: the inspector shows the fields they share (fewer than two: none)
+    effect(() => {
+      const ids = hierarchy.selection.value.ids
+      if (!store.connected.peek()) return
+      untracked(() => inspector.multi.select(ids.size > 1 ? [...ids] : [])).catch((e) =>
+        store.reportError("Failed to read the objects", e)
+      )
+    }),
+
     // Assets were added, changed or removed: the asset names, a script's fields, the assets panel and the open files
     effect(() => {
       store.assetsChangeCount.value // what this runs on
@@ -90,16 +99,10 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
       if (!change || !store.connected.peek()) return
       // The inspector's components may have changed (this includes the echoes of its own edits)
       untracked(() => inspector.applyChange(change)).catch((e) => store.reportError("Failed to read the object", e))
-      untracked(() => hierarchy.applyChange(change, store.newestSceneRevision))
-        .then(() => {
-          // The object's transform may have changed: read it again
-          const id = scene.selectedId.peek()
-          // Not for an object that is gone: the hierarchy has dropped it from the selection by now
-          if (id !== null && hierarchy.tree.peek().nodes.has(id) && (change.full || change.entityIds.includes(id))) {
-            return scene.refreshTransform()
-          }
-        })
-        .catch((e) => store.reportError("Failed to read the scene", e))
+      // (The inspector reads the object's transform with the rest of it: GetEntity, above)
+      untracked(() => hierarchy.applyChange(change, store.newestSceneRevision)).catch((e) =>
+        store.reportError("Failed to read the scene", e)
+      )
     }),
   ]
   return () => stops.forEach((stop) => stop())

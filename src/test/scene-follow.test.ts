@@ -54,7 +54,6 @@ describe("followScene", () => {
       scene: {
         selectedId,
         reset: () => void log.push("scene.reset"),
-        refreshTransform: async () => void log.push("refreshTransform"),
       },
       hierarchy,
       assets: {
@@ -69,6 +68,7 @@ describe("followScene", () => {
         select: async (id) => void log.push("select " + id),
         applyChange: async () => void log.push("applyChange"),
         refreshLuaFields: async () => void log.push("refreshLua"),
+        multi: { select: async (ids) => void log.push("multi.select " + ids.join(",")) },
       },
     }
     return {
@@ -125,6 +125,21 @@ describe("followScene", () => {
     connected.value = false
     await tick()
     assert.deepEqual(log, ["scene.reset", "inspector.reset"])
+    stop()
+  })
+
+  test("the inspector shows the shared fields when two or more objects are selected, and none otherwise", async () => {
+    const { deps, log } = setup()
+    const stop = followScene(deps)
+    await tick()
+    log.length = 0
+    deps.hierarchy.selection.value = { ids: new Set(["e1", "e2"]), anchor: "e1", primary: "e2" }
+    await tick()
+    assert.deepEqual(log, ["multi.select e1,e2"])
+    log.length = 0
+    deps.hierarchy.selection.value = { ids: new Set(["e1"]), anchor: "e1", primary: "e1" }
+    await tick()
+    assert.deepEqual(log, ["multi.select "])
     stop()
   })
 

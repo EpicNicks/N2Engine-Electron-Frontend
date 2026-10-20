@@ -1,12 +1,13 @@
 // The inspector panel: the selected object's own properties and transform, then its components, each with an editor per
 // field (inspector-editors.tsx) from the component's schema, and the Add Component menu. The logic is in
 // inspector-state.ts and inspector-fields.ts (tested in Node); this is the DOM around it.
-import { useState } from "preact/hooks"
+import { useEffect, useRef, useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import type { Vec3 } from "../protocol/protocol.generated"
 import { FieldEditor, NumberInput, PickerButton, PickerEntry, TextInput } from "./inspector-editors"
 import { MaxLayer } from "../protocol/entity-args"
-import { ComponentView, EntityKey } from "./inspector-state"
+import { ComponentView, DefaultDebounceMilliseconds, EntityKey } from "./inspector-state"
+import { MultiComponent, TransformPart, fieldMixed, mixedAxes, multiFields } from "./inspector-multi"
 import {
   checkValue,
   displayTypeName,
@@ -20,29 +21,47 @@ import { Empty, Panel, useApp } from "./ui"
 
 // ==================== The object's own properties and transform ====================
 
+const Axes = ["x", "y", "z"] as const
+
+/** A field of a vector row, for NumberInput's checks: any finite number */
+const axisField = (label: string): FieldSchema => ({
+  name: label,
+  displayName: label,
+  kind: "Float",
+  typeName: "float",
+  hidden: false,
+  readOnly: false,
+})
+
+/**
+ * A row of three number boxes (X, Y, Z): each is committed on Enter or on leaving it (a typed text is kept while it is
+ * typed), and is one edit. mixed: the axes on which several selected objects differ show a dash.
+ */
 function VectorRow(props: {
   label: string
   value: Vec3
-  step: number
+  mixed?: { x: boolean; y: boolean; z: boolean }
   disabled: boolean
-  onChange: (value: Vec3) => void
+  title?: string
+  onAxis: (axis: (typeof Axes)[number], value: number) => void
+  onInvalid: (message: string) => void
 }) {
+  const field = axisField(props.label)
   return (
     <div class="inspector-row">
-      <label>{props.label}</label>
+      <label title={props.title}>{props.label}</label>
       <div class="vector-inputs">
-        {(["x", "y", "z"] as const).map((axis) => (
-          <input
+        {Axes.map((axis) => (
+          <NumberInput
             key={axis}
-            type="number"
-            step={props.step}
-            aria-label={`${props.label} ${axis}`}
-            value={props.value[axis].toFixed(2)}
+            field={field}
+            label={axis}
+            ariaLabel={`${props.label} ${axis}`}
+            value={props.value[axis]}
+            mixed={props.mixed?.[axis] === true}
             disabled={props.disabled}
-            onChange={(e) => {
-              const n = parseFloat((e.currentTarget as HTMLInputElement).value)
-              if (Number.isFinite(n)) props.onChange({ ...props.value, [axis]: n })
-            }}
+            onValue={(n) => props.onAxis(axis, n)}
+            onInvalid={props.onInvalid}
           />
         ))}
       </div>
@@ -117,36 +136,52 @@ function EntitySection() {
   )
 }
 
+const TransformTitle =
+  "The local transform (relative to the parent), the one the gizmo moves. Rotation is Euler angles in degrees, applied X, then Y, then Z."
+
 function TransformSection() {
-  const { store, scene, inspector } = useApp()
-  const transform = scene.transform.value
+  const { store, inspector } = useApp()
+  const transform = inspector.transform.value
+  const euler = inspector.euler.value
   const disabled = inspector.readOnly.value
-  if (!transform) return <Empty>This object has no transform</Empty>
-  const set = (change: Partial<typeof transform>) =>
-    scene.setTransform({ ...transform, ...change }).catch((e) => store.reportError("Failed to set the transform", e))
+  if (!transform || !euler) return <Empty>This object has no transform</Empty>
+  // One axis of a box is one edit: SetLocalTransform with the whole local transform, the rotation as a quaternion
+  const edit = (part: TransformPart, axis: (typeof Axes)[number], value: number) => {
+    const current = part === "position" ? transform.position : part === "scale" ? transform.scale : euler
+    const next = { ...current, [axis]: value }
+    try {
+      inspector
+        .setTransform(part === "position" ? { position: next } : part === "scale" ? { scale: next } : { rotation: next })
+        .catch((e) => store.reportError("Failed to set the transform", e))
+    } catch (e) {
+      store.reportError("Failed to set the transform", e)
+    }
+  }
+  const invalid = (message: string) => store.reportError("Transform", message)
   return (
     <div class="inspector-section">
-      <h4>Transform</h4>
+      <h4 title={TransformTitle}>Transform</h4>
       <VectorRow
         label="Position"
         value={transform.position}
-        step={0.1}
         disabled={disabled}
-        onChange={(position) => set({ position })}
+        onAxis={(axis, n) => edit("position", axis, n)}
+        onInvalid={invalid}
       />
       <VectorRow
         label="Rotation"
-        value={transform.rotation}
-        step={1}
+        title={TransformTitle}
+        value={euler}
         disabled={disabled}
-        onChange={(rotation) => set({ rotation })}
+        onAxis={(axis, n) => edit("rotation", axis, n)}
+        onInvalid={invalid}
       />
       <VectorRow
         label="Scale"
         value={transform.scale}
-        step={0.1}
         disabled={disabled}
-        onChange={(scale) => set({ scale })}
+        onAxis={(axis, n) => edit("scale", axis, n)}
+        onInvalid={invalid}
       />
     </div>
   )
@@ -313,6 +348,230 @@ function AddComponent() {
   )
 }
 
+// ==================== Several objects selected ====================
+
+/** Runs an edit of the selected objects: a refusal that comes at once (read-only) or later is shown, never thrown */
+function useMultiRun() {
+  const { store } = useApp()
+  return (what: string, edit: () => Promise<void>) => {
+    try {
+      edit().catch((e) => store.reportError(what, e))
+    } catch (e) {
+      store.reportError(what, e)
+    }
+  }
+}
+
+const IsActiveField: FieldSchema = {
+  name: "isActive",
+  displayName: "Enabled",
+  kind: "Bool",
+  typeName: "bool",
+  hidden: false,
+  readOnly: false,
+}
+
+/** One shared field: its editor shows a dash where the objects differ, and an edit sets it on all of them */
+function MultiFieldRow({ component, field }: { component: MultiComponent; field: FieldSchema }) {
+  const { inspector } = useApp()
+  const run = useMultiRun()
+  const [error, setError] = useState<string | null>(null)
+  const { value, mixed } = fieldMixed(field, component.entries)
+  const disabled = inspector.readOnly.value
+  // What a slider or a colour picker sends while it is dragged waits for a pause: one edit group, not one per tick
+  const waiting = useRef<{ value: unknown; axis?: string } | null>(null)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const apply = (next: unknown, axis?: string) =>
+    run(`Failed to edit ${field.displayName}`, () => inspector.multi.setField(component, field, next, axis))
+  // The latest render's apply: a pause or an unmount sends to the objects as they are now
+  const latest = useRef(apply)
+  latest.current = apply
+  const flush = () => {
+    if (timer.current !== null) clearTimeout(timer.current)
+    timer.current = null
+    const held = waiting.current
+    waiting.current = null
+    if (held) latest.current(held.value, held.axis)
+  }
+  // Leaving the panel sends what is waiting
+  useEffect(() => flush, [])
+  const commit = (next: unknown, immediate: boolean, axis?: string) => {
+    const checked = checkValue(field, next)
+    if (!checked.ok) return setError(checked.error)
+    setError(null)
+    if (immediate) {
+      // An earlier drag's last value is not sent after this one
+      waiting.current = null
+      if (timer.current !== null) clearTimeout(timer.current)
+      timer.current = null
+      return apply(checked.value, axis)
+    }
+    waiting.current = { value: checked.value, axis }
+    if (timer.current !== null) clearTimeout(timer.current)
+    timer.current = setTimeout(flush, DefaultDebounceMilliseconds)
+  }
+  const tip = field.tooltip
+  return (
+    <div class="field-row">
+      <label title={tip || undefined}>{field.displayName}</label>
+      <div class="field-editor">
+        <FieldEditor
+          field={field}
+          value={value}
+          mixed={mixed}
+          mixedAxes={mixed ? mixedAxes(field, component.entries) : undefined}
+          disabled={disabled}
+          commit={commit}
+          invalid={setError}
+        />
+        {error && <div class="field-error">{error}</div>}
+      </div>
+    </div>
+  )
+}
+
+function MultiComponentCard({ component }: { component: MultiComponent }) {
+  const { inspector } = useApp()
+  const run = useMultiRun()
+  const schema = inspector.multi.schemaFor(component)
+  const disabled = inspector.readOnly.value
+  const enabled = component.entries.every((entry) => typeof entry.values.isActive === "boolean")
+    ? fieldMixed(IsActiveField, component.entries)
+    : null
+  const shown = schema ? multiFields(schema) : null
+  return (
+    <div class="component-card multi-component">
+      <div class="component-header">
+        {enabled && (
+          <FieldEditor
+            field={IsActiveField}
+            value={enabled.value}
+            mixed={enabled.mixed}
+            disabled={disabled}
+            commit={(next) => run("Failed to edit the components", () => inspector.multi.setField(component, IsActiveField, next))}
+            invalid={() => {}}
+          />
+        )}
+        <span class="component-title" title={component.type}>
+          {displayTypeName(component.type)}
+        </span>
+      </div>
+      <div class="component-body">
+        {shown === null ? (
+          <Empty>Reading the fields...</Empty>
+        ) : (
+          <>
+            {shown.fields.map((field) => (
+              // Keyed by the first object's component too: another selection is another set of fields
+              <MultiFieldRow
+                component={component}
+                field={field}
+                key={component.entries[0].componentId + "/" + (field.container ?? "") + "/" + field.name}
+              />
+            ))}
+            {shown.skipped > 0 && (
+              <div class="hint multi-skipped">
+                {shown.skipped} {shown.skipped === 1 ? "field" : "fields"} (references, lists, JSON) can be edited one object at a time
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The fields the selected objects share (inspector-multi.ts): one edit sets them all, as one undo step */
+function MultiInspector() {
+  const { store, inspector } = useApp()
+  const run = useMultiRun()
+  const multi = inspector.multi
+  const view = multi.view.value
+  const problem = multi.loadProblem.value
+  if (problem) return <Empty error>{problem}</Empty>
+  if (!view) return <Empty>Loading...</Empty>
+  const disabled = inspector.readOnly.value
+  const layerField = LayerField
+  const setProperties = (properties: Parameters<typeof multi.setProperties>[0]) =>
+    run("Failed to change the objects", () => multi.setProperties(properties))
+  const axisRow = (part: TransformPart, label: string) => {
+    const axes = view.transform![part]
+    return (
+      <VectorRow
+        label={label}
+        title={part === "rotation" ? TransformTitle : undefined}
+        value={{ x: axes.x.value, y: axes.y.value, z: axes.z.value }}
+        mixed={{ x: axes.x.mixed, y: axes.y.mixed, z: axes.z.mixed }}
+        disabled={disabled}
+        onAxis={(axis, n) => run("Failed to set the transform", () => multi.setTransformAxis(part, axis, n))}
+        onInvalid={(message) => store.reportError("Transform", message)}
+      />
+    )
+  }
+  return (
+    <>
+      <div class="inspector-banner multi-banner" title="An edit applies to all of them, as one undo step">
+        {view.count} objects
+      </div>
+      <div class="inspector-section">
+        <h4>Entity</h4>
+        <div class="inspector-row">
+          <label>Active</label>
+          <FieldEditor
+            field={{ ...IsActiveField, name: "active", displayName: "Active" }}
+            value={view.active.value}
+            mixed={view.active.mixed}
+            disabled={disabled}
+            commit={(next) => setProperties({ active: next === true })}
+            invalid={() => {}}
+          />
+        </div>
+        <div class="inspector-row">
+          <label>Tag</label>
+          <TextInput
+            label="Tag"
+            value={view.tag.value}
+            mixed={view.tag.mixed}
+            disabled={disabled}
+            onCommit={(tag) => void setProperties({ tag })}
+          />
+        </div>
+        <div class="inspector-row">
+          <label>Layer</label>
+          <NumberInput
+            field={layerField}
+            value={view.layer.value}
+            mixed={view.layer.mixed}
+            disabled={disabled}
+            onValue={(layer) => void setProperties({ layer })}
+            onInvalid={(message) => store.reportError("Layer", message)}
+          />
+        </div>
+      </div>
+      <div class="inspector-section">
+        <h4 title={TransformTitle}>Transform</h4>
+        {view.transform ? (
+          <>
+            {axisRow("position", "Position")}
+            {axisRow("rotation", "Rotation")}
+            {axisRow("scale", "Scale")}
+          </>
+        ) : (
+          <Empty>Not every selected object has a transform</Empty>
+        )}
+      </div>
+      <div class="inspector-section">
+        <h4>Components</h4>
+        {view.components.length === 0 && <Empty>The selected objects share no components</Empty>}
+        {view.components.map((component) => (
+          <MultiComponentCard component={component} key={component.type + "/" + component.entries[0].componentId} />
+        ))}
+      </div>
+      {multi.editProblem.value && <div class="field-error multi-error">{multi.editProblem.value}</div>}
+    </>
+  )
+}
+
 // ==================== The panel ====================
 
 export function InspectorPanel() {
@@ -320,19 +579,38 @@ export function InspectorPanel() {
   const selected = scene.selectedId.value
   const readOnlyReason = inspector.readOnlyReason.value
 
+  const selectedCount = hierarchy.selection.value.ids.size
+  const deleteButton = (
+    <button
+      class="danger"
+      disabled={inspector.readOnly.value}
+      onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
+    >
+      {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
+    </button>
+  )
+
   let content
   if (!selected || !store.connected.value) content = <Empty>Select an entity to inspect</Empty>
-  else if (inspector.loadProblem.value) content = <Empty error>{inspector.loadProblem.value}</Empty>
+  else if (selectedCount > 1) {
+    // Several objects: their shared fields, edited together
+    content = (
+      <>
+        {readOnlyReason && <div class="inspector-banner">Read only: {readOnlyReason}</div>}
+        <MultiInspector />
+        {deleteButton}
+      </>
+    )
+  } else if (inspector.loadProblem.value) content = <Empty error>{inspector.loadProblem.value}</Empty>
   else if (inspector.loading.value || !inspector.header.value) content = <Empty>Loading...</Empty>
   else {
-    const selectedCount = hierarchy.selection.value.ids.size
     const typesProblem = inspector.typesProblem.value
     content = (
       <>
         {readOnlyReason && <div class="inspector-banner">Read only: {readOnlyReason}</div>}
         <EntitySection />
         {/* An object with no transform (CreateEntity's) is shown without one, not as a failure */}
-        {scene.transform.value || scene.noTransform.value ? <TransformSection /> : <Empty>Loading...</Empty>}
+        <TransformSection />
         <div class="inspector-section">
           <h4>Components</h4>
           {typesProblem && <Empty error>Component types: {typesProblem}</Empty>}
@@ -342,13 +620,7 @@ export function InspectorPanel() {
           ))}
           <AddComponent />
         </div>
-        <button
-          class="danger"
-          disabled={inspector.readOnly.value}
-          onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
-        >
-          {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
-        </button>
+        {deleteButton}
       </>
     )
   }
