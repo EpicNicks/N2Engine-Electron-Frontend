@@ -47,6 +47,49 @@ export function quatNormalize(q: Quat): Quat {
   return l > 0 ? { x: q.x / l, y: q.y / l, z: q.z / l, w: q.w / l } : { ...IdentityQuat }
 }
 
+/** The inverse of a unit quaternion */
+export const quatConjugate = (q: Quat): Quat => ({ x: -q.x, y: -q.y, z: -q.z, w: q.w })
+
+/**
+ * The rotation whose columns are the three axes (unit, perpendicular, right-handed: x cross y is z), as a unit
+ * quaternion; null when they are not a rotation (a length that is not 1, or a mirror: a left-handed set).
+ */
+export function quatFromAxes(x: Vec3, y: Vec3, z: Vec3, tolerance = 1e-3): Quat | null {
+  const unit = (a: Vec3): boolean => Math.abs(length(a) - 1) <= tolerance
+  if (!(unit(x) && unit(y) && unit(z))) return null
+  if (!(dot(cross(x, y), z) > 1 - tolerance)) return null
+  // The columns as a matrix m[row][col]; Shepperd's method (the largest of the trace and the diagonal first, so the
+  // square root is never of a number near zero)
+  const m00 = x.x, m10 = x.y, m20 = x.z
+  const m01 = y.x, m11 = y.y, m21 = y.z
+  const m02 = z.x, m12 = z.y, m22 = z.z
+  const trace = m00 + m11 + m22
+  let q: Quat
+  if (trace > 0) {
+    const s = Math.sqrt(trace + 1) * 2
+    q = { w: s / 4, x: (m21 - m12) / s, y: (m02 - m20) / s, z: (m10 - m01) / s }
+  } else if (m00 > m11 && m00 > m22) {
+    const s = Math.sqrt(1 + m00 - m11 - m22) * 2
+    q = { w: (m21 - m12) / s, x: s / 4, y: (m01 + m10) / s, z: (m02 + m20) / s }
+  } else if (m11 > m22) {
+    const s = Math.sqrt(1 + m11 - m00 - m22) * 2
+    q = { w: (m02 - m20) / s, x: (m01 + m10) / s, y: s / 4, z: (m12 + m21) / s }
+  } else {
+    const s = Math.sqrt(1 + m22 - m00 - m11) * 2
+    q = { w: (m10 - m01) / s, x: (m02 + m20) / s, y: (m12 + m21) / s, z: s / 4 }
+  }
+  return quatNormalize(q)
+}
+
+/** An angle in radians brought into (-PI, PI] */
+export function wrapAngle(radians: number): number {
+  const twoPi = Math.PI * 2
+  let a = radians % twoPi
+  if (a > Math.PI) a -= twoPi
+  else if (a <= -Math.PI) a += twoPi
+  return a
+}
+
 /** The vector rotated by the (unit) quaternion */
 export function quatRotate(q: Quat, v: Vec3): Vec3 {
   const u: Vec3 = { x: q.x, y: q.y, z: q.z }
