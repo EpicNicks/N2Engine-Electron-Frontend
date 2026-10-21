@@ -12,6 +12,7 @@ import type { HostContext } from "./bridge"
 import { BridgeAdvice, BridgeError, safeRole } from "./errors"
 import { componentToJsonSchema } from "./jsonschema"
 import * as limits from "./limits"
+import { writesAllowed } from "./policy"
 import { encodePng, fitSize } from "./png"
 import { Budget, envelopeJson } from "./scrub"
 import { BridgeName, BridgeVersion, SupportedSpecRevisions } from "./version"
@@ -52,16 +53,25 @@ export interface ToolDef {
   output: z.ZodType
   annotations: ToolAnnotationsHint
   handler(context: HostContext, args: never): Promise<ToolOutput>
+  /** A write tool: listed only for an editor on a host that is not read-only, and only when the operator's policy allows */
+  write?: boolean
+  /**
+   * Write tools only. When this call would do something irreversible (it overwrites a file or the scene file, drops
+   * unsaved changes, changes the project settings), the plain sentence the person is asked to confirm; null when it is
+   * reversible. It may read from the host but changes nothing, and runs before the handler (see server.ts).
+   */
+  irreversible?(context: HostContext, args: never): Promise<string | null>
 }
 
-function tool<S extends z.ZodType>(def: Omit<ToolDef, "input" | "handler"> & {
+export function tool<S extends z.ZodType>(def: Omit<ToolDef, "input" | "handler" | "irreversible"> & {
   input: S
   handler(context: HostContext, args: z.infer<S>): Promise<ToolOutput>
+  irreversible?(context: HostContext, args: z.infer<S>): Promise<string | null>
 }): ToolDef {
   return def as unknown as ToolDef
 }
 
-const readOnly = (title: string): ToolAnnotationsHint => ({
+export const readOnly = (title: string): ToolAnnotationsHint => ({
   title,
   readOnlyHint: true,
   destructiveHint: false,
@@ -83,14 +93,14 @@ export function envelopeSchema(data: z.ZodType): z.ZodType {
     .strict()
 }
 
-const idText = z
+export const idText = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[0-9A-Za-z-]+$/, "an entity or component UUID")
   .describe("A UUID as the hierarchy and entity tools return it.")
 
-const resPath = z.string().min(1).max(1024).describe("A project path: res:// followed by a path inside the project's assets folder, e.g. res://scripts/Player.lua.")
+export const resPath = z.string().min(1).max(1024).describe("A project path: res:// followed by a path inside the project's assets folder, e.g. res://scripts/Player.lua.")
 
 const cursorText = z.string().min(1).max(256).describe("The nextCursor of the previous page, unchanged. Omit for the first page.")
 
@@ -117,7 +127,7 @@ function decodeCursor(text: string, shape: (value: Record<string, unknown>) => b
   throw invalidArgument("The cursor is not one this tool gave out. Call again without a cursor.")
 }
 
-function invalidArgument(message: string): BridgeError {
+export function invalidArgument(message: string): BridgeError {
   return new BridgeError("invalid_argument", message, "Fix the argument and call again.")
 }
 
@@ -136,7 +146,7 @@ async function attempt<T>(unavailable: string[], what: string, read: () => Promi
   }
 }
 
-const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
+export const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
 
 // ===== n2_status =====
 
@@ -146,6 +156,11 @@ const statusData = z.object({
     version: z.string(),
     backend: z.string().describe("launch (a host of the bridge's own) or connect (an existing host)."),
     specRevisions: z.array(z.string()),
+  }),
+  policy: z.object({
+    writeTools: z.boolean().describe("The write tools are available: the token may change the project, the host is not read-only and the operator did not turn them off."),
+    allowIrreversible: z.boolean().describe("The operator allowed irreversible operations without asking the person (--allow-irreversible). When false they need the person's confirmation."),
+    maxWrites: z.number().describe("Host write commands one agent session may make."),
   }),
   host: z.object({
     protocolVersion: z.string(),
@@ -185,6 +200,11 @@ const status = tool({
     const history = await attempt(unavailable, "history", () => ctx.client.getHistory())
     const data = {
       bridge: { name: BridgeName, version: BridgeVersion, backend: ctx.backend, specRevisions: [...SupportedSpecRevisions] },
+      policy: {
+        writeTools: !ctx.policy.readOnly && writesAllowed({ role: safeRole(ctx.info.role), readOnly: ctx.info.readOnly }, ctx.allowAdmin),
+        allowIrreversible: ctx.policy.allowIrreversible,
+        maxWrites: ctx.policy.maxWrites,
+      },
       host: {
         protocolVersion: s.name(ctx.info.protocolVersion),
         engineVersion: s.name(ctx.info.engineVersion),

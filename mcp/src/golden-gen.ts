@@ -30,7 +30,8 @@ const neverConnects: HostConnector = {
 export async function currentToolSchemas(): Promise<unknown> {
   const bridge = new Bridge({ connector: neverConnects, scrubber: new Scrubber() })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
-  const server = createServer(bridge)
+  // The write tools are listed as for an editor on a host that is not read-only (the host is never asked here)
+  const server = createServer(bridge, { assumeAccess: { role: "editor", readOnly: false } })
   await server.connect(serverSide)
   const client = new Client({ name: "golden", version: "0" })
   await client.connect(clientSide)

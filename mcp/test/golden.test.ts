@@ -1,5 +1,7 @@
 // The tool list an agent sees is pinned to mcp/tool-schemas.golden.json: any change to a name, description, schema or
 // annotation fails here until the file is regenerated (npm run mcp:golden) and the diff is reviewed and committed.
+import { ReadTools } from "../src/tools"
+import { WriteTools } from "../src/tools-write"
 import { test } from "node:test"
 import * as assert from "node:assert/strict"
 import * as fs from "node:fs"
@@ -25,7 +27,8 @@ test("the live tool list equals mcp/tool-schemas.golden.json (npm run mcp:golden
 test("the golden file lists the tools in order, the error codes and the spec revisions", () => {
   const file = path.join(here, "..", "..", "mcp", "tool-schemas.golden.json")
   const golden = JSON.parse(fs.readFileSync(file, "utf8")) as { tools: Array<{ name: string }>; errorCodes: string[]; specRevisions: string[] }
-  assert.equal(golden.tools.length, 11)
+  assert.equal(golden.tools.length, ReadTools.length + WriteTools.length)
+  assert.deepEqual(golden.tools.map((t) => t.name), [...ReadTools, ...WriteTools].map((t) => t.name))
   assert.ok(golden.tools.every((t) => /^n2_[a-z_]+$/.test(t.name)))
   assert.ok(golden.errorCodes.includes("forbidden") && golden.errorCodes.includes("read_only") && golden.errorCodes.includes("busy"))
   assert.deepEqual(golden.specRevisions, ["2026-07-28", "2025-11-25"])

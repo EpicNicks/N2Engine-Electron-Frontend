@@ -6,8 +6,10 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio"
 import { Bridge } from "./bridge"
 import { CliError, parseArgs, readToken, Usage, type Cli } from "./cli"
 import { connectConnector, launchConnector, type HostConnector } from "./host"
+import type { Policy } from "./policy"
 import { Scrubber } from "./scrub"
 import { createServer } from "./server"
+import { SessionManager, createBackupStore } from "./session"
 import { BridgeName, BridgeVersion } from "./version"
 
 function fail(message: string): never {
@@ -60,10 +62,20 @@ function main(): void {
     return fail(e instanceof CliError ? e.message : "could not start")
   }
 
+  const policy: Policy = {
+    readOnly: cli.readOnly,
+    allowIrreversible: cli.allowIrreversible,
+    maxWrites: cli.maxWrites,
+    writeTools: cli.writeTools === null ? null : new Set(cli.writeTools),
+    disabledTools: new Set(cli.disableTools),
+    keepJournal: cli.keepJournal,
+  }
   const bridge = new Bridge({
     connector,
     scrubber,
     allowAdmin: cli.allowAdmin,
+    policy,
+    sessions: new SessionManager({ maxWrites: policy.maxWrites, store: createBackupStore({ keep: policy.keepJournal }) }),
     busyWaitMs: cli.busyWaitMs,
     callTimeoutMs: cli.callTimeoutMs,
     log,

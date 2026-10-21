@@ -25,6 +25,14 @@ export const ErrorCodes = [
   "extension_faulted",
   "host_error",
   "result_too_large",
+  "budget_exceeded",
+  "irreversible_refused",
+  "confirmation_declined",
+  "path_refused",
+  "edit_group_open",
+  "batch_failed",
+  "session_conflict",
+  "unknown_session",
   "internal",
 ] as const
 
@@ -72,6 +80,8 @@ const Advice = {
   admin:
     "The bridge refuses admin tokens (an agent never needs one). Ask the operator for an editor or viewer token, or to start the bridge with --allow-admin.",
   timeout: "The host did not answer in time and the connection was dropped. Try a smaller request, or call the tool again to reconnect once.",
+  editGroup:
+    "Another client left an edit group open on the host, so Undo and Redo are refused. Wait a moment and call again; if it persists ask the person to close the editor's open edit.",
   host: "The host refused the request. Check the arguments against the tool's description.",
   internal: "The bridge hit an unexpected error (see its stderr log). Try again once; if it repeats, report it to the operator.",
 } as const
@@ -116,6 +126,10 @@ export function mapError(error: unknown, context: ErrorContext, scrubber: Scrubb
       case "busy":
         return new BridgeError("busy", "The host is busy with another session.", Advice.busy, undefined, error)
       default:
+        // A refusal because an edit group is open (Undo and Redo refuse while one is): the host's plain Error says so
+        if (error.code === undefined && /edit group/i.test(error.message) && /open|undo|redo/i.test(error.message)) {
+          return new BridgeError("edit_group_open", `The host refused${where}: an edit group is open.`, Advice.editGroup, text, error)
+        }
         // A plain Error or a code this bridge doesn't know: the host's own words, quoted as data
         return new BridgeError("host_error", `The host refused${where}.`, Advice.host, text, error)
     }
