@@ -1,0 +1,18 @@
+{
+  // The n2-mcp bridge (mcp/src) and its tests (mcp/test), type checked only: scripts/bundle-mcp.js bundles them with
+  // esbuild (dist/n2-mcp.mjs, dist/mcp-test). No DOM and no Electron: the bridge runs under plain Node, and the
+  // protocol client and host launcher it reuses from ../src are Node-only too. Bundler resolution, because the MCP SDK
+  // is published with package "exports" that the app's CommonJS settings (../tsconfig.json) can't resolve.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test"]
+}
