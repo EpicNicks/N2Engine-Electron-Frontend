@@ -65,15 +65,13 @@ describe("the text matcher", () => {
     assert.equal(compileMatcher({ search: "(", matchCase: false, regex: false }).error, null)
   })
 
-  test("a nested repeat is refused: no backtracking bomb reaches the matcher", () => {
-    for (const bomb of ["(a+)+$", "(a*)*b", "(.*a){2,}", "(x+x+)+y", "(a|b+)*c"]) {
+  test("a nested repeat is no longer refused: it is matched in linear time (safe-regex.test.ts has the corpus)", () => {
+    for (const bomb of ["(a+)+$", "(a*)*b", "((a+))+", "(a|aa)+$", "(x+x+)+y"]) {
       const m = compileMatcher({ search: bomb, matchCase: false, regex: true })
-      assert.ok(m.error, bomb)
-      assert.equal(m.active, false)
+      assert.equal(m.error, null, bomb)
+      assert.equal(m.active, true)
     }
-    for (const fine of ["^load \\d+ files", "(ab)+", "(a|b)*c", "\\(a+\\)+", "a+b+"]) {
-      assert.equal(compileMatcher({ search: fine, matchCase: false, regex: true }).error, null, fine)
-    }
+    assert.equal(compileMatcher({ search: "(a+)+$", matchCase: false, regex: true }).test("a".repeat(4000) + "!"), false)
   })
 
   test("a regex looks at a bounded part of a very long line", () => {

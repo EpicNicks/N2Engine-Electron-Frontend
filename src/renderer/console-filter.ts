@@ -1,6 +1,7 @@
 // The console's filters with no state and no DOM: the source registry, the text matcher (plain or regular expression,
 // with the ranges to highlight), filtering the lines and collapsing repeats. Unit tested in Node.
 import type { ConsoleEntry, LogLevel } from "./console-store"
+import { compileProgram, exec, UnsupportedPattern, type Program } from "./safe-regex"
 
 // ==================== Sources ====================
 
@@ -64,14 +65,8 @@ export interface TextFilter {
 
 /** A pattern longer than this is refused (a regex this long is not a filter) */
 export const MaxPatternLength = 200
-/** A regex is tried on at most this much of a line, so a pattern that backtracks badly costs a bounded amount */
+/** A regex is tried on at most this much of a line (the matcher is linear in it, so a line costs a bounded amount) */
 export const MaxRegexInput = 4096
-
-/**
- * A group that repeats and itself holds a repeat, as in (a+)+ or (.*x)*: the shape behind catastrophic backtracking, which
- * no length cap bounds (it is exponential in the line) and which cannot be interrupted once running. Refused up front.
- */
-const NestedRepeat = /\((?:[^()\\]|\\.)*[+*]\??(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,\d*\})/
 
 export interface TextMatcher {
   /** Whether the line passes (everything passes when there is no text, or when the regex is not valid) */
@@ -106,30 +101,32 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
       active: true,
     }
   }
-  let pattern: RegExp
+  let program: Program
   try {
     if (search.length > MaxPatternLength) throw new Error(`The pattern is longer than ${MaxPatternLength} characters`)
-    if (NestedRepeat.test(search)) {
-      throw new Error("A repeated group that itself repeats can take far too long: simplify the pattern")
-    }
-    pattern = new RegExp(search, matchCase ? "g" : "gi")
+    // The engine's RegExp only checks the syntax (compiling runs no match, so it cannot hang) and gives its message;
+    // the matching is the linear-time matcher's, which has no backtracking to blow up (safe-regex.ts)
+    new RegExp(search, matchCase ? "" : "i")
+    program = compileProgram(search, !matchCase)
   } catch (e) {
     // Half-typed patterns are normal: they filter nothing (the list doesn't flash empty) and the reason shows inline
-    return { ...passAll, error: e instanceof Error ? e.message : String(e) }
+    const reason = e instanceof UnsupportedPattern ? `Not supported in the filter: ${e.message}` : e instanceof Error ? e.message : String(e)
+    return { ...passAll, error: reason }
   }
   const limited = (message: string) => (message.length > MaxRegexInput ? message.slice(0, MaxRegexInput) : message)
   return {
-    test(message) {
-      pattern.lastIndex = 0
-      return pattern.test(limited(message))
-    },
+    test: (message) => exec(program, limited(message), 0, true) !== null,
     ranges(message) {
       const text = limited(message)
       const out: Array<[number, number]> = []
-      pattern.lastIndex = 0
-      for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
-        if (m[0].length === 0) pattern.lastIndex++ // an empty match must not loop
-        else out.push([m.index, m.index + m[0].length])
+      for (let from = 0; from <= text.length; ) {
+        const m = exec(program, text, from)
+        if (m === null) break
+        if (m[1] === m[0]) from = m[0] + 1 // an empty match is not highlighted and must not loop
+        else {
+          out.push(m)
+          from = m[1]
+        }
       }
       return out
     },

@@ -85,6 +85,20 @@ describe("the console filters", () => {
     assert.equal(screen.queryByRole("alert"), null)
   })
 
+  test("a pattern the filter cannot run safely says so inline and filters nothing; a nested repeat just works", { timeout: 20000 }, async () => {
+    renderConsole([line("info", "aaa"), line("info", "b")])
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: ".*" }))
+    await user.type(filter(), "(a)\\1")
+    assert.deepEqual(messages(), ["aaa", "b"])
+    assert.match(screen.getByRole("alert").textContent ?? "", /Not supported in the filter: Back-references/)
+    assert.equal(filter().getAttribute("aria-invalid"), "true")
+    await user.clear(filter())
+    await user.type(filter(), "(a+)+$")
+    assert.equal(screen.queryByRole("alert"), null)
+    assert.deepEqual(messages(), ["aaa"])
+  })
+
   test("match case is a toggle", async () => {
     renderConsole([line("info", "Error here"), line("info", "error there")])
     const user = userEvent.setup()
