@@ -12,15 +12,17 @@ import type { Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
 import { GizmoDragDeps, GizmoTarget, TransformDrag, TransformResult } from "./viewport-drag"
 import {
   Axis,
+  AxisFrame,
   Axes,
   AxisDirections,
+  WorldAxes,
   GizmoPickPixels,
   cameraPositionOf,
   gizmoFrame,
   localPositionAfterMove,
   rayPlane,
-  snapTo,
 } from "./viewport-gizmo"
+import { snapAngle } from "./viewport-snap"
 import {
   Pixel,
   add,
@@ -60,9 +62,14 @@ export const RingBasis: Readonly<Record<Axis, readonly [Vec3, Vec3]>> = {
   z: [AxisDirections.x, AxisDirections.y],
 }
 
+/** The two axes a ring runs in, for a frame of axes (the world's, or the object's own in local space) */
+export function ringBasisOf(axes: AxisFrame, axis: Axis): readonly [Vec3, Vec3] {
+  return axis === "x" ? [axes.y, axes.z] : axis === "y" ? [axes.z, axes.x] : [axes.x, axes.y]
+}
+
 /** A point on a ring about the axis at the angle (radians from the first basis axis toward the second) */
-export function ringPoint(axis: Axis, origin: Vec3, radius: number, angle: number): Vec3 {
-  const [e1, e2] = RingBasis[axis]
+export function ringPoint(axis: Axis, origin: Vec3, radius: number, angle: number, axes: AxisFrame = WorldAxes): Vec3 {
+  const [e1, e2] = ringBasisOf(axes, axis)
   return add(origin, add(scale(e1, radius * Math.cos(angle)), scale(e2, radius * Math.sin(angle))))
 }
 
@@ -80,6 +87,8 @@ export interface RingHandle {
 }
 
 export interface RotateLayout {
+  /** The axes the rings turn about: the world's (when absent), or the primary object's own (local space) */
+  axes?: AxisFrame
   origin: Pixel
   /** The world length of a handle (the translate gizmo's size) */
   worldLength: number
@@ -99,7 +108,8 @@ export function rotateLayout(
   origin: Vec3,
   width: number,
   height: number,
-  pixelRatio: number = 1
+  pixelRatio: number = 1,
+  axes: AxisFrame = WorldAxes
 ): RotateLayout | null {
   const frame = gizmoFrame(view, viewProjection, origin, width, height, pixelRatio)
   if (!frame) return null
@@ -109,7 +119,7 @@ export function rotateLayout(
   for (const axis of Axes) {
     const points: Array<Pixel | null> = []
     for (let i = 0; i <= RingSegments; i++) {
-      const p = worldToScreen(viewProjection, ringPoint(axis, origin, radiusWorld, (i / RingSegments) * Math.PI * 2), width, height)
+      const p = worldToScreen(viewProjection, ringPoint(axis, origin, radiusWorld, (i / RingSegments) * Math.PI * 2, axes), width, height)
       points.push(p ? { x: p.x, y: p.y } : null)
     }
     const segments: RingSegment[] = []
@@ -118,12 +128,12 @@ export function rotateLayout(
       const to = points[i + 1]
       if (!from || !to) continue
       // Which half the segment is on: its middle against the plane through the pivot facing the camera
-      const middle = ringPoint(axis, origin, radiusWorld, ((i + 0.5) / RingSegments) * Math.PI * 2)
+      const middle = ringPoint(axis, origin, radiusWorld, ((i + 0.5) / RingSegments) * Math.PI * 2, axes)
       segments.push({ from, to, front: dot(sub(middle, origin), toCamera) >= 0 })
     }
     rings.push({ axis, segments })
   }
-  return { origin: frame.center, worldLength: frame.worldLength, radiusWorld, radiusPixels: radiusWorld * frame.pixelsPerUnit, rings }
+  return { axes, origin: frame.center, worldLength: frame.worldLength, radiusWorld, radiusPixels: radiusWorld * frame.pixelsPerUnit, rings }
 }
 
 /** The nearest front segment of a ring to a pixel, and how far */
@@ -190,14 +200,16 @@ export class RotateDrag {
     start: number,
     private readonly start2d: Pixel,
     private readonly tangent: Pixel | null,
-    private readonly radiusPixels: number
+    private readonly radiusPixels: number,
+    /** The axes the ring is one of (the layout's) */
+    readonly axes: AxisFrame = WorldAxes
   ) {
     this.previous = start
   }
 
   /** The angle of a world point about the pivot in the ring's plane, null at the pivot itself */
-  private static planeAngle(axis: Axis, origin: Vec3, point: Vec3): number | null {
-    const [e1, e2] = RingBasis[axis]
+  private static planeAngle(axis: Axis, axes: AxisFrame, origin: Vec3, point: Vec3): number | null {
+    const [e1, e2] = ringBasisOf(axes, axis)
     const v = sub(point, origin)
     if (!(length(v) > 1e-9)) return null
     return Math.atan2(dot(v, e2), dot(v, e1))
@@ -219,16 +231,17 @@ export class RotateDrag {
   ): RotateDrag | null {
     const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
     if (!ray) return null
-    const hit = rayPlane(ray, origin, AxisDirections[axis], RingMinRayFacing)
+    const axes = layout.axes ?? WorldAxes
+    const hit = rayPlane(ray, origin, axes[axis], RingMinRayFacing)
     if (hit && hit.s <= farPlane) {
-      const start = RotateDrag.planeAngle(axis, origin, hit.point)
+      const start = RotateDrag.planeAngle(axis, axes, origin, hit.point)
       if (start !== null) {
-        return new RotateDrag(axis, "plane", origin, viewProjection, width, height, farPlane, start, pixel, null, layout.radiusPixels)
+        return new RotateDrag(axis, "plane", origin, viewProjection, width, height, farPlane, start, pixel, null, layout.radiusPixels, axes)
       }
     }
     const tangent = ringTangentAt(layout, axis, pixel)
     if (!tangent || !(layout.radiusPixels > 1e-6)) return null
-    return new RotateDrag(axis, "tangent", origin, viewProjection, width, height, farPlane, 0, pixel, tangent, layout.radiusPixels)
+    return new RotateDrag(axis, "tangent", origin, viewProjection, width, height, farPlane, 0, pixel, tangent, layout.radiusPixels, axes)
   }
 
   /** The angle turned so far for the pointer now; null (keep the last) when the pointer's ray can't be followed */
@@ -241,9 +254,9 @@ export class RotateDrag {
       return this.total
     }
     const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
-    const hit = ray ? rayPlane(ray, this.origin, AxisDirections[this.axis], RingMinRayFacing) : null
+    const hit = ray ? rayPlane(ray, this.origin, this.axes[this.axis], RingMinRayFacing) : null
     if (!hit || hit.s > this.farPlane) return null
-    const angle = RotateDrag.planeAngle(this.axis, this.origin, hit.point)
+    const angle = RotateDrag.planeAngle(this.axis, this.axes, this.origin, hit.point)
     if (angle === null) return null
     // Each step is the shortest turn from the last, so the total goes past half a turn and stays continuous
     this.total += wrapAngle(angle - this.previous)
@@ -330,7 +343,9 @@ export class RotateGizmoDrag extends TransformDrag {
     private readonly source: RotateDrag,
     /** The point every object turns about: the primary's world position when the drag began */
     private readonly pivot: Vec3,
-    private readonly snap: boolean = false
+    private readonly snap: boolean = false,
+    /** What Ctrl or the toolbar's toggle rounds the angle to (radians) */
+    private readonly snapStep: number = RotateSnapRadians
   ) {
     super(deps, target, { step: "Rotate", failed: "Failed to rotate the object" })
   }
@@ -345,8 +360,8 @@ export class RotateGizmoDrag extends TransformDrag {
     if (this.isFinished) return null
     let angle = this.source.angleAt(pixel)
     if (angle === null || !Number.isFinite(angle)) return null
-    if (snap) angle = snapTo(angle, RotateSnapRadians)
-    const axis = AxisDirections[this.source.axis]
+    if (snap) angle = snapAngle(angle, this.snapStep)
+    const axis = this.source.axes[this.source.axis]
     if (!this.submit(this.targets.map((t, index) => rotatedTransform(t, index, this.pivot, axis, angle!)))) return null
     this.angle = angle
     return angle

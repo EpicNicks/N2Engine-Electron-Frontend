@@ -109,10 +109,13 @@ describe("chords", () => {
     assert.equal(chordMatches(chord("Delete"), press("Delete", { code: "Delete" })), true)
     // The default frame and tool chords follow the same rule
     const keymap = new Keymap(DefaultActions)
-    for (const [id, code] of [["viewport.frame", "KeyF"], ["gizmo.translate", "KeyW"], ["gizmo.rotate", "KeyE"], ["gizmo.scale", "KeyR"], ["gizmo.none", "KeyQ"]]) {
+    for (const [id, code] of [["viewport.frame", "KeyF"], ["gizmo.translate", "KeyW"], ["gizmo.rotate", "KeyE"], ["gizmo.scale", "KeyR"], ["gizmo.none", "KeyQ"], ["gizmo.space", "KeyX"]]) {
       assert.equal(keymap.chordsOf(id).some((c) => chordMatches(c, press("\u0444", { code }))), true, `${id} on a Cyrillic layout`)
       assert.equal(keymap.chordsOf(id).some((c) => chordMatches(c, press(code.slice(3).toLowerCase(), { code: "KeyZ" }))), false, `${id} typed from another key`)
     }
+    // The loop types each letter from KeyZ, which is the pivot toggle's own key: it is checked from other keys here
+    assert.equal(keymap.chordsOf("gizmo.pivot").some((c) => chordMatches(c, press("\u044f", { code: "KeyZ" }))), true, "pivot on a Cyrillic layout")
+    assert.equal(keymap.chordsOf("gizmo.pivot").some((c) => chordMatches(c, press("z", { code: "KeyX" }))), false, "pivot typed from another key")
   })
 
   test("canonical: spellings of one key press are one chord", () => {
@@ -178,11 +181,13 @@ describe("the default actions", () => {
         "gizmo.rotate",
         "gizmo.scale",
         "gizmo.none",
+        "gizmo.space",
+        "gizmo.pivot",
         "assets.applySettings",
         "text.save",
       ]
     )
-    // The gizmo's tool keys are the viewport's (W E R Q, as in Unity) and are physical keys; the space and pivot toggles are FE4's
+    // The gizmo's tool keys are the viewport's (W E R Q, as in Unity) and are physical keys, and so are the space and pivot toggles (X, Z)
     const gizmo = DefaultActions.filter((a) => a.id.startsWith("gizmo."))
     assert.deepEqual(
       gizmo.map((a) => [a.id, a.scope, a.chords]),
@@ -191,6 +196,8 @@ describe("the default actions", () => {
         ["gizmo.rotate", "viewport", ["KeyE"]],
         ["gizmo.scale", "viewport", ["KeyR"]],
         ["gizmo.none", "viewport", ["KeyQ"]],
+        ["gizmo.space", "viewport", ["KeyX"]],
+        ["gizmo.pivot", "viewport", ["KeyZ"]],
       ]
     )
   })
