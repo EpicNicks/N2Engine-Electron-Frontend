@@ -474,7 +474,7 @@ export class ViewportController {
    * is selected or the object can't be read.
    */
   async frameSelected(): Promise<boolean> {
-    if (this.drag) return false
+    if (this.drag || this.marquee) return false // a marquee's rectangle is over the picture it was drawn on
     const id = this.deps.selected()
     if (id === null) return false
     if (this.canPick && this.deps.picking && this.deps.engine.isConnected()) {
@@ -482,6 +482,7 @@ export class ViewportController {
         const ids = [...new Set([id, ...this.selectedIds(id)])]
         const found = await this.deps.picking.bounds(ids)
         const union = found ? unionBounds(found.values()) : null
+        if (this.drag || this.marquee) return false // a drag began while the bounds were awaited
         if (union) {
           this.camera.frameBounds(union)
           this.cameraChanged()
@@ -496,7 +497,7 @@ export class ViewportController {
       await this.loadTarget(id)
       target = this.target.value?.id === id ? this.target.value : null
     }
-    if (!target) return false
+    if (!target || this.drag || this.marquee) return false
     this.camera.framePoint(mat4Translation(target.worldMatrix))
     this.cameraChanged()
     return true

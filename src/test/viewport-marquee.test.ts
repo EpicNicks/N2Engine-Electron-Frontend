@@ -498,6 +498,21 @@ describe("the marquee gesture", () => {
     assert.notDeepEqual(c.camera.position, before)
   })
 
+  test("Frame Selected is refused while a marquee is drawn, and works again after the release", async () => {
+    const r = marqueeRig({ selection: ["a"] })
+    await r.ready()
+    const c = r.controller
+    const before = { ...c.camera.position }
+    c.pointerDown({ x: 0, y: 0 }, false)
+    c.pointerMove({ x: 300, y: 300 }, false, NoKeys)
+    assert.equal(c.isMarquee, true)
+    assert.equal(await c.frameSelected(), false)
+    assert.deepEqual(c.camera.position, before)
+    await c.pointerUp({ x: 300, y: 300 }, {}, NoKeys)
+    assert.equal(await c.frameSelected(), true)
+    assert.notDeepEqual(c.camera.position, before)
+  })
+
   test("without candidates (or a picking backend) a drag on empty space draws nothing and selects nothing", async () => {
     const plain = rig({ picking: measuring(Boxes).backend, selection: [] })
     await plain.ready()
