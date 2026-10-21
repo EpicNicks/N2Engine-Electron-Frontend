@@ -10,23 +10,29 @@
     "node": ">=22.22.2"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/bundle.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json && tsc -p tsconfig.test-dom.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/bundle.js && node scripts/bundle-mcp.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json && tsc -p tsconfig.test-dom.json && tsc -p mcp/tsconfig.json",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --devtools",
     "sync-protocol": "node scripts/sync-protocol.js",
-    "test": "npm run build && node scripts/bundle-tests.js && node --test \"dist/test/**/*.test.js\" && node --test \"dist/test-dom/**/*.test.js\""
+    "build:mcp": "node scripts/bundle-mcp.js",
+    "mcp:golden": "node scripts/gen-mcp-golden.js",
+    "test": "npm run build && node scripts/bundle-tests.js && node scripts/bundle-mcp.js --tests && node --test \"dist/test/**/*.test.js\" && node --test \"dist/test-dom/**/*.test.js\" && node --test \"dist/mcp-test/**/*.test.mjs\""
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "@testing-library/dom": "^8.20.1",
     "@testing-library/preact": "^3.2.4",
     "@testing-library/user-event": "^14.6.8",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^25.0.3",
+    "ajv": "8.17.1",
     "electron": "^39.2.7",
     "esbuild": "^0.25.12",
     "jsdom": "^30.1.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "4.6.7"
   },
   "dependencies": {
     "@preact/signals": "^2.11.3",
