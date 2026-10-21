@@ -206,6 +206,11 @@ export class ProjectSettingsModel {
     this.edits.value = { ...this.edits.value, [id]: next }
   }
 
+  /** Sets several edit keys of a section at once (one update: a row of the collision matrix, say) */
+  setEdits(id: string, texts: Readonly<Record<string, string>>): void {
+    this.edits.value = { ...this.edits.value, [id]: { ...(this.edits.value[id] ?? {}), ...texts } }
+  }
+
   /** Drops a section's edits and its last error */
   revert(id: string): void {
     const { [id]: _edits, ...edits } = this.edits.value
