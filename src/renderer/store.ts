@@ -308,6 +308,13 @@ export class EditorStore {
   readonly sceneChangeCount = signal(0)
   /** How many projectChanged events arrived (project.n2proj was saved: refetch GetProjectInfo) */
   readonly projectChangeCount = signal(0)
+  /**
+   * The uiRevision of the latest extensionsChanged event (protocol 1.14.0), null until one arrives on this connection,
+   * and how many arrived: code that shows the host's editor extensions refetches when either changes. Nothing in the
+   * editor shows them yet.
+   */
+  readonly extensionsUiRevision = signal<number | null>(null)
+  readonly extensionsChangeCount = signal(0)
 
   readonly console: ConsoleStore
   /** Counts scene fetches, so a slow answer can't replace a newer one */
@@ -712,6 +719,7 @@ export class EditorStore {
       this.connected.value = connected
       this.deniedAsReadOnly.value = false
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
+      this.extensionsUiRevision.value = null // another host (or none): its revision is not this one's
       if (!connected) {
         this.scene.value = null
         this.sceneFetches++ // an answer still on its way is for a connection that is gone
@@ -1070,6 +1078,9 @@ export class EditorStore {
           }
         } else if (parsed.kind === "frameChanged") {
           this.frameChangeCount.value++
+        } else if (parsed.kind === "extensionsChanged") {
+          this.extensionsUiRevision.value = parsed.uiRevision
+          this.extensionsChangeCount.value++
         } else {
           this.projectChangeCount.value++
         }

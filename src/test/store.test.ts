@@ -474,6 +474,25 @@ describe("EditorStore", () => {
     assert.equal(store.assetsChangeCount.peek(), assets)
   })
 
+  test("extensionsChanged events store the host's uiRevision for whatever shows extensions, and touch no other counter", async () => {
+    const { api, store, timers } = makeStore()
+    await store.openProject()
+    assert.equal(store.extensionsUiRevision.peek(), null)
+    const frames = store.frameChangeCount.peek()
+    const projects = store.projectChangeCount.peek()
+    const changes = store.extensionsChangeCount.peek()
+    api.events.events.push({ seq: 1, kind: "extensionsChanged", uiRevision: 2 })
+    await timers.fire()
+    assert.equal(store.extensionsUiRevision.peek(), 2)
+    assert.equal(store.extensionsChangeCount.peek(), changes + 1)
+    assert.equal(store.frameChangeCount.peek(), frames)
+    assert.equal(store.projectChangeCount.peek(), projects)
+    api.events.events.push({ seq: 2, kind: "extensionsChanged" })
+    await timers.fire()
+    assert.equal(store.extensionsUiRevision.peek(), 0) // a missing revision is 0
+    assert.equal(store.extensionsChangeCount.peek(), changes + 2)
+  })
+
   test("a new host log (events the editor may have missed) refetches the scene", async () => {
     const { api, store, timers } = makeStore()
     api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }

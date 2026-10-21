@@ -61,12 +61,23 @@ export interface FrameChangedEvent {
   revision: number
 }
 
+/**
+ * The host's editor extensions changed (since 1.14.0): they were reloaded, or one became faulted. uiRevision is the
+ * ListEditorExtensions revision to fetch GetEditorUi again for; a missing or mistyped one is 0 (then a client fetches
+ * whatever it is told changed, as for any event it can't compare).
+ */
+export interface ExtensionsChangedEvent {
+  kind: "extensionsChanged"
+  uiRevision: number
+}
+
 export type StateEvent =
   | SceneChangedEvent
   | AssetsChangedEvent
   | ProjectChangedEvent
   | HistoryChangedEvent
   | FrameChangedEvent
+  | ExtensionsChangedEvent
 
 const count = (value: unknown): number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0
@@ -138,6 +149,8 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
       }
     case "frameChanged":
       return { kind: "frameChanged", revision: count(event.revision) }
+    case "extensionsChanged":
+      return { kind: "extensionsChanged", uiRevision: count(event.uiRevision) }
     default:
       return null
   }
