@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.13.0";
+export const PROTOCOL_VERSION = "1.14.0";
 
 // ==================== Types ====================
 
@@ -56,6 +56,7 @@ export interface EditorEvent {
   redoCount?: number;
   state?: string;
   frame?: number;
+  uiRevision?: number;
 }
 
 export interface InputEvent {
@@ -197,6 +198,45 @@ export interface ComponentSchema {
   defaults?: unknown;
 }
 
+export interface ExtensionInfo {
+  id: string;
+  name: string;
+  sha256: string;
+  apiVersion: number;
+  state: string;
+  error?: string;
+  capabilities: string[];
+  itemCount: number;
+}
+
+export interface EditorExtensionsInfo {
+  enabled: boolean;
+  uiRevision: number;
+  extensions: ExtensionInfo[];
+}
+
+export interface MenuForm {
+  fields: FieldSchema[];
+  defaults: unknown;
+}
+
+export interface MenuItemInfo {
+  id: string;
+  extension: string;
+  path: string;
+  title: string;
+  enabledWhen: unknown;
+  confirm?: string;
+  minRole: string;
+  form?: MenuForm;
+}
+
+export interface EditorUiInfo {
+  uiRevision: number;
+  menuItems: MenuItemInfo[];
+  inspectorSections: unknown[];
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -252,6 +292,9 @@ export const CommandType = {
   GetProjectInfo: 0x70,
   SetProjectSettings: 0x71,
   SetStartupScene: 0x72,
+  ListEditorExtensions: 0x80,
+  GetEditorUi: 0x81,
+  ReloadEditorExtensions: 0x84,
   Undo: 0x90,
   Redo: 0x91,
   BeginEditGroup: 0x92,
@@ -306,6 +349,8 @@ export const ResponseType = {
   PlaySnapshot: 0xB0,
   PlayState: 0xB1,
   ErrorCoded: 0x1C,
+  EditorExtensions: 0x1D,
+  EditorUi: 0x1E,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -364,6 +409,9 @@ export const CommandResponse = {
   GetProjectInfo: "ProjectInfo",
   SetProjectSettings: "ProjectInfo",
   SetStartupScene: "ProjectInfo",
+  ListEditorExtensions: "EditorExtensions",
+  GetEditorUi: "EditorUi",
+  ReloadEditorExtensions: "EditorExtensions",
   Undo: "EditResult",
   Redo: "EditResult",
   BeginEditGroup: "Ok",
@@ -761,6 +809,14 @@ export interface ProjectInfoResponse {
   rootPath: string;
   userDataPath: string;
   project: ProjectFile;
+}
+
+export interface EditorExtensionsResponse {
+  info: EditorExtensionsInfo;
+}
+
+export interface EditorUiResponse {
+  ui: EditorUiInfo;
 }
 
 export interface EditResultResponse {
@@ -2274,6 +2330,34 @@ export function decodeProjectInfoResponse(payload: Uint8Array): ProjectInfoRespo
   return { rootPath, userDataPath, project };
 }
 
+/** EditorExtensions's payload (without the frame header) */
+export function encodeEditorExtensionsResponse(value: EditorExtensionsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads EditorExtensions's payload; bytes after the last field are ignored */
+export function decodeEditorExtensionsResponse(payload: Uint8Array): EditorExtensionsResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as EditorExtensionsInfo;
+  return { info };
+}
+
+/** EditorUi's payload (without the frame header) */
+export function encodeEditorUiResponse(value: EditorUiResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.ui);
+  return writer.finish();
+}
+
+/** Reads EditorUi's payload; bytes after the last field are ignored */
+export function decodeEditorUiResponse(payload: Uint8Array): EditorUiResponse {
+  const reader = new ProtocolReader(payload);
+  const ui = reader.json() as EditorUiInfo;
+  return { ui };
+}
+
 /** EditResult's payload (without the frame header) */
 export function encodeEditResultResponse(value: EditResultResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2453,6 +2537,8 @@ export const ResponseCodecs = {
   ComponentData: { encode: encodeComponentDataResponse, decode: decodeComponentDataResponse },
   LuaFields: { encode: encodeLuaFieldsResponse, decode: decodeLuaFieldsResponse },
   ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },
+  EditorExtensions: { encode: encodeEditorExtensionsResponse, decode: decodeEditorExtensionsResponse },
+  EditorUi: { encode: encodeEditorUiResponse, decode: decodeEditorUiResponse },
   EditResult: { encode: encodeEditResultResponse, decode: decodeEditResultResponse },
   History: { encode: encodeHistoryResponse, decode: decodeHistoryResponse },
   Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },

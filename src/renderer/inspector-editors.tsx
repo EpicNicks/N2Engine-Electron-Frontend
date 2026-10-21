@@ -36,11 +36,23 @@ export interface EditorProps {
   /** The value to show (the kind's neutral one when the component holds none) */
   value: unknown
   disabled: boolean
-  /** Sets the value: immediate sends it now, else it waits for the debounce delay (a drag of a slider) */
-  commit(value: unknown, immediate: boolean): void
+  /**
+   * Sets the value: immediate sends it now, else it waits for the debounce delay (a drag of a slider). axis: a vector
+   * editor says which axis was edited, so several objects that differ in the others keep theirs (value is the whole vector).
+   */
+  commit(value: unknown, immediate: boolean, axis?: string | readonly string[]): void
   /** Says why what was typed isn't a value; the row shows it */
   invalid(message: string): void
+  /** Several objects are edited and their values differ: the editor shows "—", not a value (inspector-multi.ts) */
+  mixed?: boolean
+  /** With mixed, the axes of a vector that differ (the other axes show the value they share) */
+  mixedAxes?: readonly string[]
+  /** Changes whenever the objects were read again: text boxes then show the value again, even one that didn't change (a refused edit) */
+  syncKey?: unknown
 }
+
+/** What an editor shows for values that differ between the selected objects */
+export const MixedMark = "—"
 
 // ==================== A searchable list in a popover ====================
 
@@ -228,19 +240,26 @@ export function NumberInput(props: {
   value: number
   disabled: boolean
   label?: string
+  /** The accessible name, when the label alone (an axis) isn't enough */
+  ariaLabel?: string
+  /** The selected objects differ: shows "—" until something is typed */
+  mixed?: boolean
+  /** Changes when the value was read again: shown again even if it is the same (see EditorProps.syncKey) */
+  syncKey?: unknown
   onValue(value: number): void
   onInvalid(message: string): void
 }) {
-  const [text, setText] = useState(formatNumber(props.value))
+  const shown = props.mixed ? "" : formatNumber(props.value)
+  const [text, setText] = useState(shown)
   const [bad, setBad] = useState(false)
   const typing = useRef(false)
   // The stored value changed (the host clamped it, another edit): show it, unless the person is typing
   useEffect(() => {
     if (!typing.current) {
-      setText(formatNumber(props.value))
+      setText(shown)
       setBad(false)
     }
-  }, [props.value])
+  }, [shown, props.syncKey])
 
   // The text is read from the box itself: the last keystroke may not have been rendered yet
   const finish = (typed: string) => {
@@ -259,9 +278,10 @@ export function NumberInput(props: {
     <input
       type="text"
       inputMode="decimal"
-      class={bad ? "number-input invalid" : "number-input"}
-      aria-label={props.label ?? props.field.displayName}
-      title={props.label ? `${props.field.displayName} ${props.label}` : undefined}
+      class={bad ? "number-input invalid" : props.mixed ? "number-input mixed" : "number-input"}
+      aria-label={props.ariaLabel ?? props.label ?? props.field.displayName}
+      title={props.mixed ? "The values differ" : props.label ? `${props.field.displayName} ${props.label}` : undefined}
+      placeholder={props.mixed ? MixedMark : undefined}
       value={text}
       disabled={props.disabled}
       onInput={(e) => {
@@ -270,10 +290,11 @@ export function NumberInput(props: {
       }}
       onBlur={(e) => typing.current && finish((e.currentTarget as HTMLInputElement).value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter") finish((e.currentTarget as HTMLInputElement).value)
+        // Enter without typing commits nothing: the box shows the value rounded, which isn't what is stored
+        if (e.key === "Enter") typing.current && finish((e.currentTarget as HTMLInputElement).value)
         else if (e.key === "Escape") {
           typing.current = false
-          setText(formatNumber(props.value))
+          setText(shown)
           setBad(false)
         }
       }}
@@ -281,13 +302,13 @@ export function NumberInput(props: {
   )
 }
 
-function NumberEditor({ field, value, disabled, commit, invalid }: EditorProps) {
+function NumberEditor({ field, value, disabled, commit, invalid, mixed, syncKey }: EditorProps) {
   const limits = numberLimits(field)
   const current = typeof value === "number" ? value : 0
   const step = limits.integer ? 1 : Math.max((limits.max - limits.min) / 200, 0.0001)
   return (
     <div class="number-editor">
-      {limits.ranged && (
+      {limits.ranged && !mixed && (
         <input
           type="range"
           class="slider"
@@ -306,6 +327,8 @@ function NumberEditor({ field, value, disabled, commit, invalid }: EditorProps) 
       <NumberInput
         field={field}
         value={current}
+        mixed={mixed}
+        syncKey={syncKey}
         disabled={disabled}
         onValue={(n) => commit(n, true)}
         onInvalid={invalid}
@@ -314,7 +337,7 @@ function NumberEditor({ field, value, disabled, commit, invalid }: EditorProps) 
   )
 }
 
-function VectorEditor({ field, value, disabled, commit, invalid }: EditorProps) {
+function VectorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxes, syncKey }: EditorProps) {
   const axes = axesOf(kindOf(field))
   const current = isObject(value) ? value : {}
   return (
@@ -325,8 +348,10 @@ function VectorEditor({ field, value, disabled, commit, invalid }: EditorProps) 
           field={field}
           label={axis}
           value={typeof current[axis] === "number" ? (current[axis] as number) : 0}
+          mixed={mixed && (mixedAxes === undefined || mixedAxes.includes(axis))}
+          syncKey={syncKey}
           disabled={disabled}
-          onValue={(n) => commit({ ...Object.fromEntries(axes.map((a) => [a, current[a] ?? 0])), [axis]: n }, true)}
+          onValue={(n) => commit({ ...Object.fromEntries(axes.map((a) => [a, current[a] ?? 0])), [axis]: n }, true, axis)}
           onInvalid={invalid}
         />
       ))}
@@ -334,12 +359,17 @@ function VectorEditor({ field, value, disabled, commit, invalid }: EditorProps) 
   )
 }
 
-function ColorEditor({ field, value, disabled, commit, invalid }: EditorProps) {
+function ColorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxes }: EditorProps) {
   const { keys, hasAlpha } = colorChannels(field)
   const current = isObject(value) ? value : {}
   const alphaKey = keys[keys.length - 1]
   return (
     <div class="color-editor">
+      {mixed && (
+        <span class="mixed-mark" title="The values differ">
+          {MixedMark}
+        </span>
+      )}
       <input
         type="color"
         aria-label={field.displayName}
@@ -347,7 +377,8 @@ function ColorEditor({ field, value, disabled, commit, invalid }: EditorProps) {
         disabled={disabled}
         onInput={(e) => {
           const next = hexToColor(field, (e.currentTarget as HTMLInputElement).value, value)
-          if (next.ok) commit(next.value, false)
+          // Only the colour channels were picked: each object keeps its own alpha
+          if (next.ok) commit(next.value, false, keys.slice(0, 3))
         }}
       />
       {hasAlpha && (
@@ -355,8 +386,9 @@ function ColorEditor({ field, value, disabled, commit, invalid }: EditorProps) {
           field={{ ...field, min: 0, max: 1 }}
           label="alpha"
           value={typeof current[alphaKey] === "number" ? (current[alphaKey] as number) : 1}
+          mixed={mixed && (mixedAxes === undefined || mixedAxes.includes(alphaKey))}
           disabled={disabled}
-          onValue={(n) => commit({ ...current, [alphaKey]: n }, true)}
+          onValue={(n) => commit({ ...current, [alphaKey]: n }, true, alphaKey)}
           onInvalid={invalid}
         />
       )}
@@ -366,12 +398,17 @@ function ColorEditor({ field, value, disabled, commit, invalid }: EditorProps) {
 
 // ==================== Simple kinds ====================
 
-function BoolEditor({ field, value, disabled, commit }: EditorProps) {
+function BoolEditor({ field, value, disabled, commit, mixed }: EditorProps) {
   return (
     <input
       type="checkbox"
       aria-label={field.displayName}
-      checked={value === true}
+      title={mixed ? "The values differ" : undefined}
+      // The box shows a dash for objects that differ; one click sets all of them
+      ref={(el) => {
+        if (el) el.indeterminate = mixed === true
+      }}
+      checked={mixed ? false : value === true}
       disabled={disabled}
       onChange={(e) => commit((e.currentTarget as HTMLInputElement).checked, true)}
     />
@@ -387,17 +424,25 @@ export function TextInput(props: {
   value: string
   disabled: boolean
   label: string
+  /** The selected objects differ: shows "—" until something is typed */
+  mixed?: boolean
+  /** Changes when the value was read again: shown again even if it is the same */
+  syncKey?: unknown
   onCommit(text: string): void
 }) {
-  const [text, setText] = useState(props.value)
+  const shown = props.mixed ? "" : props.value
+  const [text, setText] = useState(shown)
   const typing = useRef(false)
   useEffect(() => {
-    if (!typing.current) setText(props.value)
-  }, [props.value])
+    if (!typing.current) setText(shown)
+  }, [shown, props.syncKey])
   return (
     <input
       type="text"
       aria-label={props.label}
+      class={props.mixed ? "mixed" : undefined}
+      title={props.mixed ? "The values differ" : undefined}
+      placeholder={props.mixed ? MixedMark : undefined}
       value={text}
       disabled={props.disabled}
       onInput={(e) => {
@@ -411,17 +456,19 @@ export function TextInput(props: {
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           typing.current = false
-          setText(props.value)
+          setText(shown)
         }
       }}
     />
   )
 }
 
-function StringEditor({ field, value, disabled, commit }: EditorProps) {
+function StringEditor({ field, value, disabled, commit, mixed, syncKey }: EditorProps) {
   return (
     <TextInput
       label={field.displayName}
+      mixed={mixed}
+      syncKey={syncKey}
       value={typeof value === "string" ? value : ""}
       disabled={disabled}
       onCommit={(text) => commit(text, true)}
@@ -429,9 +476,9 @@ function StringEditor({ field, value, disabled, commit }: EditorProps) {
   )
 }
 
-function EnumEditor({ field, value, disabled, commit }: EditorProps) {
+function EnumEditor({ field, value, disabled, commit, mixed }: EditorProps) {
   const options = field.enumOptions ?? []
-  const current = typeof value === "string" ? value : ""
+  const current = mixed ? "" : typeof value === "string" ? value : ""
   return (
     <select
       aria-label={field.displayName}
@@ -439,8 +486,8 @@ function EnumEditor({ field, value, disabled, commit }: EditorProps) {
       disabled={disabled}
       onChange={(e) => commit((e.currentTarget as HTMLSelectElement).value, true)}
     >
-      {/* A value that isn't an option (the host refuses it on a set, but a file may hold one) is still shown */}
-      {!options.includes(current) && <option value={current}>{current}</option>}
+      {/* A value that isn't an option (the host refuses it on a set, but a file may hold one) is still shown; objects that differ show a dash */}
+      {(mixed || !options.includes(current)) && <option value={current}>{mixed ? MixedMark : current}</option>}
       {options.map((option) => (
         <option value={option} key={option}>
           {option}

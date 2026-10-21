@@ -9,13 +9,15 @@
 // nothing, so a refusal puts back every field of that request and its message is shown under the component. What
 // the panel shows is the stored values with the request in flight and the pending patch over them (valuesOf).
 import { batch, computed, signal } from "@preact/signals-core"
-import type { ComponentSchema, EntityHeader } from "../protocol/protocol.generated"
+import type { ComponentSchema, EntityHeader, LocalTransform, Vec3 } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { AssetEntry, EngineApi, JsonObject } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
 import type { EditGroups, GroupHandle } from "./edit-groups"
+import { eulerToQuat, quatToEuler, quatsEquivalent, stableEuler, vecEqual } from "./euler"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
+import { MultiInspectorState } from "./inspector-multi"
 
 type Engine = Pick<
   EngineApi,
@@ -27,6 +29,7 @@ type Engine = Pick<
   | "setComponentFields"
   | "getLuaFields"
   | "setEntityProperties"
+  | "setLocalTransform"
 >
 /** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
 type Project = { listAssets(): Promise<AssetEntry[]> }
@@ -85,6 +88,17 @@ export class InspectorState {
   readonly entityId = signal<string | null>(null)
   readonly header = signal<EntityHeader | null>(null)
   readonly components = signal<readonly ComponentView[]>([])
+  /** The object's LOCAL transform (GetEntity), as the gizmo writes it; null for an object with none, and while loading */
+  readonly transform = signal<LocalTransform | null>(null)
+  /**
+   * The rotation as Euler angles in degrees (euler.ts): the triple last typed or read while it still means the stored
+   * quaternion, so what is shown doesn't jump to another answer for the same rotation. Null with no transform.
+   */
+  readonly euler = signal<Vec3 | null>(null)
+  /** Counts the changes of transform and euler (an edit, its refusal, a read): the boxes show the value again at each */
+  readonly transformRev = signal(0)
+  /** Several objects selected: their shared fields, edited together (inspector-multi.ts) */
+  readonly multi: MultiInspectorState
   /** The object can't be read (it is gone, or the read failed): why */
   readonly loadProblem = signal<string | null>(null)
   readonly loading = signal(false)
@@ -114,6 +128,11 @@ export class InspectorState {
   private readonly sending = new Map<string, Promise<void>>()
   /** Counts the object's own property edits, so a read that began before one doesn't undo it */
   private headerEdits = 0
+  /** Counts the object's transform edits, and how many are on their way: a read that began before one doesn't undo it */
+  private transformEdits = 0
+  private transformInflight = 0
+  /** Counts the objects inspected, so the answer of an edit of an earlier one doesn't count against this one */
+  private transformGen = 0
   /** A drag in progress that is one undo step: the answer to opening its group (its handle, null if refused); null when none */
   private gesture: Promise<GroupHandle | null> | null = null
   /** The end of a drag that is being ended (what is pending is sent, then the group ends); null when none */
@@ -139,6 +158,7 @@ export class InspectorState {
       set: (callback, ms) => setTimeout(callback, ms),
       clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     }
+    this.multi = new MultiInspectorState(this, engine, options)
   }
 
   // ==================== What is shown ====================
@@ -189,6 +209,7 @@ export class InspectorState {
       this.clearEntity()
       this.known.value = new Map()
       this.scanned.clear()
+      this.multi.reset()
     })
   }
 
@@ -197,9 +218,14 @@ export class InspectorState {
     this.versions = new Map()
     this.luaKeys = new Map()
     this.luaReads.clear()
+    this.transformEdits++
+    this.transformGen++
+    this.transformInflight = 0
     batch(() => {
       this.entityId.value = null
       this.header.value = null
+      this.transform.value = null
+      this.euler.value = null
       this.components.value = []
       this.loadProblem.value = null
       this.loading.value = false
@@ -278,6 +304,7 @@ export class InspectorState {
       this.known.value = new Map()
       this.scanned.clear()
     }
+    void this.multi.applyChange(change)
     const id = this.entityId.value
     if (id === null) return
     if (change.full || change.entityIds.includes(id)) await this.refresh()
@@ -294,6 +321,7 @@ export class InspectorState {
     const fetch = ++this.fetches
     const seen = new Map(this.versions)
     const headerEdits = this.headerEdits
+    const transformEdits = this.transformEdits
     let data
     try {
       data = await this.engine.getEntity(id)
@@ -327,6 +355,14 @@ export class InspectorState {
       this.loading.value = false
       this.loadProblem.value = null
       if (headerEdits === this.headerEdits) this.header.value = data.entity.header
+      // Not while an edit of the transform is on its way (what is shown is the edit), nor over one made during the read
+      if (transformEdits === this.transformEdits && this.transformInflight === 0) {
+        const local = data.entity.transform ?? null
+        this.transform.value = local
+        // The triple shown is kept while it still means the stored rotation (no flip, no drift)
+        this.euler.value = local ? stableEuler(this.euler.value, local.rotation) : null
+        this.transformRev.value++
+      }
       this.components.value = views
       // What belonged to a component that is gone goes too
       this.overlays.value = new Map([...this.overlays.value].filter(([key]) => ids.has(key)))
@@ -497,6 +533,9 @@ export class InspectorState {
     }
     // An answer can leave more pending (edits made while it was on its way): send() drains those too
     while (this.sending.size > 0) await Promise.all([...this.sending.values()])
+    // A multi-edit drag still in the panel's pause is sent now; Undo and Save wait for it and for the running ones
+    this.multi.sendPending()
+    await this.multi.settled
   }
 
   private cancelTimer(componentId: string): void {
@@ -670,6 +709,71 @@ export class InspectorState {
         this.options.onError?.("Failed to change the object", e)
       }
     }
+  }
+
+  // ==================== The object's local transform ====================
+
+  /**
+   * Changes the object's LOCAL position, rotation (Euler degrees, euler.ts) and/or scale, as the gizmo does: one
+   * SetLocalTransform with the whole local transform, the rotation as a quaternion, so one commit is one undo step.
+   * Shown at once; a refusal puts the transform back and is in errors under EntityKey. The quaternion is only
+   * computed again when the rotation was edited (a move never touches it), and an Euler triple that means the stored
+   * rotation (180 where -180 was stored) is shown but not sent.
+   */
+  async setTransform(change: { position?: Vec3; rotation?: Vec3; scale?: Vec3 }): Promise<void> {
+    this.requireEditable()
+    const entityId = this.entityId.value
+    const previous = this.transform.value
+    const previousEuler = this.euler.value ?? (previous ? quatToEuler(previous.rotation) : null)
+    if (entityId === null || !previous || !previousEuler) return
+    const euler = change.rotation ?? previousEuler
+    const rotated = change.rotation !== undefined && !vecEqual(change.rotation, previousEuler)
+    const quat = rotated ? eulerToQuat(euler) : previous.rotation
+    const next: LocalTransform = {
+      position: change.position ?? previous.position,
+      rotation: quat,
+      scale: change.scale ?? previous.scale,
+    }
+    const same =
+      vecEqual(next.position, previous.position) &&
+      vecEqual(next.scale, previous.scale) &&
+      (!rotated || quatsEquivalent(quat, previous.rotation))
+    if (same) {
+      // Nothing for the host, but what was typed is what is shown (another answer for the same rotation)
+      if (rotated) this.euler.value = euler
+      return
+    }
+    const edits = ++this.transformEdits
+    const generation = this.transformGen
+    this.transformInflight++
+    batch(() => {
+      this.transform.value = next
+      this.euler.value = euler
+      this.transformRev.value++
+      this.setError(EntityKey, null)
+    })
+    try {
+      await this.engine.setLocalTransform(entityId, next.position, next.rotation, next.scale)
+    } catch (e) {
+      if (this.entityId.value === entityId) {
+        batch(() => {
+          // Unless something newer replaced it meanwhile
+          if (edits === this.transformEdits) {
+            this.transform.value = previous
+            this.euler.value = previousEuler
+            this.transformRev.value++
+          }
+          this.setError(EntityKey, messageOf(e))
+        })
+        if (errorCodeOf(e) !== undefined) this.options.onError?.("Failed to set the transform", e)
+      } else {
+        this.options.onError?.("Failed to set the transform", e)
+      }
+    } finally {
+      if (generation === this.transformGen) this.transformInflight--
+    }
+    // What the host has now (its scene change event may have come while this was on its way)
+    if (generation === this.transformGen && this.transformInflight === 0) void this.refresh()
   }
 
   // ==================== References ====================

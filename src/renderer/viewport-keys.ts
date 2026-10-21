@@ -1,6 +1,6 @@
 // The viewport's keys: the fly keys (held while the right button is down: W A S D Q E and the arrows, Shift for faster),
 // and the viewport's shortcuts, which are keymap actions (keymap.ts, scope "viewport": F frames the selection, Escape
-// cancels the move in progress). Framework-free, so it is tested without a canvas; viewport-panel.tsx feeds it.
+// cancels the move in progress, W E R and Q choose the gizmo's tool: move, rotate, scale, none). Framework-free, so it is tested without a canvas; viewport-panel.tsx feeds it.
 //
 // Priority: the view's own keydown listener asks keyDown() first, and when it took a fly key it prevents the default.
 // The keymap's dispatcher (at the document, after the view's listener) leaves a key that was prevented alone, so while
@@ -8,6 +8,21 @@
 import { isTextEntry } from "./edit-actions"
 import { Keymap } from "./keymap"
 import { FlyKeys, PointerAction } from "./viewport-input"
+import { GizmoMode, GizmoModeTitles } from "./viewport-controller"
+
+/** The keymap action that chooses each tool */
+export const ModeActions: Readonly<Record<GizmoMode, string>> = {
+  translate: "gizmo.translate",
+  rotate: "gizmo.rotate",
+  scale: "gizmo.scale",
+  none: "gizmo.none",
+}
+
+/** The viewport's tool as its label shows it: "Tool: Rotate (E)", with the first chord of its action (none when unbound) */
+export function toolLabel(keymap: Keymap, mode: GizmoMode): string {
+  const first = keymap.formatted(ModeActions[mode])[0]
+  return `Tool: ${GizmoModeTitles[mode]}${first ? ` (${first})` : ""}`
+}
 
 /** What the keys need to know of, and do to, the view */
 export interface ViewportKeyHost {
@@ -19,6 +34,8 @@ export interface ViewportKeyHost {
   frameSelected(): void
   /** A game is live: the keys are the game's */
   live(): boolean
+  /** Chooses the gizmo's tool; false when it can't be changed now (a drag is in progress). Without it the tool keys are not registered. */
+  setMode?(mode: GizmoMode): boolean
 }
 
 export interface KeyEventLike {
@@ -70,6 +87,22 @@ export class ViewportKeyboard {
         { within: view }
       ),
     ]
+    const setMode = this.host.setMode?.bind(this.host)
+    if (setMode) {
+      for (const mode of Object.keys(ModeActions) as GizmoMode[]) {
+        off.push(
+          keymap.handle(
+            ModeActions[mode],
+            () => {
+              // The game's keys while it is live; not while a drag is in progress (the key is left alone)
+              if (this.host.live()) return false
+              return setMode(mode)
+            },
+            { within: view }
+          )
+        )
+      }
+    }
     return () => off.forEach((unregister) => unregister())
   }
 }

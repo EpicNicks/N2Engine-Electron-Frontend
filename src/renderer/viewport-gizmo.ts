@@ -9,9 +9,8 @@
 // intersects the ray with the plane through the gizmo and follows the change of the hit point in the plane. Either way
 // the pointer stays on the handle. Every selected object moves by the same WORLD delta, each turned into a LOCAL
 // position change through its own parent chain the way the engine composes transforms (localPositionAfterMove).
-import type { Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
-import type { EditGroups, GroupHandle } from "./edit-groups"
-import { LatestWinsSender } from "./viewport-frames"
+import type { Mat4, Vec3 } from "../protocol/protocol.generated"
+import { GizmoDragDeps, GizmoTarget, TransformDrag, TransformResult } from "./viewport-drag"
 import {
   Pixel,
   add,
@@ -31,6 +30,8 @@ import {
   vec3,
   worldToScreen,
 } from "./viewport-math"
+
+export type { GizmoDragDeps, GizmoTarget } from "./viewport-drag"
 
 export type Axis = "x" | "y" | "z"
 export const Axes: readonly Axis[] = ["x", "y", "z"]
@@ -103,6 +104,28 @@ export function cameraPositionOf(view: Mat4): Vec3 {
 }
 
 /**
+ * Where a gizmo at origin is on screen and how long its handles are in the world, so that they are GizmoSizePixels
+ * (times the pixel ratio) on screen whatever the distance: the same for every tool. Null when the origin is behind the
+ * camera or the scale can't be found. The camera's right is read from the view matrix's first row.
+ */
+export function gizmoFrame(
+  view: Mat4,
+  viewProjection: Mat4,
+  origin: Vec3,
+  width: number,
+  height: number,
+  pixelRatio: number = 1
+): { center: Pixel; worldLength: number; pixelsPerUnit: number } | null {
+  const center = worldToScreen(viewProjection, origin, width, height)
+  if (!center) return null
+  const right = vec3(view[0], view[4], view[8])
+  const beside = worldToScreen(viewProjection, add(origin, right), width, height)
+  const pixelsPerUnit = beside ? Math.hypot(beside.x - center.x, beside.y - center.y) : 0
+  if (!(pixelsPerUnit > 1e-6)) return null
+  return { center: { x: center.x, y: center.y }, worldLength: (GizmoSizePixels * pixelRatio) / pixelsPerUnit, pixelsPerUnit }
+}
+
+/**
  * Where the gizmo is on a width x height viewport, for a gizmo at origin: its handles' ends, sized to GizmoSizePixels
  * on screen, and its plane squares, on the side of each axis that faces the camera and left out when the plane is
  * nearly edge-on. Null when the origin is behind the camera. The camera's right (for the world size of a pixel) is read
@@ -116,14 +139,9 @@ export function gizmoLayout(
   height: number,
   pixelRatio: number = 1
 ): GizmoLayout | null {
-  const sizePixels = GizmoSizePixels * pixelRatio
-  const center = worldToScreen(viewProjection, origin, width, height)
-  if (!center) return null
-  const right = vec3(view[0], view[4], view[8])
-  const beside = worldToScreen(viewProjection, add(origin, right), width, height)
-  const pixelsPerUnit = beside ? Math.hypot(beside.x - center.x, beside.y - center.y) : 0
-  if (!(pixelsPerUnit > 1e-6)) return null
-  const worldLength = sizePixels / pixelsPerUnit
+  const frame = gizmoFrame(view, viewProjection, origin, width, height, pixelRatio)
+  if (!frame) return null
+  const { center, worldLength } = frame
 
   const handles: GizmoHandle[] = []
   for (const axis of Axes) {
@@ -194,22 +212,6 @@ export function hitTestGizmo(
     if (pointInQuad(pixel, candidate.corners) && (plane === null || candidate.alpha > plane.alpha)) plane = candidate
   }
   return plane?.plane ?? null
-}
-
-/** The selected object as the gizmo needs it: GetEntity's local transform and world matrix */
-export interface GizmoTarget {
-  id: string
-  name: string
-  localPosition: Vec3
-  localRotation: Quat
-  localScale: Vec3
-  worldMatrix: Mat4
-  /**
-   * The object's parent's world matrix (the identity for a root), when the editor has read it. With it the move is
-   * exact whatever the signs of the scales; without it the parent is derived from the object's own world matrix, which
-   * can't tell a mirrored parent from a mirrored child.
-   */
-  parentWorld?: Mat4
 }
 
 /**
@@ -399,89 +401,19 @@ export class PlaneDrag implements DragSource {
   }
 }
 
-/** What GizmoDrag needs of the engine and of the edit groups */
-export interface GizmoDragDeps {
-  engine: { setLocalTransform(entityId: string, position: Vec3, rotation: Quat, scale: Vec3): Promise<void> }
-  groups: Pick<EditGroups, "begin" | "end">
-  /** A refused or failed move (an object that is gone, say): reported, and the drag goes on with the others */
-  onError(what: string, error: unknown): void
-  /** The objects' positions changed on the host's side (after each move is sent): the frame is asked for again */
-  onMoved?(): void
-}
-
-interface Move {
-  index: number
-  position: Vec3
-}
-
-/** The host's refusal for an object that is not (or no longer) in the scene: "<what> not found: <id>" */
-const NotFound = /not found/i
-
-const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-
 /**
- * One translate drag of one or several objects, from the press on a handle to the release: BeginEditGroup first, then
- * at most one batch of SetLocalTransform calls in flight (the latest positions win; a batch's calls are sent together,
- * since they share one ordered connection), then EndEditGroup, so the drag is one undo step however many moves it sent
- * and however many objects it moved. Releasing without having moved changes nothing. A failure is reported once per
- * object; an object the host says is not found is left out of the rest of the drag, one that failed otherwise is tried
- * again with the next move. An abandoned drag (the connection went, the scene was replaced) sends nothing more, even of
- * a batch it was in the middle of, and says nothing about what that costs. The targets must be the topmost of the
- * selection: an object under another that moves would be moved twice.
+ * One translate drag of one or several objects, from the press on a handle to the release (the group, the batches and
+ * the ending are TransformDrag's): every object moves by the same world delta, which the handle's maths gives for the
+ * pointer, turned into a local position through the object's own parent chain. Rotation and scale go out as they were.
  */
-export class GizmoDrag {
-  /** Where the first object is now (local), as the drag has set it */
-  position: Vec3
-  private readonly sender: LatestWinsSender<Move[]>
-  private readonly began: Promise<GroupHandle | null>
-  private finished: Promise<void> | null = null
-  private abandoned = false
-  /** Objects the host does not have (any more) */
-  private readonly dead = new Set<number>()
-  /** Objects whose failure has been reported, and those whose skipping has: once per drag each */
-  private readonly reported = new Set<number>()
-  private readonly skipReported = new Set<number>()
-  /** Objects a move was ever pushed for (what Escape puts back) */
-  private readonly movedIndexes = new Set<number>()
-  private readonly targets: readonly GizmoTarget[]
-  /** Whether a position was ever pushed */
-  moved = false
-  /** The move in the world the drag has made (the snapped delta); every object moved by it */
-  worldDelta: Vec3 = vec3(0, 0, 0)
-
+export class GizmoDrag extends TransformDrag {
   constructor(
-    private readonly deps: GizmoDragDeps,
+    deps: GizmoDragDeps,
     target: GizmoTarget | readonly GizmoTarget[],
     private readonly drag: DragSource,
     private readonly snap: boolean = false
   ) {
-    this.targets = Array.isArray(target) ? target : [target as GizmoTarget]
-    this.position = this.targets[0].localPosition
-    this.began = deps.groups.begin(
-      this.targets.length === 1 ? `Move ${this.targets[0].name}` : `Move ${this.targets.length} objects`
-    )
-    this.sender = new LatestWinsSender<Move[]>(async (moves) => {
-      // The group is open before the first edit goes
-      await this.began
-      await Promise.all(moves.map((move) => this.send(move)))
-      if (!this.abandoned) deps.onMoved?.()
-    })
-  }
-
-  private async send(move: Move): Promise<void> {
-    if (this.abandoned || this.dead.has(move.index)) return
-    const t = this.targets[move.index]
-    try {
-      await this.deps.engine.setLocalTransform(t.id, move.position, t.localRotation, t.localScale)
-    } catch (e) {
-      // After an abandon the failure is the connection's or the scene's going: nothing to say about it
-      if (this.abandoned) return
-      if (NotFound.test(messageOf(e))) this.dead.add(move.index)
-      if (!this.reported.has(move.index)) {
-        this.reported.add(move.index)
-        this.deps.onError("Failed to move the object", e)
-      }
-    }
+    super(deps, target, { step: "Move", failed: "Failed to move the object" })
   }
 
   /**
@@ -489,7 +421,7 @@ export class GizmoDrag {
    * rounds the delta along each axis the handle moves along.
    */
   update(pixel: Pixel, snap: boolean = this.snap): Vec3 | null {
-    if (this.finished) return null
+    if (this.isFinished) return null
     let delta = this.drag.deltaAt(pixel)
     if (delta === null || !isFiniteVec3(delta)) return null
     if (snap) {
@@ -500,66 +432,16 @@ export class GizmoDrag {
         axes.includes("z") ? snapTo(delta.z, SnapStep) : delta.z
       )
     }
-    const moves: Move[] = []
-    this.targets.forEach((t, index) => {
-      const position = localPositionAfterMove(t, delta!)
-      if (position) {
-        moves.push({ index, position })
-        this.movedIndexes.add(index)
-      } else if (!this.skipReported.has(index)) {
-        this.skipReported.add(index)
-        this.deps.onError("Failed to move the object", new Error(`${t.name} can't be moved: a scale of zero`))
-      }
+    const world = delta
+    const results = this.targets.map((t, index): TransformResult => {
+      const position = localPositionAfterMove(t, world)
+      return position
+        ? { index, position, rotation: t.localRotation, scale: t.localScale }
+        : "can't be moved: a scale of zero"
     })
-    if (moves.length === 0) return null
-    this.position = moves[0].index === 0 ? moves[0].position : this.position
-    this.worldDelta = delta
-    this.moved = true
-    this.sender.push(moves)
+    if (!this.submit(results)) return null
+    this.worldDelta = world
     return this.position
-  }
-
-  /** The pointer was released: the last positions are sent, and the group ends */
-  end(): Promise<void> {
-    this.finished ??= this.finish()
-    return this.finished
-  }
-
-  /**
-   * The connection went or the scene was replaced: what is waiting to be sent is dropped (it is for objects that are
-   * gone), a batch being sent stops before its next call, and the group ends. A call already on its way can't be
-   * recalled.
-   */
-  abandon(): Promise<void> {
-    this.abandoned = true
-    if (!this.finished) {
-      this.sender.discard()
-      this.finished = this.finish()
-    }
-    return this.finished
-  }
-
-  /**
-   * Escape: the objects that were moved go back to where they were, and the group ends. The group still holds the move
-   * and the move back, so the host records a "Move" step that changes nothing (its FinishGroup skips only a group with
-   * no edits): it marks the scene as changed and clears redo. Escape is kept as it is until the host skips such groups.
-   */
-  cancel(): Promise<void> {
-    if (!this.finished) {
-      if (this.moved) {
-        this.position = this.targets[0].localPosition
-        this.worldDelta = vec3(0, 0, 0)
-        this.sender.push([...this.movedIndexes].map((index) => ({ index, position: this.targets[index].localPosition })))
-      }
-      this.finished = this.finish()
-    }
-    return this.finished
-  }
-
-  private async finish(): Promise<void> {
-    const handle = await this.began
-    await this.sender.flush()
-    await this.deps.groups.end(handle)
   }
 }
 
