@@ -67,6 +67,12 @@ export interface TextFilter {
 export const MaxPatternLength = 200
 /** A regex is tried on at most this much of a line (the matcher is linear in it, so a line costs a bounded amount) */
 export const MaxRegexInput = 4096
+/**
+ * Highlighting runs the matcher once per match, and each run can look past the end of its match (a higher-priority
+ * thread may still be alive), so finding every match of a line is not linear. The steps for one line's highlighting
+ * are capped at this many per character of the line; past it the matches found so far are the highlight.
+ */
+export const HighlightStepsPerChar = 64
 
 export interface TextMatcher {
   /** Whether the line passes (everything passes when there is no text, or when the regex is not valid) */
@@ -119,8 +125,9 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
     ranges(message) {
       const text = limited(message)
       const out: Array<[number, number]> = []
+      const budget = { left: HighlightStepsPerChar * (text.length + 1) }
       for (let from = 0; from <= text.length; ) {
-        const m = exec(program, text, from)
+        const m = exec(program, text, from, false, budget)
         if (m === null) break
         if (m[1] === m[0]) from = m[0] + 1 // an empty match is not highlighted and must not loop
         else {

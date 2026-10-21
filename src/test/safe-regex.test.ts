@@ -64,8 +64,8 @@ const ordinary = [
   "\\D\\d",
   "(foo|bar)baz",
   "[A-Z][a-z]+",
-  "é+",
-  "straße",
+  "\u00e9+",
+  "stra\u00dfe",
 ]
 
 const inputs = [
@@ -81,11 +81,11 @@ const inputs = [
   "xx x xxy xxxxy",
   "user@example.com [tag] (aaa)",
   "{a} a{ x} aa aaa aaaa",
-  "ÉÉ éé straSSe straße STRASSE",
+  "\u00c9\u00c9 \u00e9\u00e9 straSSe stra\u00dfe STRASSE",
   "tab\there  spaces",
   "BAZ barbaz foobaz Foo-Bar_9",
   "-a-z0 9z",
-  "A B",
+  "A\u2028B",
 ]
 
 describe("safe-regex: the same matches as RegExp", () => {
@@ -165,6 +165,17 @@ describe("safe-regex: patterns that make RegExp backtrack forever finish at once
     assert.equal(m("((a+))+", "a"), true)
   })
 
+  test("highlighting every match of a long line is bounded too (a match that can look far ahead)", { timeout: 20000 }, () => {
+    const line = "x".repeat(4096)
+    for (const source of ["x(.*y)?", "(?:a.*z|a)", "x(.*y)?z?", "(x|xx)*(.*y)?"]) {
+      const matcher = compileMatcher({ search: source, matchCase: true, regex: true })
+      const started = Date.now()
+      matcher.ranges(line)
+      matcher.ranges("a".repeat(4096))
+      assert.ok(Date.now() - started < 5000, source)
+    }
+  })
+
   test("a matcher is reusable and keeps no state between lines", () => {
     const matcher = compileMatcher({ search: "^ab+$", matchCase: true, regex: true })
     for (let i = 0; i < 5; i++) {
@@ -190,6 +201,17 @@ describe("safe-regex: what it refuses says why", () => {
     assert.match(refused("a(?=b)") ?? "", /Look-around/)
     assert.match(refused("(?<!a)b") ?? "", /Look-around/)
     assert.match(refused("(?!a)b") ?? "", /Look-around/)
+  })
+
+  test("legacy octal escapes are refused, not read differently", () => {
+    assert.match(refused("\\01") ?? "", /Octal/)
+    assert.equal(refused("\\0"), null)
+  })
+
+  test("ignore-case classes do not fold characters RegExp does not (the Kelvin sign is not a k)", () => {
+    const program = compileProgram("[\\w]", false)
+    const text = String.fromCharCode(0x212a)
+    assert.equal(exec(program, text, 0, true) !== null, new RegExp("[\\w]", "i").test(text))
   })
 
   test("a counted repeat that would expand past the program limit", () => {

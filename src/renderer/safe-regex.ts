@@ -203,6 +203,8 @@ class Parser {
       case "v":
         return 11
       case "0":
+        // A zero followed by a digit is a legacy octal escape (Annex B), which this matcher does not read
+        if (/[0-9]/.test(this.src[this.at] ?? "")) throw new UnsupportedPattern("Octal escapes are not supported")
         return 0
       case "x": {
         const h = this.src.slice(this.at, this.at + 2)
@@ -400,10 +402,8 @@ function classMatches(inst: Inst, ch: number, ignoreCase: boolean): boolean {
   if (!found && ignoreCase) {
     const up = canon(ch)
     found = up !== ch && inRanges(ranges, up)
-    if (!found) {
-      const low = String.fromCharCode(ch).toLowerCase()
-      found = low.length === 1 && low.charCodeAt(0) !== ch && inRanges(ranges, low.charCodeAt(0))
-    }
+    // Only ASCII upper case folds down here (RegExp does not fold other characters, such as the Kelvin sign, to k)
+    if (!found && ch >= 65 && ch <= 90) found = inRanges(ranges, ch + 32)
   }
   return found !== inst.negate
 }
@@ -422,9 +422,17 @@ interface ThreadList {
 /**
  * The leftmost match of the program in the text starting at or after `from`, as [start, end) (the first one found
  * when `firstOnly`, which is enough to know that there is one); null when there is none. At most
- * (text length x program size) steps, however the pattern is built.
+ * (text length x program size) steps, however the pattern is built. A caller that runs it again and again (highlighting
+ * every match of a line) passes a shared `budget` of steps: when it is spent the call gives up and returns null with
+ * `budget.left` below zero, so the total work for the line is bounded, not just each call.
  */
-export function exec(program: Program, text: string, from = 0, firstOnly = false): [number, number] | null {
+export function exec(
+  program: Program,
+  text: string,
+  from = 0,
+  firstOnly = false,
+  budget?: { left: number }
+): [number, number] | null {
   const { insts, ignoreCase } = program
   const n = text.length
   const size = insts.length
@@ -469,6 +477,10 @@ export function exec(program: Program, text: string, from = 0, firstOnly = false
     const ch = pos < n ? text.charCodeAt(pos) : -1
     gen++
     nlist.n = 0
+    if (budget) {
+      budget.left -= clist.n + 1
+      if (budget.left < 0) return null
+    }
     for (let i = 0; i < clist.n; i++) {
       const pc = clist.pcs[i]
       const start = clist.starts[i]
