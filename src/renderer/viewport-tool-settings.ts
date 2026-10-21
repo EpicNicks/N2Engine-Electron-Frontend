@@ -6,7 +6,7 @@ import type { Mat4, Vec3 } from "../protocol/protocol.generated"
 import type { Bounds } from "./viewport-camera"
 import { AxisFrame, WorldAxes } from "./viewport-gizmo"
 import { unionBounds } from "./viewport-picking"
-import { mat4Translation, scale, add } from "./viewport-math"
+import { mat4Translation, scale, add, cross, dot } from "./viewport-math"
 import { worldAxesOf } from "./viewport-scale"
 
 /** The space the move and rotate handles are in: the world's axes, or the primary object's own (local) */
@@ -25,10 +25,14 @@ export const otherPivot = (pivot: GizmoPivot): GizmoPivot => (pivot === "pivot" 
 /**
  * The axes the move and rotate handles run along. World space: the world's. Local space: the primary object's own, its
  * world matrix's columns with the scale stripped (the scale gizmo's axes too; a sheared parent chain makes them
- * approximate, as the README says). A column with no length falls back to the world axis.
+ * approximate, as the README says). A column with no length falls back to the world axis. A mirrored object (an odd
+ * number of negative scales) has a left-handed frame, which would turn a ring's drag the wrong way about the pointer:
+ * its z axis is flipped to make the frame right-handed (the handles are the same lines either way).
  */
 export function gizmoAxes(space: GizmoSpace, worldMatrix: Mat4 | null): AxisFrame {
-  return space === "local" && worldMatrix ? worldAxesOf(worldMatrix) : WorldAxes
+  if (space !== "local" || !worldMatrix) return WorldAxes
+  const axes = worldAxesOf(worldMatrix)
+  return dot(cross(axes.x, axes.y), axes.z) < 0 ? { x: axes.x, y: axes.y, z: scale(axes.z, -1) } : axes
 }
 
 /** The centre of a box */

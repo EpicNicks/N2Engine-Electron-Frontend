@@ -334,7 +334,7 @@ export class ViewportController {
       this.deps.onError("Failed to read the editor camera", e)
     }
     await this.loadTarget(this.deps.selected())
-    this.reloadBounds()
+    void this.reloadBounds()
     await this.verifyMatrices()
   }
 
@@ -566,13 +566,13 @@ export class ViewportController {
     if (this.drag) {
       if (replaced) {
         void this.finishDrag("abandon", true)
-        this.reloadBounds()
+        void this.reloadBounds()
       }
       return
     }
     // The boxes follow every change (also a "full" one, which a drag's own echo can be): an object's bounds include
     // what is under it, and a change names only what changed
-    this.reloadBounds()
+    void this.reloadBounds()
     if (id === null) return
     if (full) {
       void this.loadTarget(id)
@@ -587,14 +587,18 @@ export class ViewportController {
    * selection, a change of the scene, or a connection. One read is in flight at a time; asking meanwhile makes one
    * more read when it is done, and an answer that is out of date by then is not shown.
    */
-  reloadBounds(): void {
+  reloadBounds(): Promise<void> {
     if (this.boundsRunning) {
       this.boundsDirty = true
-      return
+      return this.boundsDone
     }
     this.boundsRunning = true
-    void this.runBounds()
+    this.boundsDone = this.runBounds()
+    return this.boundsDone
   }
+
+  /** Resolves when the read in flight (and the one it was asked for after) has been answered */
+  private boundsDone: Promise<void> = Promise.resolve()
 
   private async runBounds(): Promise<void> {
     try {
@@ -758,7 +762,9 @@ export class ViewportController {
     // The objects the drag changes were read for another selection (a change of it is on its way): not this press
     const id = this.deps.selected()
     if (id === null || this.moversKey !== selectionKeyOf(id, this.moveIds(id))) return false
-    const origin = this.pivotPoint(target)
+    // Just after a drag the gizmo is still where the drag put it: the boxes (and the target) are the host's old ones
+    // until their reads are answered, and the pivot must not jump back to them
+    const origin = this.dragOrigin ?? this.pivotPoint(target)
     const tool = snapToolOf(this.mode.value)
     const settings = this.snap.value
     this.dragToggle = tool !== null && settings[tool].enabled
@@ -863,7 +869,7 @@ export class ViewportController {
   private finishDrag(how: "end" | "cancel" | "abandon", reload: boolean): Promise<void> {
     const drag = this.drag!
     this.drag = null
-    this.dragOrigin = null
+    if (!reload) this.dragOrigin = null
     this.dragStart = null
     this.dragging.value = false
     const done = how === "end" ? drag.end() : how === "cancel" ? drag.cancel() : drag.abandon()
@@ -872,11 +878,20 @@ export class ViewportController {
       () => undefined
     )
     // The host's reading of the object is the truth again
-    return done.then(() => {
+    return done.then(async () => {
       if (!reload) return undefined
-      // The objects moved: their boxes are the host's again too
-      this.reloadBounds()
-      return this.loadTarget(this.deps.selected())
+      // The objects moved: their boxes are the host's again too. The gizmo stays where the drag put it until they are
+      // (else it jumps back to the old centre, and a quick next press would turn about that stale point)
+      const target = this.loadTarget(this.deps.selected())
+      try {
+        await this.reloadBounds()
+      } finally {
+        if (!this.drag) {
+          this.dragOrigin = null
+          this.redraw()
+        }
+      }
+      return target
     })
   }
 

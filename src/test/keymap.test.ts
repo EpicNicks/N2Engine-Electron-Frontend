@@ -114,7 +114,7 @@ describe("chords", () => {
       assert.equal(keymap.chordsOf(id).some((c) => chordMatches(c, press(code.slice(3).toLowerCase(), { code: "KeyZ" }))), false, `${id} typed from another key`)
     }
     // The loop types each letter from KeyZ, which is the pivot toggle's own key: it is checked from other keys here
-    assert.equal(keymap.chordsOf("gizmo.pivot").some((c) => chordMatches(c, press("я", { code: "KeyZ" }))), true, "pivot on a Cyrillic layout")
+    assert.equal(keymap.chordsOf("gizmo.pivot").some((c) => chordMatches(c, press("\u044f", { code: "KeyZ" }))), true, "pivot on a Cyrillic layout")
     assert.equal(keymap.chordsOf("gizmo.pivot").some((c) => chordMatches(c, press("z", { code: "KeyX" }))), false, "pivot typed from another key")
   })
 

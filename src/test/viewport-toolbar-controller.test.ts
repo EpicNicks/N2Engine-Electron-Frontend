@@ -457,6 +457,21 @@ describe("the pivot", () => {
     nearVec(p.b, vec3(0, 4, 0), 1e-4, "b about the primary")
   })
 
+  test("after a drag the gizmo stays where it was put until the boxes are read again (no jump back, no stale press)", async () => {
+    const r = rig({ entities, selection: ["a", "b"], picking })
+    await r.ready()
+    r.controller.setPivot("center")
+    const layout = r.controller.layout()!
+    const start = layout.handles.find((h) => h.axis === "y")!.to
+    const end = pixelOf(r, add(center, vec3(0, layout.worldLength + 1, 0)))
+    assert.equal(r.controller.pointerDown(start, false), true)
+    r.controller.pointerMove(end, false)
+    const up = r.controller.pointerUp(end)
+    // The host has not answered yet: its boxes are the old ones, the gizmo is still at the moved centre
+    near(r.controller.layout()!.origin.y, pixelOf(r, add(center, vec3(0, 1, 0))).y, 1e-6, "not back at the old centre")
+    await up
+  })
+
   test("a move is the same whatever the pivot (the pivot only places the gizmo)", async () => {
     const moved = async (pivot: "pivot" | "center") => {
       const r = rig({ entities, selection: ["a", "b"], picking })

@@ -13,7 +13,7 @@ import {
   pivotPosition,
 } from "../renderer/viewport-tool-settings"
 import { WorldAxes } from "../renderer/viewport-gizmo"
-import { IdentityMat4, IdentityQuat, mat4Compose, quatFromAxisAngle, vec3 } from "../renderer/viewport-math"
+import { IdentityMat4, IdentityQuat, cross, mat4Compose, quatFromAxisAngle, vec3 } from "../renderer/viewport-math"
 
 const near = (actual: number, expected: number, epsilon = 1e-9, what = ""): void =>
   assert.ok(Math.abs(actual - expected) <= epsilon, `${what} ${actual} is not ${expected}`)
@@ -47,6 +47,17 @@ describe("gizmoAxes", () => {
     assert.deepEqual(axes.x, vec3(1, 0, 0))
     assert.deepEqual(axes.y, vec3(0, 1, 0))
     assert.deepEqual(axes.z, vec3(0, 0, 1))
+  })
+
+  test("a mirrored object gets a right-handed frame, so a ring drag turns with the pointer", () => {
+    const m = mat4Compose(vec3(0, 0, 0), IdentityQuat, vec3(-1, 1, 1))
+    const a = gizmoAxes("local", m)
+    const c = cross(a.x, a.y)
+    near(c.x, a.z.x)
+    near(c.y, a.z.y)
+    near(c.z, a.z.z)
+    // the x handle still lies along the object's own x line
+    near(Math.abs(a.x.x), 1)
   })
 
   test("local space follows the object's rotation, with the scale stripped", () => {
