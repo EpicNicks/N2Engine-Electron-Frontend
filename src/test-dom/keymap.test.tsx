@@ -662,7 +662,8 @@ describe("the viewport's keys", () => {
   })
 
   test("priority: a shortcut on a fly key does not fire while the right button is held, and does when it is not", () => {
-    // Bind the frame action to W, as a rebinding (or the roadmap's W for translate) could: it must lose to the fly key
+    // Bind the frame action to W, as a rebinding could (W is the Move tool's, so that goes first): it must lose to the fly key
+    assert.equal(keymap.bind("gizmo.translate", []).ok, true)
     assert.equal(keymap.bind("viewport.frame", ["KeyW"]).ok, true)
     gesture = "look"
     press(host, "w", { code: "KeyW" })
@@ -673,6 +674,7 @@ describe("the viewport's keys", () => {
     press(host, "w", { code: "KeyW" })
     assert.deepEqual(calls, ["frame"], "no look in progress: it is the shortcut")
     keymap.reset("viewport.frame")
+    keymap.reset("gizmo.translate")
   })
 
   test("Shift is noted for the fly camera's speed, from a key press and when it is released", () => {
