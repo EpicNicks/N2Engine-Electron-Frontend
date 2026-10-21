@@ -472,6 +472,26 @@ describe("the pivot", () => {
     await up
   })
 
+  test("a new selection drops the held drag end: its gizmo is not drawn at the last drag's point", async () => {
+    const selection = ["a"]
+    const r = rig({ entities: { a: { position: vec3(0, 0, 0), rotation: IdentityQuat }, c: { position: vec3(0, -2, 0), rotation: IdentityQuat } }, selection })
+    await r.ready()
+    const layout = r.controller.layout()!
+    const start = layout.handles.find((h) => h.axis === "y")!.to
+    const end = pixelOf(r, vec3(0, layout.worldLength + 1, 0))
+    assert.equal(r.controller.pointerDown(start, false), true)
+    r.controller.pointerMove(end, false)
+    const up = r.controller.pointerUp(end)
+    near(r.controller.layout()!.origin.y, pixelOf(r, vec3(0, 1, 0)).y, 1e-6, "held at the moved point")
+    selection.splice(0, 1, "c")
+    void r.controller.loadTarget("c")
+    const held = pixelOf(r, vec3(0, 1, 0)).y
+    assert.ok(Math.abs(r.controller.layout()!.origin.y - held) > 1, "not at the previous drag's end point")
+    await up
+    await settle()
+    near(r.controller.layout()!.origin.y, pixelOf(r, vec3(0, -2, 0)).y, 1e-6, "at the new object")
+  })
+
   test("a move is the same whatever the pivot (the pivot only places the gizmo)", async () => {
     const moved = async (pivot: "pivot" | "center") => {
       const r = rig({ entities, selection: ["a", "b"], picking })

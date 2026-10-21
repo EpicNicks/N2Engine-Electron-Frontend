@@ -537,12 +537,15 @@ export class ViewportController {
       this.movers = []
       this.moversKey = null
       this.read.clear()
+      if (!this.drag) this.dragOrigin = null
       this.redraw()
       return
     }
     const moveIds = this.moveIds(id)
     const key = selectionKeyOf(id, moveIds)
     const ids = [...new Set([id, ...moveIds])]
+    // Another selection: the point a last drag was held at is not its pivot
+    if (this.moversKey !== key && !this.drag) this.dragOrigin = null
     const partial = changed !== null && this.moversKey === key
     if (!partial) this.read.clear()
     const toRead = partial ? ids.filter((i) => changed.has(i) || !this.read.has(i)) : ids
