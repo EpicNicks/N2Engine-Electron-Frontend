@@ -4,6 +4,7 @@ import { ComponentType } from "preact"
 import { AssetsPanel } from "../assets-panel"
 import { ConsolePanel } from "../console-panel"
 import { HierarchyPanel } from "../hierarchy-panel"
+import { HistoryPanel } from "../history-panel"
 import { InspectorPanel } from "../inspector-panel"
 import { EnginePanel } from "../panels"
 import { Viewport } from "../viewport-panel"
@@ -41,6 +42,17 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     closable: true,
     singleton: true,
     tabBar: "always",
+    unmountWhenHidden: true,
+  })
+  // The history shares the console's stack (a tab beside it); closed, it listens to nothing
+  registry.register({
+    id: "history",
+    title: "History",
+    icon: "🕘",
+    component: HistoryPanel as PanelComponent,
+    defaultRegion: "bottom",
+    closable: true,
+    singleton: true,
     unmountWhenHidden: true,
   })
   // The right region stacks three panels, each as high as it always was

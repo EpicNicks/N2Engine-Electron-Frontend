@@ -15,6 +15,7 @@ import type { HistoryStatus } from "../protocol/edit-history"
 import type { EngineApi } from "../shared/api"
 import type { EditActions } from "./edit-actions"
 import type { EditGroups } from "./edit-groups"
+import { planJump } from "./history-jump"
 
 export interface EditControllerDeps {
   engine: Pick<EngineApi, "undo" | "redo">
@@ -41,10 +42,43 @@ export interface EditControllerDeps {
 
 export type Direction = "undo" | "redo"
 
+export interface JumpOptions {
+  /** Called before the first step (done 0) and after each step that was answered */
+  onProgress?(done: number, total: number): void
+  /** Asked before each step: true stops the jump there (the steps already done stay done) */
+  cancelled?(): boolean
+  /** The history the target was chosen from: when the fresh read differs, nothing is sent (outcome "changed", 0 steps) */
+  expected?: { cursor: number; total: number }
+}
+
+export type JumpOutcome = "completed" | "cancelled" | "disabled" | "changed" | "refused"
+
+export interface JumpResult {
+  outcome: JumpOutcome
+  /** Steps that were undone or redone */
+  done: number
+  /** Steps the jump planned */
+  total: number
+}
+
+/** A step of a jump failed (the host's refusal, a lost connection): how many were done, and the cause */
+export class JumpFailed extends Error {
+  constructor(
+    readonly done: number,
+    readonly total: number,
+    readonly reason: unknown
+  ) {
+    super(`${reason instanceof Error ? reason.message : String(reason)} (stopped after ${done} of ${total} steps)`)
+    this.name = "JumpFailed"
+  }
+}
+
 export class EditController implements EditActions {
   /** The one that is running, and at most one more waiting for it: a held key doesn't queue a step per repeat */
   private running: Promise<void> | null = null
   private waiting: { which: Direction; promise: Promise<void> } | null = null
+  /** A jump is running: undo and redo asked meanwhile are ignored (a jump is one operation) */
+  private jumping = false
 
   constructor(private readonly deps: EditControllerDeps) {}
 
@@ -79,6 +113,7 @@ export class EditController implements EditActions {
 
   /** Runs one at a time. While one runs, one more is kept; asking again meanwhile is that same one, not another */
   private queue(which: Direction): Promise<void> {
+    if (this.jumping) return Promise.resolve()
     if (this.running === null) return this.start(which)
     if (this.waiting === null) {
       const running = this.running
@@ -97,7 +132,10 @@ export class EditController implements EditActions {
 
   private start(which: Direction): Promise<void> {
     this.waiting = null
-    const run = this.run(which)
+    return this.track(this.run(which))
+  }
+
+  private track(run: Promise<void>): Promise<void> {
     const mine: Promise<void> = run.then(
       () => this.finished(mine),
       (e) => {
@@ -132,5 +170,74 @@ export class EditController implements EditActions {
     }
     this.deps.applyResult(result)
     await this.deps.syncAfterEdit()
+  }
+
+  /** A jump is running (or one undo or redo is: they exclude each other) */
+  isJumping(): boolean {
+    return this.jumping
+  }
+
+  /**
+   * Makes the state after the first `target` steps of the history the scene's: what an undo or redo does, as many
+   * times as it takes, one at a time, as one operation. What runs before the host is asked runs once (settle, close
+   * the groups, read the history), the plan is made from the host's answer, then the steps are sent; it stops at the
+   * first refusal (JumpFailed, after the history and the panels were brought up to date), when cancelled (between
+   * two steps), when the editor can no longer edit (a play session, a read-only answer) and when the history is not
+   * the one planned (another client edited: the total of steps changes, never by our own undo or redo).
+   * Rejects at once when an undo, redo or jump is running.
+   */
+  jumpTo(target: number, options: JumpOptions = {}): Promise<JumpResult> {
+    if (this.running !== null) return Promise.reject(new Error("An undo or redo is running"))
+    let result: JumpResult = { outcome: "refused", done: 0, total: 0 }
+    this.jumping = true
+    const run = this.track(
+      this.runJump(target, options, (r) => (result = r)).finally(() => {
+        this.jumping = false
+      })
+    )
+    return run.then(() => result)
+  }
+
+  private async runJump(target: number, options: JumpOptions, report: (result: JumpResult) => void): Promise<void> {
+    if (!this.deps.enabled()) return
+    await this.deps.settle()
+    await this.deps.groups.closeAll()
+    await this.deps.refreshHistory()
+    const status = this.deps.history.value
+    const cursor = status.undoCount
+    const total = status.undoCount + status.redoCount
+    if (options.expected && (options.expected.cursor !== cursor || options.expected.total !== total)) {
+      return report({ outcome: "changed", done: 0, total: 0 })
+    }
+    const plan = planJump(cursor, total, Math.min(Math.max(target, 0), total))
+    let done = 0
+    const finish = (outcome: JumpOutcome): void => report({ outcome, done, total: plan.steps })
+    if (plan.kind === "none") return finish("completed")
+    options.onProgress?.(0, plan.steps)
+    let touched = false
+    try {
+      while (done < plan.steps) {
+        if (options.cancelled?.()) return finish("cancelled")
+        if (!this.deps.enabled()) return finish("disabled")
+        const now = this.deps.history.value
+        if (now.undoCount + now.redoCount !== total) return finish("changed")
+        touched = true
+        let step: EditResultResponse
+        try {
+          step = await this.deps.engine[plan.kind]()
+        } catch (e) {
+          throw new JumpFailed(done, plan.steps, e)
+        }
+        done++
+        this.deps.applyResult(step)
+        options.onProgress?.(done, plan.steps)
+        // The host says it can't go on (the history it has is not the one that was read)
+        if (done < plan.steps && !(plan.kind === "undo" ? step.canUndo : step.canRedo)) return finish("changed")
+      }
+      finish("completed")
+    } finally {
+      // Whatever ended it: the panels hear of the scene as it is now, and the history is read again
+      if (touched) await this.deps.syncAfterEdit().catch(() => undefined)
+    }
   }
 }
