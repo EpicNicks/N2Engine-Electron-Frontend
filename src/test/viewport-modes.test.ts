@@ -289,7 +289,7 @@ describe("a scale drag through the controller", () => {
     const c = layout.origin
     assert.equal(r.controller.pointerDown({ x: c.x + 3, y: c.y }, false), true)
     assert.equal(r.controller.hoverHandle.value, "uniform")
-    r.controller.pointerMove({ x: c.x + 51, y: c.y }, false)
+    r.controller.pointerMove({ x: c.x + 3 + 48 * Math.SQRT1_2, y: c.y - 48 * Math.SQRT1_2 }, false)
     assert.equal(r.controller.dragReadout(), "All x2.00")
     await r.controller.cancel()
     assert.equal(r.log.filter((l) => l === "end").length, 1)
@@ -308,8 +308,8 @@ describe("a scale drag through the controller", () => {
     const layout = r.controller.scaleLayout()!
     const c = layout.origin
     r.controller.pointerDown({ x: c.x + 3, y: c.y }, false)
-    r.controller.pointerMove({ x: c.x + 51, y: c.y }, false)
-    await r.controller.pointerUp({ x: c.x + 51, y: c.y })
+    r.controller.pointerMove({ x: c.x + 3 + 48 * Math.SQRT1_2, y: c.y - 48 * Math.SQRT1_2 }, false)
+    await r.controller.pointerUp({ x: c.x + 3 + 48 * Math.SQRT1_2, y: c.y - 48 * Math.SQRT1_2 })
     assert.equal(r.log[0], "begin Scale 2 objects")
     assert.equal(r.log.filter((l) => l === "end").length, 1)
     const b = lastSet(r, "b")

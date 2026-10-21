@@ -391,7 +391,7 @@ describe("a scale drag", () => {
     const b = targetOf("b", null, { position: vec3(2, 0, 0), rotation: IdentityQuat, scale: vec3(1, 1, 1) })
     const r = scaleRig([cube, b], "uniform")
     const c = r.layout.origin
-    r.drag.update({ x: c.x + 53, y: c.y })
+    r.drag.update({ x: c.x + 5 + 48 * Math.SQRT1_2, y: c.y - 48 * Math.SQRT1_2 })
     await r.drag.end()
     const forB = [...r.sets].reverse().find((s) => s.id === "b")!
     nearVec(forB.position, vec3(4, 0, 0), 1e-6)

@@ -1,4 +1,5 @@
 import { test, describe } from "node:test"
+import { effect } from "@preact/signals-core"
 import * as assert from "node:assert/strict"
 import {
   ActionDef,
@@ -255,6 +256,19 @@ describe("conflicts", () => {
     assert.deepEqual(keymap.formatted("a.two"), ["Ctrl+L", "Alt+L"])
     // Binding an action to what it has already is no conflict with itself
     assert.equal(keymap.bind("a.two", ["Mod+L"]).ok, true)
+  })
+
+  test("a rebinding changes the revision signal, so what shows a chord can follow it", () => {
+    const keymap = new Keymap(actions)
+    const seen: number[] = []
+    const stop = effect(() => {
+      void keymap.formatted("a.two")
+      seen.push(keymap.revision.value)
+    })
+    keymap.bind("a.two", ["Mod+L"])
+    keymap.reset("a.two")
+    stop()
+    assert.ok(seen.length >= 3, "re-ran for the bind and the reset")
   })
 
   test("bind refuses more chords than the stored overrides allow, and says so, instead of storing what would be dropped on reading", () => {
