@@ -391,6 +391,7 @@ export class EditorStore {
           this.assetsChangeCount.value++
           this.projectChangeCount.value++
           this.frameChangeCount.value++
+          this.extensionsChangeCount.value++ // a missed extensionsChanged: the Tools menu is fetched again
           // The events of this same poll come next and must not narrow this to their ids: onEvents sees the flag
           this.sceneMissed = true
           this.lastSeenRevision = null // another host's revisions can't be compared with these

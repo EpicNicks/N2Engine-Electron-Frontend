@@ -5,7 +5,7 @@
 // Keys: Enter in a field is OK, Escape (not inside an open picker) is Cancel, Tab stays inside the dialog, the first
 // field has the focus when it opens and what had the focus gets it back when it closes. A click outside does not
 // close it: typed values are not thrown away by a stray click.
-import { useEffect, useRef, useState } from "preact/hooks"
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import { checkForm, initialValues, visibleFields } from "./extension-form"
 import { FieldEditor } from "./inspector-editors"
@@ -39,9 +39,13 @@ function FormBody({ request }: { request: FormRequest }) {
     setErrors(next)
   }
 
-  useEffect(() => {
+  // Before the first paint, so nothing typed into the first field can be stolen by a late focus
+  useLayoutEffect(() => {
     const first = root.current?.querySelector<HTMLElement>(Focusable)
     first?.focus()
+  }, [])
+
+  useEffect(() => {
     return () => {
       // Closed (or replaced): whoever is waiting gets Cancel, and the focus goes back
       if (!done.current) request.resolve(null)

@@ -12,7 +12,7 @@ import type {
   InvokeResult,
 } from "../protocol/extensions"
 import type { JsonObject, ServerInfo } from "../shared/api"
-import { ExtensionsState } from "../renderer/extensions-state"
+import { ExtensionsState, type ExtensionsDeps } from "../renderer/extensions-state"
 import type { HostRole } from "../renderer/store"
 
 export const Uuid = (n: number): string => `00000000-0000-0000-0000-${String(n).padStart(12, "0")}`
@@ -107,7 +107,15 @@ export interface InvokeCall {
 
 /** A state over a fake host that has extensions on and one item, "align.snap", at Tools/Align/Snap */
 export function fakeExtensions(
-  over: { items?: ExtensionMenuItem[]; enabled?: boolean; info?: ServerInfo | null; role?: HostRole | null; extensions?: ExtensionSummary[] } = {}
+  over: {
+    items?: ExtensionMenuItem[]
+    enabled?: boolean
+    info?: ServerInfo | null
+    role?: HostRole | null
+    extensions?: ExtensionSummary[]
+    /** Replaces some of the run's pieces (the DOM tests use the page's real confirm and form dialogs) */
+    run?: Partial<ExtensionsDeps["run"]>
+  } = {}
 ): FakeExtensions {
   const log: string[] = []
   const items = over.items ?? [menuItem("align.snap", "Tools/Align/Snap", { title: "Snap to grid" })]
@@ -203,6 +211,7 @@ export function fakeExtensions(
       },
       note: (level, message) => void fake.notes.push([level, message]),
       fail: (what, message, code) => void fake.failures.push({ what, message, code }),
+      ...over.run,
     },
   })
   return Object.assign(fake, { state })
