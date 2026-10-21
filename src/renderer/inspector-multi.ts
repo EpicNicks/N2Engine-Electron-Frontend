@@ -43,7 +43,9 @@ type Engine = Pick<
   | "setLocalTransform"
   | "addComponent"
   | "removeComponent"
->
+> &
+  // Undo takes back an edit group that a refusal cut short (protocol 1.6); without it the panel only says so
+  Partial<Pick<EngineApi, "undo">>
 
 /** What the multi inspector needs of the single one: the component types, and whether anything may be changed */
 interface Host {
@@ -57,6 +59,23 @@ interface Options {
   onError?(what: string, error: unknown): void
   /** Whether the user agreed (the page's confirm dialog), asked before a component is removed from every object */
   confirm?(message: string, okLabel: string): Promise<boolean>
+  /**
+   * Undoes the last step the way the Undo menu does (the page's EditController: pending edits settled, groups closed,
+   * the history read before and the panels synced after). Used to take back an edit group that stopped at a refusal.
+   * Without it nothing is rolled back and the message says Undo takes back what was applied.
+   */
+  undo?(): Promise<void>
+}
+
+/** What a refusal mid-batch leaves to take back once the edit is no longer counted as running */
+interface Rollback {
+  done: number
+  skipped: number
+  selection: number
+  /** The refusal, as said to the user */
+  failure: string
+  /** The message shown while the rollback is not (yet) done: what a rollback that fails or is skipped leaves */
+  problem: string
 }
 
 /** The type of the component a script runs in */
@@ -495,7 +514,11 @@ export class MultiInspectorState {
     this.requireEditable()
     const count = component.entries.length
     const confirm = this.options.confirm
+    // The selection the user was asked about: the list of components belongs to it
+    const asked = this.selections
     if (confirm && !(await confirm(`Remove ${component.type} from ${count} objects?`, "Remove"))) return false
+    // The selection changed while the dialog was open: the user agreed to remove from other objects, so nothing is sent
+    if (asked !== this.selections) return false
     // Read-only meanwhile (a play session started while the dialog was open): nothing is sent
     this.requireEditable()
     const jobs = component.entries.map((entry) =>
@@ -511,22 +534,54 @@ export class MultiInspectorState {
     // The selection the edit was asked for: a failure is reported only while it is still the one shown
     const selection = this.selections
     const task = this.queue.then(() => this.runJobs(count, jobs, selection))
-    this.queue = task.then(
-      () => this.finished(),
-      () => this.finished()
+    // Counted as finished before any rollback: the undo settles the edits first, and waiting for itself would never end
+    const finished = task.then(
+      (rollback) => {
+        this.finished()
+        return rollback
+      },
+      (e) => {
+        this.finished()
+        throw e
+      }
     )
-    return task
+    this.queue = finished.then(
+      () => undefined,
+      () => undefined
+    )
+    return finished.then((rollback) => (rollback ? this.rollBack(rollback) : undefined))
+  }
+
+  /** Takes back the edit group that stopped at a refusal, through the page's Undo; the message tells which it was */
+  private async rollBack(rollback: Rollback): Promise<void> {
+    // Another edit is queued: Undo would take back that one (or the group stays half undone), so nothing is undone
+    if (this.running > 0 || !this.options.undo) return
+    let problem: string
+    try {
+      await this.options.undo()
+      problem =
+        `The edit stopped at a refusal and was rolled back: ${rollback.done} applied changes were undone, ` +
+        `${rollback.skipped} not sent. ${rollback.failure}`
+    } catch (e) {
+      problem = `${rollback.problem} (rolling back failed: ${messageOf(e)})`
+    }
+    // An edit of objects that are no longer selected says nothing about the ones that are
+    if (rollback.selection === this.selections && this.editProblem.value === rollback.problem) {
+      this.editProblem.value = problem
+    }
+    await this.refresh()
   }
 
   private finished(): void {
     if (--this.running === 0) this.idle.splice(0).forEach((resolve) => resolve())
   }
 
-  private async runJobs(count: number, jobs: Job[], selection: number): Promise<void> {
+  private async runJobs(count: number, jobs: Job[], selection: number): Promise<Rollback | null> {
     this.editProblem.value = null
-    if (jobs.length === 0) return
+    if (jobs.length === 0) return null
     let done = 0
     let failure: string | null = null
+    let rollback: Rollback | null = null
     const label = `Edit ${count} objects`
     const handle = (await this.options.groups?.begin(label)) ?? null
     try {
@@ -547,13 +602,19 @@ export class MultiInspectorState {
       await this.options.groups?.end(handle)
     }
     // An edit of objects that are no longer selected says nothing about the ones that are
-    if (failure !== null && selection === this.selections) {
+    if (failure !== null) {
       const skipped = jobs.length - done - 1
-      this.editProblem.value =
+      const problem =
         `The edit stopped at a refusal: ${done} of ${jobs.length} changes applied` +
         `${done > 0 ? " (Undo takes back what was applied)" : ""}, ${skipped} not sent. ${failure}`
+      if (selection === this.selections) this.editProblem.value = problem
+      // A refusal takes back what was applied before it: the group is one undo step. Only a group the host opened is
+      // that step; without one, Undo would take back something else. The group is ended first (the host refuses Undo
+      // while one is open); the undo itself runs once this edit is no longer counted as running.
+      if (done > 0 && handle !== null && this.options.undo) rollback = { done, skipped, selection, failure, problem }
     }
     // What the host has is the truth, whatever happened
     await this.refresh()
+    return rollback
   }
 }
