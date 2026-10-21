@@ -3,7 +3,9 @@
 // variable (--token-env) or a file (--token-file), and is never printed.
 import * as fs from "node:fs"
 import { normaliseFingerprint } from "../../src/protocol/fingerprint"
-import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs } from "./limits"
+import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs, MaxWritesPerSession } from "./limits"
+import { ReadTools } from "./tools"
+import { WriteToolNames } from "./tools-write"
 import { BridgeName, BridgeVersion } from "./version"
 
 export class CliError extends Error {
@@ -15,6 +17,18 @@ export class CliError extends Error {
 
 export interface CommonOptions {
   allowAdmin: boolean
+  /** --read-only: no write tool is listed or callable */
+  readOnly: boolean
+  /** --allow-irreversible: irreversible operations run without asking the person (the operator's consent) */
+  allowIrreversible: boolean
+  /** --max-writes: host write commands per agent session */
+  maxWrites: number
+  /** --write-tools: only these write tools are listed; null: all of them */
+  writeTools: string[] | null
+  /** --disable-tools: tools that are never listed */
+  disableTools: string[]
+  /** --keep-journal: the folder with the backups of overwritten files is not deleted at exit */
+  keepJournal: boolean
   busyWaitMs: number
   callTimeoutMs: number
 }
@@ -63,6 +77,15 @@ Options:
   --user <name>            The token's user in the host's tokens file (--connect).
   --renderer <name>        opengl or software, for --launch.
   --allow-admin            Serve even when the host gave this connection the admin role (refused by default).
+  --read-only              List no write tool, whatever the host allows.
+  --allow-irreversible     Let irreversible operations (save, open or create a scene over unsaved changes, project settings,
+                           overwriting a text file, restoring files in a revert) run when the client cannot ask the person.
+                           It is the operator's consent: nothing an agent sends can stand in for it. Without it such an
+                           operation needs the client's confirmation (elicitation), and is refused when the client has none.
+  --max-writes <n>         Host write commands one agent session may make (default ${MaxWritesPerSession}).
+  --write-tools <a,b,...>  List only these write tools (names as n2_create_entity; the others are not listed).
+  --disable-tools <a,b>    Never list these tools, read or write.
+  --keep-journal           Keep the folder with the backups of overwritten files when the bridge exits (default: delete it).
   --busy-wait <ms>         How long to wait before one more try when the host is busy (default ${DefaultBusyWaitMs}, at most ${MaxBusyWaitMs}).
   --call-timeout <ms>      How long one tool call may wait for the host (default ${DefaultCallTimeoutMs}).
   --ready-timeout <ms>     How long a launched host may take to be ready (default 30000).
@@ -80,6 +103,16 @@ function parseMs(text: string, option: string, max: number): number {
   const value = Number(text)
   if (value < 1 || value > max) throw new CliError(`${option} must be between 1 and ${max}`)
   return value
+}
+
+/** A comma separated list of tool names, each one a tool this bridge has */
+function parseToolList(text: string, option: string, known: string[]): string[] {
+  const names = text.split(",").map((n) => n.trim())
+  if (names.length === 0 || names.some((n) => n === "")) throw new CliError(`${option} needs a comma separated list of tool names`)
+  for (const name of names) {
+    if (!known.includes(name)) throw new CliError(`${option}: no such tool ${name.slice(0, 40)}`)
+  }
+  return [...new Set(names)]
 }
 
 /** "host:port", "[::1]:9999" or "localhost:9999" */
@@ -101,6 +134,12 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
   let tokenFile: string | undefined
   let user: string | undefined
   let allowAdmin = false
+  let readOnly = false
+  let allowIrreversible = false
+  let maxWrites = MaxWritesPerSession
+  let writeTools: string[] | null = null
+  let disableTools: string[] = []
+  let keepJournal = false
   let busyWaitMs = DefaultBusyWaitMs
   let callTimeoutMs = DefaultCallTimeoutMs
   let readyTimeoutMs: number | undefined
@@ -115,6 +154,27 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
     switch (arg) {
       case "--allow-admin":
         allowAdmin = true
+        continue
+      case "--read-only":
+        readOnly = true
+        continue
+      case "--allow-irreversible":
+        allowIrreversible = true
+        continue
+      case "--keep-journal":
+        keepJournal = true
+        continue
+      case "--max-writes": {
+        const text = takeValue(args, i++, arg)
+        if (!/^\d{1,6}$/.test(text) || Number(text) < 1) throw new CliError("--max-writes must be a whole number from 1 to 999999")
+        maxWrites = Number(text)
+        continue
+      }
+      case "--write-tools":
+        writeTools = parseToolList(takeValue(args, i++, arg), arg, [...WriteToolNames])
+        continue
+      case "--disable-tools":
+        disableTools = parseToolList(takeValue(args, i++, arg), arg, [...ReadTools.map((t) => t.name), ...WriteToolNames])
         continue
       case "--launch":
         launch = takeValue(args, i++, arg)
@@ -154,7 +214,7 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
     }
   }
 
-  const common: CommonOptions = { allowAdmin, busyWaitMs, callTimeoutMs }
+  const common: CommonOptions = { allowAdmin, readOnly, allowIrreversible, maxWrites, writeTools, disableTools, keepJournal, busyWaitMs, callTimeoutMs }
   if (launch !== undefined && connect !== undefined) throw new CliError("--launch and --connect can't be combined")
   if (launch === undefined && connect === undefined) throw new CliError("give --launch <projectPath> or --connect <host:port>")
 

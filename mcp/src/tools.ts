@@ -52,16 +52,25 @@ export interface ToolDef {
   output: z.ZodType
   annotations: ToolAnnotationsHint
   handler(context: HostContext, args: never): Promise<ToolOutput>
+  /** A write tool: listed only for an editor on a host that is not read-only, and only when the operator's policy allows */
+  write?: boolean
+  /**
+   * Write tools only. When this call would do something irreversible (it overwrites a file or the scene file, drops
+   * unsaved changes, changes the project settings), the plain sentence the person is asked to confirm; null when it is
+   * reversible. It may read from the host but changes nothing, and runs before the handler (see server.ts).
+   */
+  irreversible?(context: HostContext, args: never): Promise<string | null>
 }
 
-function tool<S extends z.ZodType>(def: Omit<ToolDef, "input" | "handler"> & {
+export function tool<S extends z.ZodType>(def: Omit<ToolDef, "input" | "handler" | "irreversible"> & {
   input: S
   handler(context: HostContext, args: z.infer<S>): Promise<ToolOutput>
+  irreversible?(context: HostContext, args: z.infer<S>): Promise<string | null>
 }): ToolDef {
   return def as unknown as ToolDef
 }
 
-const readOnly = (title: string): ToolAnnotationsHint => ({
+export const readOnly = (title: string): ToolAnnotationsHint => ({
   title,
   readOnlyHint: true,
   destructiveHint: false,
@@ -83,14 +92,14 @@ export function envelopeSchema(data: z.ZodType): z.ZodType {
     .strict()
 }
 
-const idText = z
+export const idText = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[0-9A-Za-z-]+$/, "an entity or component UUID")
   .describe("A UUID as the hierarchy and entity tools return it.")
 
-const resPath = z.string().min(1).max(1024).describe("A project path: res:// followed by a path inside the project's assets folder, e.g. res://scripts/Player.lua.")
+export const resPath = z.string().min(1).max(1024).describe("A project path: res:// followed by a path inside the project's assets folder, e.g. res://scripts/Player.lua.")
 
 const cursorText = z.string().min(1).max(256).describe("The nextCursor of the previous page, unchanged. Omit for the first page.")
 
@@ -117,7 +126,7 @@ function decodeCursor(text: string, shape: (value: Record<string, unknown>) => b
   throw invalidArgument("The cursor is not one this tool gave out. Call again without a cursor.")
 }
 
-function invalidArgument(message: string): BridgeError {
+export function invalidArgument(message: string): BridgeError {
   return new BridgeError("invalid_argument", message, "Fix the argument and call again.")
 }
 
@@ -136,7 +145,7 @@ async function attempt<T>(unavailable: string[], what: string, read: () => Promi
   }
 }
 
-const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
+export const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value))
 
 // ===== n2_status =====
 

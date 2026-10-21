@@ -35,6 +35,8 @@ export interface Harness {
   scrubber: Scrubber
   client: Client
   logs: string[]
+  /** The questions the client was asked to show the person (elicitation), in order */
+  asked: string[]
   /** Calls a tool and returns the result (isError results are results, not exceptions) */
   call(name: string, args?: Record<string, unknown>): Promise<ToolResult>
   close(): Promise<void>
@@ -52,6 +54,12 @@ export interface HarnessOptions {
   bridge?: Partial<BridgeOptions>
   /** "legacy": the client opens with initialize (2025-11-25); "auto": it probes server/discover first (2026-07-28) */
   era?: "legacy" | "auto"
+  /**
+   * The client can show the person a form (elicitation): "form" declares {form:{}}, "legacy" the 2025-06-18 shape {}.
+   * The answer is what the person says to each question (default: accept with proceed true); a function sees the message.
+   */
+  elicit?: "form" | "legacy"
+  answer?: { action: "accept" | "decline" | "cancel"; proceed?: boolean } | ((message: string) => { action: "accept" | "decline" | "cancel"; proceed?: boolean })
   /** A host that is already running (shared between harnesses) */
   existingHost?: FakeHost
 }
@@ -79,10 +87,22 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   const served = serveStdio(() => createServer(bridge), { transport: serverSide })
+  const asked: string[] = []
   const client = new Client(
     { name: "test-client", version: "0" },
-    { versionNegotiation: { mode: options.era === "auto" ? "auto" : "legacy" } }
+    {
+      versionNegotiation: { mode: options.era === "auto" ? "auto" : "legacy" },
+      ...(options.elicit ? { capabilities: { elicitation: options.elicit === "form" ? { form: {} } : {} } } : {}),
+    }
   )
+  if (options.elicit) {
+    client.setRequestHandler("elicitation/create", async (request) => {
+      const message = (request.params as { message: string }).message
+      asked.push(message)
+      const a = typeof options.answer === "function" ? options.answer(message) : (options.answer ?? { action: "accept", proceed: true })
+      return a.action === "accept" ? { action: "accept", content: { proceed: a.proceed ?? true } } : { action: a.action }
+    })
+  }
   await client.connect(clientSide)
   const harness: Harness = {
     host,
@@ -90,6 +110,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     scrubber,
     client,
     logs,
+    asked,
     async call(name, args = {}) {
       return (await client.callTool({ name, arguments: args })) as unknown as ToolResult
     },
