@@ -135,7 +135,7 @@ const ui: EditorUiInfo = {
 }
 
 describe("the golden vectors and the generated protocol", () => {
-  test("the client is at 1.15.0 and the vectors are the same version", () => {
+  test("the client is at 1.16.0 and the vectors are the same version", () => {
     const vectorsPath = path.join(__dirname, "..", "..", "src", "protocol", "test-vectors.json")
     const vectors = JSON.parse(fs.readFileSync(vectorsPath, "utf-8")) as { protocolVersion: string }
     assert.equal(PROTOCOL_VERSION, "1.16.0")
