@@ -194,7 +194,7 @@ describe("the space and pivot keys", () => {
   test("X toggles world and local, Z pivot and center, by the physical key", () => {
     assert.equal(press(host, "KeyX"), false)
     assert.equal(controller.space.value, "local")
-    press(host, "KeyX", { key: "ч" }) // the Russian layout's letter on the X key
+    press(host, "KeyX", { key: "\u0447" }) // the Russian layout's letter on the X key
     assert.equal(controller.space.value, "world")
     assert.equal(press(host, "KeyZ"), false)
     assert.equal(controller.pivot.value, "center")
