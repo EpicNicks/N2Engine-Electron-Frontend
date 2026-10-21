@@ -47,11 +47,12 @@ export function sourceOf(registry: ConsoleSourceRegistry, entry: Pick<ConsoleEnt
   return registry.has(entry.source) ? entry.source : "host"
 }
 
-/** The page's registry: the host's log, the game's, and the editor's own notes */
+/** The page's registry: the host's log, the game's, the editor's own notes, and what editor extensions write (E-X4) */
 export const consoleSources = new ConsoleSourceRegistry([
   { id: "host", label: "Host" },
   { id: "game", label: "Game" },
   { id: "editor", label: "Editor" },
+  { id: "extension", label: "Extension" },
 ])
 
 // ==================== The text filter ====================

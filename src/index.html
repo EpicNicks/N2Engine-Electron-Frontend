@@ -540,6 +540,39 @@
       .context-menu-item.disabled { color: #777; cursor: default; }
       .context-menu-item.disabled:hover { background: none; }
       .context-menu-separator { height: 1px; background: #444; margin: 4px 0; }
+      .context-menu-arrow { float: right; margin-left: 16px; color: #888; }
+
+      /* Editor extensions (E-X4): the Tools button, the notices, the parameter dialog and the admin section */
+      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      .spinner { display: inline-block; width: 10px; height: 10px; margin-left: 6px; border: 2px solid #888; border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -1px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .extension-banner { display: flex; gap: 12px; align-items: center; background: #1f3140; border-bottom: 1px solid #2f5d7c; color: #eee; padding: 6px 12px; font-size: 12px; }
+      .extension-banner span { flex: 1; }
+      .extension-notice { display: flex; gap: 12px; align-items: flex-start; background: #2a2d2e; border-bottom: 1px solid #444; color: #ddd; padding: 6px 12px; font-size: 12px; }
+      .extension-notice-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
+      .extension-warnings { margin: 4px 0 0; padding-left: 18px; color: #e2c08d; }
+      .form-dialog { min-width: 360px; max-width: 560px; max-height: 80vh; overflow-y: auto; }
+      .form-title { margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #eee; word-break: break-word; }
+      .form-row { display: grid; grid-template-columns: 140px 1fr; gap: 4px 10px; align-items: center; margin-bottom: 8px; }
+      .form-label { color: #ccc; font-size: 12px; word-break: break-word; }
+      .form-editor { min-width: 0; }
+      .form-editor input[type="checkbox"] { width: auto; }
+      .form-editor input[type="range"] { padding: 0; }
+      .form-hint, .form-error { grid-column: 2; font-size: 11px; }
+      .form-hint { color: #888; word-break: break-word; }
+      .form-error { color: #f48771; }
+      .ext-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+      .ext-table th, .ext-table td { text-align: left; padding: 3px 8px 3px 0; font-weight: normal; vertical-align: top; }
+      .ext-table thead th { color: #888; border-bottom: 1px solid #444; }
+      .ext-table tbody th { color: #eee; word-break: break-word; }
+      .ext-hash { font-family: Consolas, monospace; }
+      .ext-state.loaded { color: #4ec9b0; }
+      .ext-state.failed { color: #f48771; }
+      .ext-state.faulted { color: #e2c08d; }
+      .ext-error { color: #f48771; white-space: pre-wrap; word-break: break-word; padding-bottom: 6px; }
+      .ext-files { margin: 4px 0 8px; padding-left: 18px; font-family: Consolas, monospace; font-size: 12px; word-break: break-all; }
+      .ext-trust { margin-top: 12px; border-top: 1px solid #333; padding-top: 4px; }
+      .ext-trust h4 { margin: 8px 0 4px; font-size: 12px; font-weight: 600; }
 
       /* Scrollbars */
       ::-webkit-scrollbar { width: 10px; height: 10px; }

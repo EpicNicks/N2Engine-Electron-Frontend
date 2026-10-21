@@ -27,6 +27,7 @@ import type {
   Vec3,
 } from "../protocol/protocol.generated"
 import type { AudioSamples } from "../audio-stream"
+import type { ExtensionsInfo, ExtensionsResult, ExtensionsUi, InvokeResult } from "../protocol/extensions"
 
 /** Protocol commands, each forwarded to the EngineClient method of the same name in the main process */
 export interface EngineCommands {
@@ -188,6 +189,26 @@ export interface EngineCommands {
   restoreAutosave(): Promise<SceneInfoResponse>
   /** Deletes the open scene's autosave; not an error when there is none */
   discardAutosave(): Promise<void>
+
+  /**
+   * The host's Lua editor extensions (protocol 1.14.0, see EngineClient.listEditorExtensions). Never rejects: the
+   * answer says "unsupported" (an older host), or an error with a kind (ExtensionsResult).
+   */
+  listEditorExtensions(): Promise<ExtensionsResult<ExtensionsInfo>>
+  /** The menu items the extensions declared (data: no Lua runs) */
+  getEditorUi(): Promise<ExtensionsResult<ExtensionsUi>>
+  /** Loads every extension file again (an Admin command) */
+  reloadEditorExtensions(): Promise<ExtensionsResult<ExtensionsInfo>>
+  /**
+   * Runs a menu item as one undo step (protocol 1.15.0): selection is object UUIDs (at most 4096), params the
+   * item's form values, uiRevision the one of the GetEditorUi the item came from. Never rejects.
+   */
+  invokeMenuItem(
+    itemId: string,
+    selection: string[],
+    params: JsonObject,
+    uiRevision: number
+  ): Promise<ExtensionsResult<InvokeResult>>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -262,6 +283,11 @@ export const EngineCommandArgs = {
   getAutosave: [],
   restoreAutosave: [],
   discardAutosave: [],
+
+  listEditorExtensions: [],
+  getEditorUi: [],
+  reloadEditorExtensions: [],
+  invokeMenuItem: ["string", "stringArray", "jsonObject", "uint32"],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]
@@ -375,6 +401,26 @@ export interface HostState {
   projectPath: string | null
   /** Why it failed or exited, with its last output lines (the tunnel's ssh stderr in remote mode); null otherwise */
   message: string | null
+  /**
+   * Local mode only: what the open project's editor/ folder holds and the trust the user gave it (see
+   * ExtensionTrustState). Absent for a remote engine, with no project, and for a project with no .lua file in editor/.
+   */
+  extensionTrust?: ExtensionTrustState
+}
+
+/**
+ * A local project that has editor extensions (editor/*.lua), and where they stand. Extension code runs on the editor
+ * host, never in the editor window; the host loads it only when the user trusted this folder (see main/extension-trust.ts).
+ */
+export interface ExtensionTrustState {
+  /** The .lua files of editor/ as paths inside it with / separators (at most 64 are listed). Untrusted text: show it as text. */
+  files: string[]
+  /** How many more files there are than the list holds */
+  more: number
+  /** The user trusted this exact folder */
+  trusted: boolean
+  /** The running host was started with --editor-extensions (a revoke does not unload what it already loaded) */
+  enabled: boolean
 }
 
 /** window.host: the project's editor host process */
@@ -415,6 +461,17 @@ export interface ProjectApi {
   removeRecent(projectPath: string): Promise<void>
   /** Closes the open project and stops its host */
   close(): Promise<void>
+  /**
+   * Local project only: asks the user (a dialog of the main process, not the page) whether to trust the open
+   * project's editor extensions, and when they say Trust, remembers it for this folder and restarts the host with
+   * --editor-extensions. false when the user said Not now (nothing changed). The page names no folder: it is the open one.
+   */
+  enableExtensions(): Promise<boolean>
+  /**
+   * Forgets the trust given to the open local project's folder. The running host keeps what it loaded; the next start
+   * of its host runs no extensions until the user trusts the folder again.
+   */
+  forgetExtensionTrust(): Promise<void>
 }
 
 /**
@@ -679,4 +736,8 @@ export const Channels = {
   projectGetRecent: "project:getRecent",
   projectRemoveRecent: "project:removeRecent",
   projectClose: "project:close",
+  /** () → IpcResult<boolean>: the main process asks the user, trusts the open local folder, restarts its host with the flag */
+  projectEnableExtensions: "project:enableExtensions",
+  /** () → IpcResult: forgets the open local folder's trust */
+  projectForgetExtensionTrust: "project:forgetExtensionTrust",
 } as const

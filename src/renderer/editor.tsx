@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "preact/hooks"
 import { ConnectionLostNotice } from "./connection-notices"
 import { TextEditor } from "./assets-panel"
 import { editActions, editMenuItems, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
+import { ExtensionNotice, ExtensionTrustBanner, ToolsButton } from "./extensions-ui"
 import { isDirty } from "./assets-state"
 import { globalActionHandlers } from "./global-actions"
 import { keymap } from "./keymap"
@@ -237,6 +238,7 @@ function Toolbar({ layout }: { layout: LayoutController }) {
       <div class="separator" />
       <SceneButtons />
       <EditButton />
+      <ToolsButton />
       <WindowButton controller={layout} />
       <div class="separator" />
       <PlayButtons />
@@ -384,6 +386,8 @@ export function Editor() {
     <div class="editor">
       <Toolbar layout={layout} />
       <ConnectionLostNotice />
+      <ExtensionTrustBanner />
+      <ExtensionNotice />
       <EditorLayout controller={layout} dynamic={new Map(dynamic.map((t) => [t.id, t]))} />
     </div>
   )

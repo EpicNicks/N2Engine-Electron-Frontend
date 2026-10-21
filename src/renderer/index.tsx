@@ -20,7 +20,10 @@ import { PlayController } from "./play-controller"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
 import { EditorStore } from "./store"
+import { ExtensionsState, runBlockedReason } from "./extensions-state"
+import { FormDialog } from "./form-dialog"
 import { followWriteGuard } from "./write-guard"
+import { ipcError } from "../shared/api"
 import {
   AppContext,
   AppState,
@@ -34,6 +37,7 @@ import {
   autosaveDialog,
   confirmDialog,
   dismissAutosaveDialog,
+  formDialog,
   prompt,
   unsavedDialog,
   useApp,
@@ -61,6 +65,7 @@ function App({ app }: { app: AppState }) {
       <BusyOverlay />
       <PromptDialog />
       <ConfirmDialog />
+      <FormDialog />
       <UnsavedDialog />
       <AutosaveDialog />
       <ShortcutsDialog />
@@ -128,6 +133,52 @@ const play = new PlayController({
   onError: (what, e) => store.reportError(what, e),
 })
 store.unsavedFiles = () => assets.tabs.value.filter(isDirty).map((tab) => nameOf(tab.path))
+
+// What is on its way is sent, and what is running is waited for, before an undo or an extension's menu item runs
+const settleEdits = async () => {
+  await hierarchy.renameSettled
+  await hierarchy.actionSettled
+  await app.inspector.flush()
+  await app.inspector.gestureEnded
+  // A gizmo drag in progress is finished first: the host refuses Undo, Redo and menu items while its group is open
+  await app.viewport.endActiveDrag()
+}
+
+// The host's Lua editor extensions: the Tools menu, running an item (one undo step) and the admin list. The code runs on
+// the host; the page only shows its data.
+const extensions = new ExtensionsState({
+  engine: window.engine,
+  connected: store.connected,
+  serverInfo: store.serverInfo,
+  changeCount: store.extensionsChangeCount,
+  role: store.hostRole,
+  blockedReason: () =>
+    runBlockedReason({
+      connected: store.connected.peek(),
+      hasScene: store.scene.peek() !== null,
+      busy: store.busy.peek(),
+      readOnlyReason: store.readOnlyReason.peek(),
+    }),
+  openGroups: groups.openCount,
+  selection: () => [...hierarchy.selection.peek().ids],
+  componentsOf: (id) => hierarchy.tree.peek().nodes.get(id)?.components,
+  run: {
+    settle: settleEdits,
+    closeGroups: () => groups.closeAll(),
+    confirm: confirmDialog,
+    askForm: async (item) => (item.form === undefined ? {} : formDialog(item.title, item.form, "Run")),
+    syncAfterEdit: () => store.syncAfterEdit(),
+    applyEdit: (edit) => store.applyEditResult(edit),
+    // The objects an item made are in the hierarchy only once it has been read again
+    applySelection: async (ids) => {
+      await hierarchy.refresh()
+      hierarchy.selectIds(ids)
+    },
+    note: (level, message) => store.console.note(level, message),
+    // A refusal carries the host's code, so a readOnly one also marks the host read-only, as every other denial does
+    fail: (what, message, code) => store.reportError(`Tools, ${what}`, ipcError({ error: message, code })),
+  },
+})
 const app: AppState = {
   store,
   scene,
@@ -149,6 +200,7 @@ const app: AppState = {
   ),
   audio: new AudioController(window.engine),
   play,
+  extensions,
 }
 
 // Undo and redo (Edit menu, Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y): the host's history, after the editor's own pending edits
@@ -158,14 +210,7 @@ const editController = new EditController({
   history: store.history,
   enabled: () => store.canEdit.value,
   // What is on its way is sent, and what is running is waited for, before Undo ends the groups that are left
-  settle: async () => {
-    await app.hierarchy.renameSettled
-    await app.hierarchy.actionSettled
-    await app.inspector.flush()
-    await app.inspector.gestureEnded
-    // A gizmo drag in progress is finished first: Undo is refused while its group is open
-    await app.viewport.endActiveDrag()
-  },
+  settle: settleEdits,
   refreshHistory: () => store.refreshHistory(),
   syncAfterEdit: () => store.syncAfterEdit(),
   applyResult: (result) => store.applyEditResult(result),
@@ -185,6 +230,8 @@ historyModel.value = new HistoryModel({
 })
 // A play session, or a read-only host, makes the inspector and the hierarchy read-only (the host refuses edits)
 followWriteGuard(store, { inspector: app.inspector, hierarchy })
+// The extension list and the Tools menu follow the connection and the host's extensionsChanged events
+extensions.start()
 // The host ends the groups of a connection that closes (and at the next Hello): none is open on another connection
 effect(() => {
   store.connected.value // what this runs on

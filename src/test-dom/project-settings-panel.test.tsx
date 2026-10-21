@@ -28,7 +28,7 @@ describe("the project settings panel", () => {
     const titles = within(screen.getByRole("navigation", { name: "Settings sections" }))
       .getAllByRole("button")
       .map((b) => b.querySelector(".ps-item-title")?.textContent)
-    assert.deepEqual(titles, ["General", "Physics", "Rendering", "Math", "Determinism", "Layers", "Input", "Raw JSON"])
+    assert.deepEqual(titles, ["General", "Physics", "Rendering", "Math", "Determinism", "Layers", "Extensions", "Input", "Raw JSON"])
     assert.ok(screen.getByText("Demo"))
     assert.ok(screen.getByText("1.2.3"))
   })
@@ -250,23 +250,23 @@ describe("the project settings panel", () => {
     const registry = new SectionRegistry<unknown>()
     for (const def of settingsSections.list()) registry.register(def)
     registry.register({
-      id: "extensions",
-      title: "Extensions",
-      order: 80,
-      component: () => <p>Extensions go here</p>,
+      id: "network",
+      title: "Network",
+      order: 70,
+      component: () => <p>Network goes here</p>,
     })
     const h = fakeProjectHost({ registry })
     render(<ProjectSettingsView model={h.model} />)
     await act(async () => {
       await settleTasks()
     })
-    await open("Extensions")
-    assert.ok(screen.getByText("Extensions go here"))
+    await open("Network")
+    assert.ok(screen.getByText("Network goes here"))
     // no Apply bar for a section without logic
     assert.equal(screen.queryByRole("button", { name: "Apply" }), null)
     const titles = within(screen.getByRole("navigation", { name: "Settings sections" }))
       .getAllByRole("button")
       .map((b) => b.querySelector(".ps-item-title")?.textContent)
-    assert.deepEqual(titles.slice(5, 8), ["Layers", "Extensions", "Input"])
+    assert.deepEqual(titles.slice(5, 8), ["Layers", "Network", "Extensions"])
   })
 })

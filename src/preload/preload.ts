@@ -166,6 +166,8 @@ const project: ProjectApi = {
   getRecent: () => invoke(Channels.projectGetRecent),
   removeRecent: (projectPath) => invoke(Channels.projectRemoveRecent, projectPath),
   close: () => invoke(Channels.projectClose),
+  enableExtensions: () => invoke(Channels.projectEnableExtensions),
+  forgetExtensionTrust: () => invoke(Channels.projectForgetExtensionTrust),
 }
 
 // ==================== window.remote ====================

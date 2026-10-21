@@ -8,7 +8,14 @@
 // it, and closing the project, a reload or quitting only ends the tunnel's ssh.
 import * as fs from "fs"
 import * as path from "path"
-import type { ConnectionState, CreateProjectResult, HostState, OpenProjectResult } from "../shared/api"
+import type {
+  ConnectionState,
+  CreateProjectResult,
+  ExtensionTrustState,
+  HostState,
+  OpenProjectResult,
+} from "../shared/api"
+import { NoExtensionLaunch, type ExtensionLaunch } from "./extension-trust"
 import {
   CreateOptions,
   CreateProjectError,
@@ -64,6 +71,17 @@ export class CancelledError extends Error {
 /** What the session needs of an SshTunnel */
 export type TunnelHandle = Pick<SshTunnel, "localPort" | "exit" | "pid" | "lastOutput" | "onExit" | "kill">
 
+/**
+ * What the session needs of ExtensionTrust (extension-trust.ts): whether a LOCAL project's host is started with
+ * --editor-extensions. Never asked for a remote engine, and without one (tests, other launchers) no host gets the flag.
+ */
+export interface ExtensionGate {
+  forOpen(projectDir: string): Promise<ExtensionLaunch>
+  forRestart(projectDir: string): ExtensionLaunch
+  enable(projectDir: string): Promise<ExtensionLaunch | null>
+  revoke(projectDir: string, runningWithFlag: boolean): ExtensionTrustState | null
+}
+
 /** What the session needs of EngineHost */
 export interface EngineConnection {
   connectTo(port: number, token: string, target?: EngineTarget): Promise<ConnectionState>
@@ -96,6 +114,8 @@ export interface ProjectSessionDeps {
   stopGraceMs?: number
   /** The --renderer to start hosts with (undefined: the host's default); the play child gets the same */
   renderer?: () => string | undefined
+  /** Decides --editor-extensions for local projects (trust prompt and record); without it the flag is never passed */
+  extensions?: ExtensionGate
 }
 
 /** Resolves once the host (or tunnel) has exited, or after ms (false then) */
@@ -129,6 +149,8 @@ export class ProjectSession {
   private running = 0
   /** The --renderer the current (or last) host was launched with: the play child gets the same */
   private launchedRenderer: string | undefined
+  /** The current (or last) host was launched with --editor-extensions */
+  private launchedWithExtensions = false
   private current: HostState = { status: "stopped", mode: "local", launch: 0, projectPath: null, message: null }
   // Operations run one at a time, in order: opening a project while another opens waits for it
   private queue: Promise<unknown> = Promise.resolve()
@@ -270,7 +292,8 @@ export class ProjectSession {
       this.assertCanSpawn()
       this.deps.files.close()
       const launch = this.current.launch + 1
-      this.setState({ status: "starting", mode: "remote", direct: false, launch, projectPath: label, message: null })
+      this.launchedWithExtensions = false
+      this.setState({ status: "starting", mode: "remote", direct: false, launch, projectPath: label, message: null, extensionTrust: undefined })
       const failed = (message: string): void =>
         this.setState({ status: "failed", mode: "local", projectPath: null, message })
 
@@ -365,7 +388,8 @@ export class ProjectSession {
       this.assertCanSpawn()
       this.deps.files.close()
       const launch = this.current.launch + 1
-      this.setState({ status: "starting", mode: "remote", direct: true, launch, projectPath: label, message: null })
+      this.launchedWithExtensions = false
+      this.setState({ status: "starting", mode: "remote", direct: true, launch, projectPath: label, message: null, extensionTrust: undefined })
       const failed = (message: string): never => {
         this.setState({ status: "failed", mode: "local", projectPath: null, message })
         throw new Error(message)
@@ -414,6 +438,42 @@ export class ProjectSession {
   }
 
   /**
+   * The banner's "Enable extensions": asks the user in the main process's own dialog (extension-trust.ts: always, even
+   * for a folder trusted before), and on Trust remembers it for the open project's folder and restarts its host with
+   * --editor-extensions. false when the user said Not now: nothing changes and the host keeps running. Local only: a
+   * remote host's flag is its operator's.
+   */
+  enableExtensions(): Promise<boolean> {
+    return this.serial(async () => {
+      if (this.isRemote) throw new Error("Editor extensions of a remote host are enabled by its operator (the host's --editor-extensions), not from the editor")
+      const projectPath = this.deps.files.rootPath
+      if (projectPath === null) throw new Error("No project is open")
+      const gate = this.deps.extensions
+      if (!gate) throw new Error("Editor extensions are not available")
+      const launch = await gate.enable(projectPath)
+      if (launch === null) return false
+      await this.start(projectPath, undefined, async () => launch)
+      return true
+    })
+  }
+
+  /**
+   * Forgets the trust given to the open local project's folder. The running host keeps what it loaded (its state says
+   * so); its next start passes no flag.
+   */
+  forgetExtensionTrust(): Promise<void> {
+    return this.serial(async () => {
+      if (this.isRemote) throw new Error("A remote host's extensions are not trusted by the editor: there is no trust to forget")
+      const projectPath = this.deps.files.rootPath
+      if (projectPath === null) throw new Error("No project is open")
+      const gate = this.deps.extensions
+      if (!gate) return
+      const state = gate.revoke(projectPath, this.launchedWithExtensions && this.host !== null)
+      this.setState({ extensionTrust: state ?? undefined })
+    })
+  }
+
+  /**
    * Shuts the host down: Shutdown, then a kill if it hasn't exited after StopGraceMs. The project stays open. A host
    * still starting is killed at once, without waiting for its launch.
    */
@@ -437,7 +497,8 @@ export class ProjectSession {
     return this.serial(async () => {
       this.killHost()
       this.deps.files.close()
-      this.setState({ status: "stopped", mode: "local", projectPath: null, message: null })
+      this.launchedWithExtensions = false
+      this.setState({ status: "stopped", mode: "local", projectPath: null, message: null, extensionTrust: undefined })
     })
   }
 
@@ -503,16 +564,16 @@ export class ProjectSession {
       projectPath = this.deps.files.open(dir)
     } catch (e) {
       this.deps.files.close()
-      this.setState({ status: "stopped", projectPath: null, message: null })
+      this.setState({ status: "stopped", projectPath: null, message: null, extensionTrust: undefined })
       throw e
     }
     try {
-      await this.start(projectPath, hostPath)
+      await this.start(projectPath, hostPath, (dir) => this.deps.extensions?.forOpen(dir) ?? NoExtensionLaunch)
     } catch (e) {
       this.deps.files.close()
       // The host checks too, before its engine starts (exit code 1, "project.n2proj not found: ...")
       if (e instanceof Error && e.message.includes(`${ProjectFileName} not found`)) {
-        this.setState({ status: "stopped", projectPath: null, message: null })
+        this.setState({ status: "stopped", projectPath: null, message: null, extensionTrust: undefined })
         return notAProject(projectPath, e.message)
       }
       throw e
@@ -521,13 +582,32 @@ export class ProjectSession {
     return { kind: "opened", path: projectPath }
   }
 
-  /** Launches a host for the project and connects to it; any current host is stopped first */
-  private async start(projectPath: string, hostPath: string = this.deps.settings.require()): Promise<void> {
+  /**
+   * Launches a host for the project and connects to it; any current host is stopped first. decide says whether the
+   * host gets --editor-extensions: opening asks the user about an untrusted folder (a dialog), restarting never asks
+   * (a folder trusted before gets the flag again, any other does not).
+   */
+  private async start(
+    projectPath: string,
+    hostPath: string = this.deps.settings.require(),
+    decide: (projectDir: string) => Promise<ExtensionLaunch> | ExtensionLaunch = (dir) =>
+      this.deps.extensions?.forRestart(dir) ?? NoExtensionLaunch
+  ): Promise<void> {
     await this.stopCurrent(false)
+    // The trust question (if any) comes with no host running; the user may close the project or quit while it is open
+    const extensions = await decide(projectPath)
     // Checked right before spawning: stopCurrent may have waited for the old host while the editor quit
     this.assertCanSpawn()
     const launch = this.current.launch + 1
-    this.setState({ status: "starting", mode: "local", launch, projectPath, message: null })
+    this.setState({
+      status: "starting",
+      mode: "local",
+      launch,
+      projectPath,
+      message: null,
+      extensionTrust: extensions.state ?? undefined,
+    })
+    this.launchedWithExtensions = extensions.flag
 
     let host: HostProcess
     this.launchedRenderer = this.deps.renderer?.()
@@ -537,6 +617,7 @@ export class ProjectSession {
         hostPath,
         projectDir: projectPath,
         renderer: this.launchedRenderer,
+        ...(extensions.flag ? { editorExtensions: true } : {}),
         readyTimeoutMs: this.deps.settings.readyTimeoutMs(),
         onExit: (exit, h) => this.onExit(h, exit),
         onSpawned: (kill) => (this.killLaunching = kill),
@@ -626,7 +707,10 @@ export class ProjectSession {
   }
 
   private setState(change: Partial<HostState>): void {
-    this.current = { ...this.current, ...change }
+    const next: HostState = { ...this.current, ...change }
+    // An undefined extensionTrust is the key absent (the state is data that crosses IPC and is compared whole in tests)
+    if (next.extensionTrust === undefined) delete next.extensionTrust
+    this.current = next
     this.deps.publish(this.current)
   }
 
