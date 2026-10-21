@@ -97,7 +97,16 @@ export interface AssetDetail {
 
 /** Whether the import settings differ from the host's, or a form field holds text not yet in them */
 export const settingsEdited = (detail: AssetDetail): boolean =>
-  detail.settings !== detail.baseline || Object.keys(detail.fields).length > 0
+  detail.settings !== detail.baseline || hasInvalidDraft(detail)
+
+/** A draft that is not valid yet; a valid one is already in the settings, so "1.0" for a 1 is not an edit (compared by value) */
+function hasInvalidDraft(detail: AssetDetail): boolean {
+  const schema = importSchemaFor(detail.info?.type)
+  return Object.entries(detail.fields).some(([key, text]) => {
+    const field = schema?.fields.find((f) => f.key === key)
+    return !field || !parseFieldText(field, text).ok
+  })
+}
 
 /** How the import settings are edited: the typed form of the asset's type, or the JSON text */
 export type SettingsView = "form" | "json"
@@ -369,6 +378,9 @@ export class AssetsState {
   /** Switches the import settings editor between the typed form and the JSON text */
   setSettingsView(view: SettingsView): void {
     this.settingsView.value = view
+    // A number draft that is not valid is not in the settings: dropped, so Apply matches what is shown (valid ones are in the settings)
+    const detail = this.detail.value
+    if (detail && Object.keys(detail.fields).length > 0) this.detail.value = { ...detail, fields: {}, error: null }
   }
 
   /** Back to the host's settings */
