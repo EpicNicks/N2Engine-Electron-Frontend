@@ -33,6 +33,9 @@ export const ErrorCodes = [
   "batch_failed",
   "session_conflict",
   "unknown_session",
+  "play_not_running",
+  "play_failed",
+  "cancelled",
   "internal",
 ] as const
 
