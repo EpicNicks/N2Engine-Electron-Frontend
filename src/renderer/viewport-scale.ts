@@ -156,9 +156,9 @@ export class ScaleDrag {
     farPlane: number = Infinity
   ): ScaleDrag | null {
     if (handle === "uniform") {
-      const d0 = Math.hypot(pixel.x - layout.origin.x, pixel.y - layout.origin.y)
-      const reference = Math.max(d0, 0.5 * GizmoSizePixels * pixelRatio)
-      return new ScaleDrag(handle, origin, vec3(0, 0, 0), viewProjection, width, height, farPlane, d0, reference, layout.origin)
+      // Signed: motion up and to the right grows, down and to the left shrinks, so the ratio can fall to the clamp
+      const reference = 0.5 * GizmoSizePixels * pixelRatio
+      return new ScaleDrag(handle, origin, vec3(0, 0, 0), viewProjection, width, height, farPlane, 0, reference, pixel)
     }
     const direction = layout.directions[handle]
     const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
@@ -170,8 +170,8 @@ export class ScaleDrag {
 
   ratioAt(pixel: Pixel): number | null {
     if (this.handle === "uniform") {
-      const d = Math.hypot(pixel.x - this.centre.x, pixel.y - this.centre.y)
-      return clampRatio(1 + (d - this.start) / this.reference)
+      const along = (pixel.x - this.centre.x - (pixel.y - this.centre.y)) * Math.SQRT1_2
+      return clampRatio(1 + along / this.reference)
     }
     const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
     const hit = ray ? closestOnLine(ray, this.origin, this.direction) : null

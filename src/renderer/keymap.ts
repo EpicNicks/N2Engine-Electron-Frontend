@@ -24,6 +24,7 @@
 // Users can rebind actions: overrides ({ actionId: [chords] }) replace an action's default chords (an empty list
 // unbinds it), are validated, checked for conflicts (the same chord on two actions of the same scope) and kept in the
 // user-scope pref "keymap.overrides". There is no UI for it yet.
+import { signal } from "@preact/signals-core"
 import { PrefDef, PrefScopeView, definePref, isRecord, v } from "./prefs"
 import { isTextEntry } from "./edit-actions"
 
@@ -247,6 +248,8 @@ export class Keymap {
   private readonly defs = new Map<string, ActionDef>()
   private readonly parsedDefaults = new Map<string, Chord[]>()
   private overrides = new Map<string, Chord[]>()
+  /** Counts the changes to the chords; a reader of formatted() depends on it */
+  readonly revision = signal(0)
   private overrideTexts: Record<string, string[]> = {}
   private readonly handlers = new Map<string, Registration[]>()
   private detach: (() => void) | null = null
@@ -290,6 +293,7 @@ export class Keymap {
 
   /** The chords as shown for an action ("Ctrl+Z") */
   formatted(id: string): string[] {
+    void this.revision.value
     return this.chordsOf(id).map((chord) => formatChord(chord, this.mac))
   }
 
@@ -365,6 +369,7 @@ export class Keymap {
       texts[id] = kept
     }
     this.overrides = parsed
+    this.revision.value++
     this.overrideTexts = texts
   }
 
@@ -397,6 +402,7 @@ export class Keymap {
       }
     }
     this.overrides.set(id, parsed)
+    this.revision.value++
     this.overrideTexts[id] = [...chords]
     this.persist()
     return { ok: true, problems: [], conflicts: [] }
@@ -406,12 +412,14 @@ export class Keymap {
   reset(id: string): void {
     if (!this.overrides.has(id)) return
     this.overrides.delete(id)
+    this.revision.value++
     delete this.overrideTexts[id]
     this.persist()
   }
 
   resetAll(): void {
     this.overrides = new Map()
+    this.revision.value++
     this.overrideTexts = {}
     this.persist()
   }

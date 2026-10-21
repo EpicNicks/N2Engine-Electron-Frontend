@@ -225,18 +225,16 @@ describe("the ratio of a drag", () => {
     assert.equal(drag.ratioAt({ x: -90000, y: 90000 }), null)
   })
 
-  test("the centre handle's ratio is the pointer's distance from the pivot on screen over where it began, over at least half the gizmo's size", () => {
+  test("the centre handle's ratio is signed: up and right grows, down and left shrinks, over half the gizmo's size", () => {
     const c = layout.origin
     const drag = ScaleDrag.begin("uniform", layout, origin, front.viewProjection, { x: c.x + 5, y: c.y }, W, H)!
     near(drag.ratioAt({ x: c.x + 5, y: c.y })!, 1, 1e-9, "start")
-    // A grab 5 px away is measured over 48 px (half the gizmo's size): 48 px further doubles it
-    near(drag.ratioAt({ x: c.x + 53, y: c.y })!, 2, 1e-9)
-    near(drag.ratioAt({ x: c.x, y: c.y - 53 })!, 2, 1e-9, "any direction")
-    near(drag.ratioAt(c)!, 1 - 5 / 48, 1e-9)
-    // A grab farther out is measured over where it began
-    const far = ScaleDrag.begin("uniform", layout, origin, front.viewProjection, { x: c.x + 100, y: c.y }, W, H)!
-    near(far.ratioAt({ x: c.x + 200, y: c.y })!, 2, 1e-9)
-    near(far.ratioAt({ x: c.x, y: c.y })!, MinScaleRatio, 1e-12, "clamped")
+    const d = 48 * Math.SQRT1_2
+    near(drag.ratioAt({ x: c.x + 5 + d, y: c.y - d })!, 2, 1e-9, "up-right by 48 px")
+    near(drag.ratioAt({ x: c.x + 5 - d, y: c.y + d })!, 0, 1e-9 + MinScaleRatio, "down-left by 48 px reaches the clamp")
+    near(drag.ratioAt({ x: c.x + 5 - d / 2, y: c.y + d / 2 })!, 0.5, 1e-9, "half way")
+    near(drag.ratioAt({ x: c.x - 500, y: c.y + 500 })!, MinScaleRatio, 1e-12, "clamped")
+    near(drag.ratioAt({ x: c.x + 5 + 1e6, y: c.y - 1e6 })!, 1000, 1e-9, "clamped above")
   })
 
   test("snapping rounds the ratio to the step and never to zero", () => {
