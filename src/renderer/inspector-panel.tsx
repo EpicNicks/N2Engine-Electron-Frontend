@@ -501,8 +501,42 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
   )
 }
 
-function MultiComponentCard({ component }: { component: MultiComponent }) {
+/** Add Component for several objects: the type is added to every one of them, as one undo step */
+function MultiAddComponent() {
   const { inspector } = useApp()
+  const run = useMultiRun()
+  const types = inspector.types.value
+  // A singleton type any of them has can't be added to all
+  const present = inspector.multi.presentTypes.value
+  const search = (query: string): PickerEntry[] =>
+    groupComponentTypes(types ?? [], query, present).flatMap((group) => [
+      { key: "", label: group.name, header: true },
+      ...group.items.map((item) => ({ key: item.typeName, label: item.label, disabled: item.disabledReason })),
+    ])
+  return (
+    <div class="add-component">
+      <PickerButton
+        class="add-component-button"
+        label="Add Component"
+        disabled={inspector.readOnly.value}
+        title={inspector.readOnly.value ? (inspector.readOnlyReason.value ?? "") : "Adds it to every selected object"}
+        onOpen={() => void inspector.loadTypes()}
+        entries={null}
+        search={search}
+        placeholder="Search components"
+        emptyText={
+          types === null
+            ? (inspector.typesProblem.value ?? "Reading the component types...")
+            : "No component types match"
+        }
+        onPick={(typeName) => run(`Failed to add ${typeName}`, () => inspector.multi.addComponent(typeName))}
+      />
+    </div>
+  )
+}
+
+function MultiComponentCard({ component }: { component: MultiComponent }) {
+  const { store, inspector } = useApp()
   const run = useMultiRun()
   const schema = inspector.multi.schemaFor(component)
   const disabled = inspector.readOnly.value
@@ -526,6 +560,19 @@ function MultiComponentCard({ component }: { component: MultiComponent }) {
         <span class="component-title" title={component.type}>
           {displayTypeName(component.type)}
         </span>
+        <button
+          class="secondary component-remove"
+          title={`Remove ${component.type} from all ${component.entries.length} objects`}
+          aria-label={`Remove ${component.type}`}
+          disabled={disabled}
+          onClick={() =>
+            inspector.multi
+              .removeComponent(component)
+              .catch((e) => store.reportError("Failed to remove the components", e))
+          }
+        >
+          ×
+        </button>
       </div>
       <div class="component-body">
         {shown === null ? (
@@ -640,6 +687,7 @@ function MultiInspector() {
         {view.components.map((component) => (
           <MultiComponentCard component={component} key={component.type + "/" + component.entries[0].componentId} />
         ))}
+        <MultiAddComponent />
       </div>
       {multi.editProblem.value && <div class="field-error multi-error">{multi.editProblem.value}</div>}
     </>
