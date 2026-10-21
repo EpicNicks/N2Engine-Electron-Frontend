@@ -6,14 +6,20 @@
 // The write tools are registered but listed only while the host's access allows them (viewer, read-only host and the
 // operator's flags hide them), and an irreversible operation runs only with the operator's --allow-irreversible or the
 // person's answer to an elicitation (callTool): no argument of the model is consent.
-import type { CallToolResult, ClientCapabilities, InputRequiredResult, RegisteredTool, ServerContext } from "@modelcontextprotocol/server"
+// MCP3 adds the play tools (listed like the write tools, and only when the bridge launched its own host), the resources
+// with their subscriptions (resources.ts) and the prompts (prompts.ts); serveBridge wires one stdio connection.
+import type { CallToolResult, ClientCapabilities, InputRequiredResult, RegisteredTool, ServerContext, Transport } from "@modelcontextprotocol/server"
 import { CLIENT_CAPABILITIES_META_KEY, McpServer, inputRequired, inputResponse } from "@modelcontextprotocol/server"
+import { StdioServerTransport, serveStdio } from "@modelcontextprotocol/server/stdio"
 import type { Bridge } from "./bridge"
 import { BridgeError, errorText, mapError } from "./errors"
-import { MaxResultBytes, RateLimitPerMinute } from "./limits"
+import { MaxListenSubscriptions, MaxResultBytes, RateLimitPerMinute } from "./limits"
 import { DefaultPolicy, toolListedByPolicy, writesAllowed, type HostAccess, type Policy } from "./policy"
 import { envelopeText } from "./scrub"
-import { DataNotice, ReadTools, type ToolDef, type ToolOutput } from "./tools"
+import { PlayTools } from "./play"
+import { registerPrompts } from "./prompts"
+import { ResourceWatch, registerResources } from "./resources"
+import { DataNotice, ReadTools, type CallHooks, type ToolDef, type ToolOutput } from "./tools"
 import { WriteTools } from "./tools-write"
 import { BridgeName, BridgeVersion } from "./version"
 import { assertWritable, sha256 } from "./write-core"
@@ -22,16 +28,23 @@ import { assertWritable, sha256 } from "./write-core"
 const WriteInstructions =
   " Write tools (listed only when the host lets this token change the project): every edit call is ONE undo step named AI: <tool> #<n> that the person can undo, and n2_apply_batch applies many edits all-or-nothing. Make changes only for what the person asked. Irreversible operations (saving, opening or creating a scene over unsaved changes, project settings, overwriting a file, restoring files in a revert) ask the person for confirmation or are refused: there is no argument that overrides this, so do not retry a refusal. Use n2_begin_session for a journal of your changes and n2_session_summary to report them. Never save unless asked."
 
+/** What the instructions say about the play tools (the --launch backend, when the operator's flags leave some listed) */
+const PlayInstructions =
+  " Play tools (listed with the write tools when the bridge launched its own host): n2_play_start runs a copy of the open scene as a game in a host of the bridge's own (the project is not changed by it); n2_play_control pauses, resumes and steps it, n2_play_input sends keys and mouse input, n2_play_observe reads its state, log, entities and a picture, n2_play_script runs a whole playtest in one call, and n2_play_stop ends it."
+
 /** The server-level instructions: what this is, and the one rule about what it returns */
-export function serverInstructions(policy: Policy): string {
+export function serverInstructions(policy: Policy, play: boolean = false): string {
   const writes = WriteTools.some((t) => toolListedByPolicy(policy, t.name, true))
+  const playing = play && PlayTools.some((t) => toolListedByPolicy(policy, t.name, true))
   return (
     "N2Engine editor bridge: inspect the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots of an N2Engine project" +
     (writes ? ", and change the scene and its text assets" : " (read-only tools)") +
     ". Start with n2_status. " +
     DataNotice +
     " Results are paged and size-limited: when a result has nextCursor, pass it as cursor to continue. Errors carry a stable code and advice." +
-    (writes ? WriteInstructions : "")
+    (writes ? WriteInstructions : "") +
+    (playing ? PlayInstructions : "") +
+    " The same reads are resources (n2://scene, n2://scene/hierarchy, n2://entity/{uuid}, n2://console...) that a client can subscribe to."
   )
 }
 
@@ -46,6 +59,8 @@ export interface ServerOptions {
    * asks the host on the first tools/list (design 3.1) and lists the write tools only for an editor on a host that is not read-only.
    */
   assumeAccess?: HostAccess
+  /** The connection's resource watch (serveBridge makes one); without it the resources can be read but not subscribed to */
+  watch?: ResourceWatch
 }
 
 /** What a tool call knows about the client and its answers to this call's confirmation questions */
@@ -56,6 +71,8 @@ export interface CallEnv {
   retry: boolean
   /** The person's answer to the question with this key: accept, decline or cancel; missing when there is none */
   answer(key: string): "accept" | "decline" | "cancel" | "missing"
+  /** The call's cancellation and progress (long play tools use them) */
+  hooks?: CallHooks
 }
 
 /** A call that needs the person's confirmation first: the question to ask, keyed by what it is about */
@@ -73,8 +90,11 @@ function errorResult(error: BridgeError, bridge: Bridge): CallToolResult {
   }
 }
 
-/** The tool result for an output; an error result when it is too big or would carry a secret */
-export function successResult(out: ToolOutput, bridge: Bridge): CallToolResult {
+/**
+ * The structured content and the text block of an output, as every tool result and resource read has them; a BridgeError
+ * when the text is too big or would carry a secret
+ */
+export function renderOutput(out: ToolOutput, bridge: Bridge): { structured: Record<string, unknown>; text: string } | BridgeError {
   const structured = JSON.parse(
     JSON.stringify({
       source: out.source,
@@ -91,17 +111,21 @@ export function successResult(out: ToolOutput, bridge: Bridge): CallToolResult {
   if (bridge.scrubber.hasSecret(text)) {
     // Never expected: every string passed the scrubber. Refuse rather than leak.
     bridge.log("a result held a registered secret and was withheld")
-    return errorResult(new BridgeError("internal", "The result was withheld by the bridge.", "Try again once; if it repeats, report it to the operator."), bridge)
+    return new BridgeError("internal", "The result was withheld by the bridge.", "Try again once; if it repeats, report it to the operator.")
   }
   if (Buffer.byteLength(text) > MaxResultBytes) {
-    return errorResult(
-      new BridgeError("result_too_large", "The result is larger than the bridge's limit.", "Ask for less: a smaller limit, a rootId, a folder or a range."),
-      bridge
-    )
+    return new BridgeError("result_too_large", "The result is larger than the bridge's limit.", "Ask for less: a smaller limit, a rootId, a folder or a range.")
   }
-  const content: CallToolResult["content"] = [{ type: "text", text }]
-  if (out.image) content.push({ type: "image", data: out.image.base64, mimeType: out.image.mimeType })
-  return { content, structuredContent: structured }
+  return { structured, text }
+}
+
+/** The tool result for an output; an error result when it is too big or would carry a secret */
+export function successResult(out: ToolOutput, bridge: Bridge): CallToolResult {
+  const rendered = renderOutput(out, bridge)
+  if (rendered instanceof BridgeError) return errorResult(rendered, bridge)
+  const content: CallToolResult["content"] = [{ type: "text", text: rendered.text }]
+  for (const image of [...(out.image ? [out.image] : []), ...(out.images ?? [])]) content.push({ type: "image", data: image.base64, mimeType: image.mimeType })
+  return { content, structuredContent: rendered.structured }
 }
 
 /** The key of a confirmation question: it names the exact operation, so an answer to one question never allows another */
@@ -156,7 +180,10 @@ export async function callTool(bridge: Bridge, def: ToolDef, args: unknown, opti
           }
         }
       }
-      return def.handler(context, args as never)
+      // The handler stops when the client cancels or when the bridge gives up on the call (its timeout)
+      const hooks = env?.hooks ?? {}
+      const signal = hooks.signal ? AbortSignal.any([hooks.signal, context.signal]) : context.signal
+      return def.handler(context, args as never, { ...hooks, signal })
     }, def.name)
     if (isAsk(out)) return out
     return successResult(out, bridge)
@@ -180,7 +207,18 @@ function clientCanElicit(server: McpServer, ctx: ServerContext): boolean {
 
 function callEnv(server: McpServer, ctx: ServerContext): CallEnv {
   const responses = ctx.mcpReq.inputResponses
+  const token = ctx.mcpReq._meta?.progressToken
   return {
+    hooks: {
+      signal: ctx.mcpReq.signal,
+      // Only for a client that asked (a progressToken): numbers and a short fixed message, never project text
+      progress:
+        token === undefined
+          ? undefined
+          : (done, total, message) => {
+              void ctx.mcpReq.notify({ method: "notifications/progress", params: { progressToken: token, progress: done, total, message } }).catch(() => undefined)
+            },
+    },
     canElicit: clientCanElicit(server, ctx),
     retry: responses !== undefined && Object.keys(responses).length > 0,
     answer(key) {
@@ -216,15 +254,17 @@ export function createServer(bridge: Bridge, options: ServerOptions = {}): McpSe
     { name: BridgeName, version: BridgeVersion },
     // No `capabilities.tools` here: with it the SDK registers its tool handlers at once, before the wrapper below is in place
     // (registerTool then declares tools with listChanged, which the write tools' appearance needs)
-    { instructions: serverInstructions(bridge.policy) }
+    { instructions: serverInstructions(bridge.policy, bridge.play !== null) }
   )
-  if (options.assumeAccess === undefined && WriteTools.some((t) => toolListedByPolicy(bridge.policy, t.name, true))) {
+  // The tools listed only for a token that may change the project: the write tools, and the play tools of a --launch bridge
+  const gated: readonly ToolDef[] = bridge.play !== null ? [...WriteTools, ...PlayTools] : WriteTools
+  if (options.assumeAccess === undefined && gated.some((t) => toolListedByPolicy(bridge.policy, t.name, true))) {
     // tools/list (and a tools/call that comes first) asks the host once who this token is (when no connection has yet), so
     // the first list is already right.
     // A host that can't be reached lists the read tools only; the list is sent again when a connection opens.
     const inner = server.server as unknown as { setRequestHandler(method: string, handler: (...a: unknown[]) => unknown): void }
     const original = inner.setRequestHandler.bind(inner)
-    const writeNames = new Set(WriteTools.map((t) => t.name))
+    const writeNames = new Set(gated.map((t) => t.name))
     inner.setRequestHandler = (method, handler) =>
       original(
         method,
@@ -271,7 +311,7 @@ export function createServer(bridge: Bridge, options: ServerOptions = {}): McpSe
   }
   // The write tools are registered, and listed only while the host's access allows them (design 3.1)
   const writes = new Map<string, RegisteredTool>()
-  for (const def of WriteTools) {
+  for (const def of gated) {
     if (!toolListedByPolicy(bridge.policy, def.name, true)) continue
     const registered = register(def)
     registered.disable()
@@ -296,5 +336,43 @@ export function createServer(bridge: Bridge, options: ServerOptions = {}): McpSe
       }
     }
   }
+  // Resources (with subscriptions through the connection's watch) and prompts (design 3.6, 3.7)
+  const watch = options.watch ?? new ResourceWatch(bridge)
+  const removeSink = registerResources(server, bridge, watch)
+  registerPrompts(server, { play: bridge.play !== null && PlayTools.some((t) => toolListedByPolicy(bridge.policy, t.name, true)) })
+  const beforeClose = server.server.onclose
+  server.server.onclose = () => {
+    removeSink()
+    if (options.watch === undefined) watch.dispose()
+    beforeClose?.()
+  }
   return server
+}
+
+export interface ServeOptions {
+  /** The transport (tests); default: this process's stdin and stdout */
+  transport?: Transport
+  onerror?: (error: Error) => void
+  /** The resource watch's poll and debounce timings (tests) */
+  watch?: ConstructorParameters<typeof ResourceWatch>[1]
+}
+
+/**
+ * Serves the bridge on one stdio connection: the SDK's serveStdio (both protocol eras), a server per instance it asks for,
+ * and one resource watch for the connection, which sees the SDK's subscriptions/listen streams through a transport tap.
+ */
+export function serveBridge(bridge: Bridge, options: ServeOptions = {}): { close(): Promise<void>; watch: ResourceWatch } {
+  const watch = new ResourceWatch(bridge, options.watch)
+  const handle = serveStdio(() => createServer(bridge, { watch }), {
+    transport: watch.tap(options.transport ?? new StdioServerTransport()),
+    onerror: options.onerror,
+    maxSubscriptions: MaxListenSubscriptions,
+  })
+  return {
+    watch,
+    async close() {
+      watch.dispose()
+      await handle.close()
+    },
+  }
 }

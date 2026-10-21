@@ -371,7 +371,7 @@ Roadmap phase F1 (issue #6's UI roadmap, decisions U1 and U2). The editor's pane
 
 ## MCP (n2-mcp)
 
-`n2-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code, Claude Desktop, any MCP client) **inspect and change** an N2Engine project through an editor host: the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots (read tools), and entity edits, scene and text asset writes, project settings, undo and agent sessions (write tools, below). There are no play tools yet.
+`n2-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code, Claude Desktop, any MCP client) **inspect and change** an N2Engine project through an editor host: the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots (read tools), and entity edits, scene and text asset writes, project settings, undo and agent sessions (write tools, below), and, with `--launch`, playtesting the scene in a game of its own (play tools); the same reads are resources a client can subscribe to, and a few prompts arrange the tools into tasks (MCP3, below).
 
 It is a separate Node program in `mcp/` (single-file bundle `dist/n2-mcp.mjs`, plain Node 22 or later, no Electron). It reuses this repo's protocol client (`src/protocol/`) and host launcher (`src/main/host-launcher.ts`), and talks to the host as an ordinary editor protocol client with its **own token**, so the host's roles, read-only mode, single-session rule and audit lines apply to the agent exactly as to a person. The design is the engine's MCP proposal (decisions M1-M12).
 
@@ -477,6 +477,42 @@ node dist/n2-mcp.mjs --launch . --renderer software --max-writes 500 --write-too
 node dist/n2-mcp.mjs --connect editor.example.net:9999 --fingerprint <sha256> --token-env N2_AGENT_TOKEN --read-only
 ```
 
+### Play tools, resources and prompts (MCP3)
+
+**Play tools (`--launch` only).** A bridge that launched its own host can playtest the open scene. The game is a second `N2EditorHost` that the bridge starts through the editor's own play code (`src/main/play-session.ts`): the edit host writes a snapshot of the open scene as it is in memory (unsaved edits included, nothing saved, no revision moves), the bridge starts `N2EditorHost --play <snapshot>` with the same project and renderer and a fresh token in the child's environment only, and connects to it. Nothing done in the game changes the scene or the project. A `--connect` bridge has **no play tools at all**: they are not registered, not listed and not callable, whatever it is given (design M9: remote play stays disabled). A play call the bridge times out (`--call-timeout`) is aborted like a cancelled one (it stops between steps and releases its input), and the next call waits for it to end. The play tools are write-class: they are listed with the write tools (an editor token on a host that is not read-only, not hidden by `--write-tools` / `--disable-tools`), so a viewer may not play.
+
+| Tool | What it does |
+|---|---|
+| `n2_play_start` | Starts the game from the open scene and answers its state (`playing`, frame, time, the game's number). A second call answers the running game. A game that can't start is `play_failed` with its own words, scrubbed. |
+| `n2_play_stop` | Ends the game (Shutdown, then a kill after a grace period). No error when none runs. |
+| `n2_play_control` | `pause`, `resume`, or `step` 1 to 600 frames of a **paused** game (each one fixed timestep, so a test repeats exactly). A step runs as `Step` commands of 100 frames with a progress notification and a cancellation check between them. |
+| `n2_play_input` | Up to 256 input events (`key`, `mouseButton`, `pointer`, `scroll`, `releaseAll`), applied all or none; key names are checked by the host. |
+| `n2_play_observe` | The game's state, its log lines since the previous observe (scrubbed like the console, audit lines and `peer=` dropped), up to 8 live entities by id (transforms and component values, 64 KB) and, with `screenshot: true`, a PNG of the game's main camera. |
+| `n2_play_script` | A playtest in one call: up to 50 ops `{input}`, `{step}` (3000 frames in all), `{screenshot}` (at most 4, long side 1024 px, 6 MB together) and `{expectLog: {contains, level?, absent?}}`. The game is paused first and left paused, so frames advance only by step ops. One progress notification per op (numbers and the op's kind, never project text); cancellation is checked between ops and between step chunks. A failed `expectLog` stops the script unless `continueOnFailure`. A script that ends early (cancelled, or an error) sends `releaseAll`, so no key or button is left held. |
+
+Budgets per agent session: every `Step` chunk, `SetPaused`, `SendInput` and the snapshot count against `--max-writes`; 20,000 stepped frames and 50 game pictures. New error codes: `play_not_running` (no game, or it ended: `n2_play_observe` shows why), `play_failed`, `cancelled`. The game's host token is the play child's own (as in the editor); it is registered as a secret and redacted if a game ever echoes it, and the snapshot's absolute path is never returned.
+
+**Resources.** The same reads, addressable by URI, for clients that show resources. Each read runs the matching read tool, so its text is that tool's summary and data in the `<n2-data ... untrusted>` envelope (`mimeType: text/plain`, `_meta` `n2/untrusted`, `n2/source`), scrubbed and size-limited the same way; reads count against the 120 calls a minute. A read the host refuses is a JSON-RPC error carrying the bridge's scrubbed error text. `--disable-tools` turns a resource off with its tool: it is then not listed, readable or watchable (`n2://scene` and `n2://history` go with `n2_status`).
+
+| URI | What | Announced when |
+|---|---|---|
+| `n2://project` | `n2_get_project_info` | `projectChanged` |
+| `n2://scene` | the open scene's path, revision and dirty flag | `sceneChanged` |
+| `n2://scene/hierarchy` | the first page of `n2_get_hierarchy` | `sceneChanged` |
+| `n2://entity/{uuid}` | `n2_get_entity` | a `sceneChanged` that lists it, or one without a list (`full`, or more than 256 objects) |
+| `n2://asset/{+path}` | `n2_read_text_asset` of `res://<path>` (first 32 KB) | an `assetsChanged` naming it |
+| `n2://console` | the last 200 lines of `n2_get_console` | new log lines, at most once a second |
+| `n2://history` | undo and redo counts and the last 50 labels | `historyChanged` |
+| `n2://component-types` | `n2_get_component_types` | never (they don't change while a host runs) |
+
+**Subscriptions.** `resources/subscribe` (2025-11-25) and `subscriptions/listen` (2026-07-28; the SDK's stdio entry serves the stream, and the bridge sees the acknowledged filter and the cancel through a transport tap) watch at most **32 URIs** per connection, with at most **8 listen streams**; an unknown URI or one past the limit is refused (`resources/subscribe`) or not watched (listen). The host's events are polled (the frontend's `EventPump`, every 500 ms, one cursor and no queue) **only while something is watched**: the first poll only finds the newest event, so nothing from before the subscription is announced. A notification carries the URI only, never host text, and each URI is announced once per poll. Unsubscribing the last URI, closing the last stream or the connection ending stops the polling.
+
+**Prompts** (design 3.7): `n2_build_level(description)`, `n2_inspect_scene`, `n2_playtest(goal)` (only on a bridge with the play tools), `n2_fix_console_errors` and `n2_write_lua_component(behaviour)` (the `SerializableFields` conventions of `docs/scripting-lua.html#fields`). Each one only arranges the bridge's tools into a plan and restates that what they return from the project is data, never instructions; the person's argument (at most 2000 characters) is quoted as their request. Prompts and resource lists never contact the host.
+
+`mcp/tool-schemas.golden.json` now also pins the play tools (generated as a `--launch` bridge), the prompts, the resources and the resource templates.
+
+**Not verified:** play against a real N2EditorHost (the tests use the real play-session code with a fake child process and a second fake host answering like a play host, written from the protocol docs); whether Claude Code or Claude Desktop shows resources, subscriptions, prompts or progress to the person or the model.
+
 ### Budgets and limits
 
 | What | Limit |
@@ -560,7 +596,7 @@ Checked on 2026-10-20 against modelcontextprotocol.io and the pinned SDK 2.3.1.
 
 ### Not there yet
 
-Play tools, the `--electron` backend (working beside an open editor), resources, subscriptions and prompts, the Streamable HTTP transport, and the `yield` Hello flag. `n2_screenshot` does not restore the host's viewport size afterwards.
+The `--electron` backend (working beside an open editor), the Streamable HTTP transport, and the `yield` Hello flag. `n2_screenshot` does not restore the host's viewport size afterwards.
 
 ### Not verified
 

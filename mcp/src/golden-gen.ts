@@ -1,5 +1,7 @@
 // Prints the tool schemas as a client sees them (tools/list over an in-memory connection), for
 // mcp/tool-schemas.golden.json. Used by scripts/gen-mcp-golden.js and by the golden test, so there is one way to make it.
+// The bridge is a --launch one with an editor token, so every tool is listed (the play tools too), and the file also pins
+// the prompts, the resources and the resource templates.
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
 import { Bridge } from "./bridge"
 import { ErrorCodes } from "./errors"
@@ -22,13 +24,14 @@ function sortKeys(value: unknown): unknown {
 }
 
 const neverConnects: HostConnector = {
-  kind: "golden",
+  kind: "launch",
   connect: () => Promise.reject(new Error("the golden generator never connects")),
   dispose: () => undefined,
 }
 
 export async function currentToolSchemas(): Promise<unknown> {
-  const bridge = new Bridge({ connector: neverConnects, scrubber: new Scrubber() })
+  // The play options are never used: nothing is started while listing
+  const bridge = new Bridge({ connector: neverConnects, scrubber: new Scrubber(), play: { hostPath: "N2EditorHost", projectPath: "project" } })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   // The write tools are listed as for an editor on a host that is not read-only (the host is never asked here)
   const server = createServer(bridge, { assumeAccess: { role: "editor", readOnly: false } })
@@ -36,6 +39,9 @@ export async function currentToolSchemas(): Promise<unknown> {
   const client = new Client({ name: "golden", version: "0" })
   await client.connect(clientSide)
   const listed = await client.listTools()
+  const prompts = await client.listPrompts()
+  const resources = await client.listResources()
+  const templates = await client.listResourceTemplates()
   await client.close()
   await server.close()
   const tools = listed.tools.map((t) => ({
@@ -51,6 +57,9 @@ export async function currentToolSchemas(): Promise<unknown> {
     specRevisions: [...SupportedSpecRevisions],
     errorCodes: [...ErrorCodes],
     tools,
+    prompts: prompts.prompts.map((p) => ({ name: p.name, title: p.title, description: p.description, arguments: p.arguments })),
+    resources: resources.resources.map((r) => ({ uri: r.uri, name: r.name, title: r.title, description: r.description, mimeType: r.mimeType })),
+    resourceTemplates: templates.resourceTemplates.map((r) => ({ uriTemplate: r.uriTemplate, name: r.name, title: r.title, description: r.description, mimeType: r.mimeType })),
   })
 }
 
