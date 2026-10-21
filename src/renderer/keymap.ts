@@ -58,7 +58,7 @@ export interface ActionDef {
 }
 
 // The actions that exist today. Names the roadmap reserves for later, to be added when they exist, not before:
-// gizmo.toggleSpace (X), gizmo.togglePivot (Z) (FE4); camera bookmarks (Ctrl+Shift+1..9, Shift+1..9).
+// camera bookmarks (Ctrl+Shift+1..9, Shift+1..9).
 export const DefaultActions: readonly ActionDef[] = [
   { id: "file.save", title: "Save the scene", scope: "global", chords: ["Mod+S"], allowInText: true },
   { id: "edit.undo", title: "Undo", scope: "global", chords: ["Mod+Z"] },
@@ -79,6 +79,8 @@ export const DefaultActions: readonly ActionDef[] = [
   { id: "gizmo.rotate", title: "Rotate tool", scope: "viewport", chords: ["KeyE"] },
   { id: "gizmo.scale", title: "Scale tool", scope: "viewport", chords: ["KeyR"] },
   { id: "gizmo.none", title: "Select only (no gizmo)", scope: "viewport", chords: ["KeyQ"] },
+  { id: "gizmo.space", title: "Toggle world and local space", scope: "viewport", chords: ["KeyX"] },
+  { id: "gizmo.pivot", title: "Toggle pivot and center", scope: "viewport", chords: ["KeyZ"] },
   { id: "assets.applySettings", title: "Apply the import settings", scope: "assets", chords: ["Mod+S"], allowInText: true },
   { id: "text.save", title: "Save the text file", scope: "text", chords: ["Mod+S"], allowInText: true },
 ]

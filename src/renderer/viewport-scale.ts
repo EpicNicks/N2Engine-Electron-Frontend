@@ -19,8 +19,8 @@ import {
   MinHandlePixels,
   gizmoFrame,
   localPositionAfterMove,
-  snapTo,
 } from "./viewport-gizmo"
+import { snapScaleRatio } from "./viewport-snap"
 import {
   Pixel,
   add,
@@ -184,7 +184,7 @@ export class ScaleDrag {
 
 /** The ratio snapped (Ctrl): a multiple of the step, and never below one step (zero is not a scale to snap to) */
 export function snapRatio(ratio: number, step: number = ScaleSnapStep): number {
-  return Math.max(snapTo(ratio, step), step)
+  return snapScaleRatio(ratio, step)
 }
 
 /**
@@ -228,7 +228,9 @@ export class ScaleGizmoDrag extends TransformDrag {
     private readonly source: ScaleDrag,
     /** The point the centre handle scales the objects' offsets about: the primary's world position when the drag began */
     private readonly pivot: Vec3,
-    private readonly snap: boolean = false
+    private readonly snap: boolean = false,
+    /** What Ctrl or the toolbar's toggle rounds the ratio to */
+    private readonly snapStep: number = ScaleSnapStep
   ) {
     super(deps, target, { step: "Scale", failed: "Failed to scale the object" })
   }
@@ -243,7 +245,7 @@ export class ScaleGizmoDrag extends TransformDrag {
     if (this.isFinished) return null
     let ratio = this.source.ratioAt(pixel)
     if (ratio === null) return null
-    if (snap) ratio = snapRatio(ratio)
+    if (snap) ratio = snapRatio(ratio, this.snapStep)
     const handle = this.source.handle
     if (!this.submit(this.targets.map((t, index) => scaledTransform(t, index, this.pivot, handle, ratio!)))) return null
     this.ratio = ratio

@@ -1,5 +1,6 @@
 // The viewport's logic apart from the DOM: the editor camera (and how its pose reaches the host), the selected object
-// as the gizmo sees it, the gizmo's mode (translate, rotate, scale, none) and its drags, frame selected and click to select. The panel (viewport-panel.tsx) only
+// as the gizmo sees it, the gizmo's mode (translate, rotate, scale, none), space (world or local), pivot (pivot or
+// center) and snap settings, its drags, frame selected and click to select. The panel (viewport-panel.tsx) only
 // turns events into calls on it and draws what it says. It works in FRAME pixels (the engine's viewport size, top-left
 // origin), which the panel converts from the page's pointer positions. No DOM: it is given the engine API or a fake,
 // so it is unit tested in Node.
@@ -18,6 +19,7 @@ import { insideFrame } from "./viewport-size"
 import { remapToHostViewport, translateBounds, unionBounds } from "./viewport-picking"
 import {
   AxisDrag,
+  AxisFrame,
   DragSource,
   HandleId,
   PlaneDrag,
@@ -44,6 +46,8 @@ import { IdentityMat4, Pixel, add, mat4Multiply, mat4Translation, projectionMatr
 import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
 import { selectionKeyOf } from "./viewport-selection"
+import { SnapSettings, SnapTool, defaultSnapSettings, snapActive, stepRadians } from "./viewport-snap"
+import { GizmoPivot, GizmoSpace, gizmoAxes, otherPivot, otherSpace, pivotPosition } from "./viewport-tool-settings"
 
 /** The host's picking and bounds (PickEntity and GetEntityBounds, protocol 1.8.0) */
 export interface PickBackend {
@@ -93,6 +97,11 @@ export const GizmoModeTitles: Readonly<Record<GizmoMode, string>> = {
   rotate: "Rotate",
   scale: "Scale",
   none: "Select",
+}
+
+/** The tools that have a snap setting (the select-only tool has none) */
+export function snapToolOf(mode: GizmoMode): SnapTool | null {
+  return mode === "none" ? null : mode
 }
 
 /** A handle of any of the gizmos: a translate axis or plane, a rotate ring (its axis), a scale axis or the uniform centre */
@@ -158,6 +167,12 @@ export class ViewportController {
   readonly target = signal<GizmoTarget | null>(null)
   /** The tool the gizmo is (changed by setMode; the keymap's gizmo.* actions call it) */
   readonly mode = signal<GizmoMode>("translate")
+  /** World or local axes for the move and rotate handles (the scale handles are always the object's own) */
+  readonly space = signal<GizmoSpace>("world")
+  /** Whether the gizmo sits at the primary object's origin or at the centre of the selection's bounds */
+  readonly pivot = signal<GizmoPivot>("pivot")
+  /** The snap toggles, increments and kind (the toolbar's; Ctrl inverts the tool's toggle during a drag) */
+  readonly snap = signal<SnapSettings>(defaultSnapSettings())
   /** The handle under the pointer, or the one being dragged */
   readonly hoverHandle = signal<AnyHandle | null>(null)
   readonly dragging = signal(false)
@@ -169,6 +184,9 @@ export class ViewportController {
   private size: PixelSize | null = null
   private readonly cameraSender: LatestWinsSender<ReturnType<EditorCameraController["toRequest"]>>
   private drag: ActiveDrag | null = null
+  /** The pivot (world) the drag in progress began at, and whether its tool's snap toggle was on then */
+  private dragStart: Vec3 | null = null
+  private dragToggle = false
   /** The objects a drag of the gizmo moves, as the host last said (the topmost of the selection that have a transform) */
   private movers: GizmoTarget[] = []
   /** What the targets were read for (selectionKeyOf), and each one as last read: only changed ones are read again */
@@ -245,6 +263,46 @@ export class ViewportController {
     return true
   }
 
+  /** Changes the space (world or local). Not during a drag (false); true when the space is now `space`. */
+  setSpace(space: GizmoSpace): boolean {
+    if (this.drag) return false
+    if (space !== this.space.peek()) {
+      this.space.value = space
+      this.hoverHandle.value = null
+      this.redraw()
+    }
+    return true
+  }
+
+  /** Changes the pivot (pivot or center). Not during a drag (false); true when the pivot is now `pivot`. */
+  setPivot(pivot: GizmoPivot): boolean {
+    if (this.drag) return false
+    if (pivot !== this.pivot.peek()) {
+      this.pivot.value = pivot
+      this.hoverHandle.value = null
+      this.redraw()
+    }
+    return true
+  }
+
+  /** The other space (what the keymap's gizmo.space does); false during a drag */
+  toggleSpace(): boolean {
+    return this.setSpace(otherSpace(this.space.peek()))
+  }
+
+  /** The other pivot (what the keymap's gizmo.pivot does); false during a drag */
+  togglePivot(): boolean {
+    return this.setPivot(otherPivot(this.pivot.peek()))
+  }
+
+  /**
+   * Replaces the snap settings. A drag in progress keeps the ones it began with (a setting changed under the pointer
+   * would make the next update jump), so this is allowed at any time.
+   */
+  setSnap(snap: SnapSettings): void {
+    this.snap.value = snap
+  }
+
   /** The viewport's pixel size: the size of the frame on screen, which the host renders at (not the one last asked for) */
   setSize(size: PixelSize | null): boolean {
     const same = size?.width === this.size?.width && size?.height === this.size?.height && (size === null) === (this.size === null)
@@ -276,7 +334,7 @@ export class ViewportController {
       this.deps.onError("Failed to read the editor camera", e)
     }
     await this.loadTarget(this.deps.selected())
-    this.reloadBounds()
+    void this.reloadBounds()
     await this.verifyMatrices()
   }
 
@@ -479,12 +537,15 @@ export class ViewportController {
       this.movers = []
       this.moversKey = null
       this.read.clear()
+      if (!this.drag) this.dragOrigin = null
       this.redraw()
       return
     }
     const moveIds = this.moveIds(id)
     const key = selectionKeyOf(id, moveIds)
     const ids = [...new Set([id, ...moveIds])]
+    // Another selection: the point a last drag was held at is not its pivot
+    if (this.moversKey !== key && !this.drag) this.dragOrigin = null
     const partial = changed !== null && this.moversKey === key
     if (!partial) this.read.clear()
     const toRead = partial ? ids.filter((i) => changed.has(i) || !this.read.has(i)) : ids
@@ -508,13 +569,13 @@ export class ViewportController {
     if (this.drag) {
       if (replaced) {
         void this.finishDrag("abandon", true)
-        this.reloadBounds()
+        void this.reloadBounds()
       }
       return
     }
     // The boxes follow every change (also a "full" one, which a drag's own echo can be): an object's bounds include
     // what is under it, and a change names only what changed
-    this.reloadBounds()
+    void this.reloadBounds()
     if (id === null) return
     if (full) {
       void this.loadTarget(id)
@@ -529,14 +590,18 @@ export class ViewportController {
    * selection, a change of the scene, or a connection. One read is in flight at a time; asking meanwhile makes one
    * more read when it is done, and an answer that is out of date by then is not shown.
    */
-  reloadBounds(): void {
+  reloadBounds(): Promise<void> {
     if (this.boundsRunning) {
       this.boundsDirty = true
-      return
+      return this.boundsDone
     }
     this.boundsRunning = true
-    void this.runBounds()
+    this.boundsDone = this.runBounds()
+    return this.boundsDone
   }
+
+  /** Resolves when the read in flight (and the one it was asked for after) has been answered */
+  private boundsDone: Promise<void> = Promise.resolve()
 
   private async runBounds(): Promise<void> {
     try {
@@ -584,19 +649,36 @@ export class ViewportController {
     const target = this.target.value
     const m = this.matrices()
     if (this.mode.value !== mode || !target || !m || !this.size || (!this.drag && !this.deps.canEdit())) return null
-    return { target, m, size: this.size, origin: this.dragOrigin ?? mat4Translation(target.worldMatrix) }
+    return { target, m, size: this.size, origin: this.dragOrigin ?? this.pivotPoint(target) }
+  }
+
+  /**
+   * Where the pivot is in the world: the primary object's origin, or (pivot "center") the centre of the selected objects'
+   * bounds as the host last measured them (the primary's origin when it has none).
+   */
+  private pivotPoint(target: GizmoTarget): Vec3 {
+    if (this.pivot.value !== "center") return mat4Translation(target.worldMatrix)
+    const selected = new Set(this.selectedIds(this.deps.selected()))
+    const boxes: Bounds[] = []
+    for (const [id, box] of this.selectionBounds.value) if (selected.has(id)) boxes.push(box)
+    return pivotPosition("center", target.worldMatrix, boxes)
+  }
+
+  /** The axes the move and rotate handles run along: the world's, or the primary's own in local space (a drag keeps the ones it began with: the target is not read again until it ends) */
+  private handleAxes(target: GizmoTarget): AxisFrame {
+    return gizmoAxes(this.space.value, target.worldMatrix)
   }
 
   /** Where the translate gizmo is now; null unless the tool is Move, and with no selection, no viewport size or the object behind the camera */
   layout(): GizmoLayout | null {
     const g = this.gizmoSetup("translate")
-    return g ? gizmoLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio) : null
+    return g ? gizmoLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio, this.handleAxes(g.target)) : null
   }
 
   /** Where the rotate gizmo's rings are now; null unless the tool is Rotate (and as layout()) */
   rotateLayout(): RotateLayout | null {
     const g = this.gizmoSetup("rotate")
-    return g ? rotateLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio) : null
+    return g ? rotateLayout(g.m.view, g.m.viewProjection, g.origin, g.size.width, g.size.height, this.ratio, this.handleAxes(g.target)) : null
   }
 
   /** Where the scale gizmo's handles are now; null unless the tool is Scale (and as layout()). Its axes are the primary object's own. */
@@ -669,10 +751,11 @@ export class ViewportController {
   }
 
   /**
-   * The left button went down. True when a gizmo handle took it (a drag has begun: pointerMove and pointerUp follow);
-   * false when it is a plain press, which selects on release if it didn't move (see click).
+   * The left button went down, with Ctrl held or not (Ctrl inverts the tool's snap toggle for the drag). True when a
+   * gizmo handle took it (a drag has begun: pointerMove and pointerUp follow); false when it is a plain press, which
+   * selects on release if it didn't move (see click).
    */
-  pointerDown(pixel: Pixel, snap: boolean): boolean {
+  pointerDown(pixel: Pixel, ctrl: boolean): boolean {
     const target = this.target.value
     const m = this.matrices()
     const handle = this.handleAt(pixel)
@@ -682,10 +765,16 @@ export class ViewportController {
     // The objects the drag changes were read for another selection (a change of it is on its way): not this press
     const id = this.deps.selected()
     if (id === null || this.moversKey !== selectionKeyOf(id, this.moveIds(id))) return false
-    const origin = mat4Translation(target.worldMatrix)
-    const drag = this.beginDrag(handle, origin, m, pixel, snap)
+    // Just after a drag the gizmo is still where the drag put it: the boxes (and the target) are the host's old ones
+    // until their reads are answered, and the pivot must not jump back to them
+    const origin = this.dragOrigin ?? this.pivotPoint(target)
+    const tool = snapToolOf(this.mode.value)
+    const settings = this.snap.value
+    this.dragToggle = tool !== null && settings[tool].enabled
+    const drag = this.beginDrag(handle, origin, m, pixel, snapActive(this.dragToggle, ctrl), settings, this.handleAxes(target))
     if (!drag) return false
     this.drag = drag
+    this.dragStart = origin
     this.dragOrigin = origin
     this.dragging.value = true
     this.hoverHandle.value = handle
@@ -694,7 +783,15 @@ export class ViewportController {
   }
 
   /** The drag of the current tool on the handle; null when it can't begin (the pointer's ray can't be followed) */
-  private beginDrag(handle: AnyHandle, origin: Vec3, m: CameraMatrices, pixel: Pixel, snap: boolean): ActiveDrag | null {
+  private beginDrag(
+    handle: AnyHandle,
+    origin: Vec3,
+    m: CameraMatrices,
+    pixel: Pixel,
+    snap: boolean,
+    settings: SnapSettings,
+    axes: AxisFrame
+  ): ActiveDrag | null {
     const size = this.size!
     const { width, height } = size
     const farPlane = this.camera.farPlane
@@ -710,34 +807,36 @@ export class ViewportController {
         if (!layout || handle === "uniform") return null
         const maxStep = layout.worldLength * MaxStepHandleLengths
         const source: DragSource | null = isPlane(handle)
-          ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
-          : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep)
-        return source ? new GizmoDrag(deps, this.movers, source, snap) : null
+          ? PlaneDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep, axes)
+          : AxisDrag.begin(handle, origin, m.viewProjection, pixel, width, height, farPlane, maxStep, axes)
+        const { step, kind } = settings.translate
+        return source ? new GizmoDrag(deps, this.movers, source, snap, { step, absolute: kind === "absolute", origin }) : null
       }
       case "rotate": {
         const layout = this.rotateLayout()
         if (!layout || handle === "uniform" || isPlane(handle)) return null
         const source = RotateDrag.begin(handle, layout, origin, m.viewProjection, pixel, width, height, farPlane)
-        return source ? new RotateGizmoDrag(deps, this.movers, source, origin, snap) : null
+        return source ? new RotateGizmoDrag(deps, this.movers, source, origin, snap, stepRadians(settings)) : null
       }
       case "scale": {
         const layout = this.scaleLayout()
         if (!layout || (handle !== "uniform" && isPlane(handle))) return null
         const source = ScaleDrag.begin(handle, layout, origin, m.viewProjection, pixel, width, height, this.ratio, farPlane)
-        return source ? new ScaleGizmoDrag(deps, this.movers, source, origin, snap) : null
+        return source ? new ScaleGizmoDrag(deps, this.movers, source, origin, snap, settings.scale.step) : null
       }
       default:
         return null
     }
   }
 
-  pointerMove(pixel: Pixel, snap: boolean): void {
+  /** The pointer moved during a drag, with Ctrl held or not (it inverts the snap toggle the drag began with) */
+  pointerMove(pixel: Pixel, ctrl: boolean): void {
     const drag = this.drag
-    const target = this.target.value
-    if (!drag || !target) return
-    if (drag.update(pixel, snap) !== null) {
+    const start = this.dragStart
+    if (!drag || !start) return
+    if (drag.update(pixel, snapActive(this.dragToggle, ctrl)) !== null) {
       // The gizmo follows at once, on this side of the round trip
-      this.dragOrigin = add(mat4Translation(target.worldMatrix), drag.worldDelta)
+      this.dragOrigin = add(start, drag.worldDelta)
       this.redraw()
     }
   }
@@ -773,7 +872,8 @@ export class ViewportController {
   private finishDrag(how: "end" | "cancel" | "abandon", reload: boolean): Promise<void> {
     const drag = this.drag!
     this.drag = null
-    this.dragOrigin = null
+    if (!reload) this.dragOrigin = null
+    this.dragStart = null
     this.dragging.value = false
     const done = how === "end" ? drag.end() : how === "cancel" ? drag.cancel() : drag.abandon()
     this.ended = done.then(
@@ -781,11 +881,20 @@ export class ViewportController {
       () => undefined
     )
     // The host's reading of the object is the truth again
-    return done.then(() => {
+    return done.then(async () => {
       if (!reload) return undefined
-      // The objects moved: their boxes are the host's again too
-      this.reloadBounds()
-      return this.loadTarget(this.deps.selected())
+      // The objects moved: their boxes are the host's again too. The gizmo stays where the drag put it until they are
+      // (else it jumps back to the old centre, and a quick next press would turn about that stale point)
+      const target = this.loadTarget(this.deps.selected())
+      try {
+        await this.reloadBounds()
+      } finally {
+        if (!this.drag) {
+          this.dragOrigin = null
+          this.redraw()
+        }
+      }
+      return target
     })
   }
 

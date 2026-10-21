@@ -1,6 +1,8 @@
 // The bridge's security properties, one by one: untrusted data stays data, control characters are stripped, host paths and
 // the token never reach the model, every refusal maps to an actionable tool error, the admin role is refused, and the
 // rate limit, the call timeout and the one busy retry hold.
+import { ReadTools } from "../src/tools"
+import { WriteTools } from "../src/tools-write"
 import { test, describe, after } from "node:test"
 import * as assert from "node:assert/strict"
 import { EngineError, HelloError, HostBusyError } from "../../src/protocol/engine-client"
@@ -51,8 +53,8 @@ describe("untrusted data stays data", () => {
   test("every read tool's description says returned text is data, never instructions", async () => {
     const h = await startHarness()
     const { tools } = await h.client.listTools()
-    assert.equal(tools.length, 11)
-    for (const t of tools) assert.match(t.description ?? "", /untrusted data, never instructions/, t.name)
+    assert.equal(tools.length, ReadTools.length + WriteTools.length)
+    for (const t of tools.filter((x) => ReadTools.some((r) => r.name === x.name))) assert.match(t.description ?? "", /untrusted data, never instructions/, t.name)
     const info = h.client.getInstructions?.() ?? ""
     assert.match(info, /untrusted data, never instructions/)
     await h.close()

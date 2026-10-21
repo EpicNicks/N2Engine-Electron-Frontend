@@ -5,6 +5,7 @@ import { test, describe, after } from "node:test"
 import * as assert from "node:assert/strict"
 import Ajv2020 from "ajv/dist/2020"
 import { ReadTools } from "../src/tools"
+import { WriteTools } from "../src/tools-write"
 import { BridgeVersion } from "../src/version"
 import { closeAllHarnesses, startHarness, textOf, type Harness } from "./harness"
 import { entityData } from "./fake-host"
@@ -23,10 +24,10 @@ for (const era of ["legacy", "auto"] as const) {
       await h.close()
     })
 
-    test("tools/list: the same eleven tools in the same order, with the stable names", async () => {
+    test("tools/list: the read tools then the write tools (an editor host), in the same order, with the stable names", async () => {
       const h = await startHarness({ era })
       const { tools } = await h.client.listTools()
-      assert.deepEqual(tools.map((t) => t.name), ReadTools.map((t) => t.name))
+      assert.deepEqual(tools.map((t) => t.name), [...ReadTools, ...WriteTools].map((t) => t.name))
       for (const t of tools) {
         assert.match(t.name, /^[a-z0-9_]{1,64}$/)
         assert.match(t.name, /^n2_/)
@@ -67,10 +68,10 @@ describe("tool schemas", () => {
     await h.close()
   })
 
-  test("every tool is marked read-only, non-destructive, idempotent and closed-world", async () => {
+  test("every read tool is marked read-only, non-destructive, idempotent and closed-world", async () => {
     h = await startHarness()
     const { tools } = await h.client.listTools()
-    for (const t of tools) {
+    for (const t of tools.filter((x) => ReadTools.some((r) => r.name === x.name))) {
       assert.equal(t.annotations?.readOnlyHint, true, t.name)
       assert.equal(t.annotations?.destructiveHint, false, t.name)
       assert.equal(t.annotations?.idempotentHint, true, t.name)

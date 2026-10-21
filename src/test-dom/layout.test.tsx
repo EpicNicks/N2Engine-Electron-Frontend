@@ -672,7 +672,7 @@ describe("text files at the bottom", () => {
 })
 
 describe("the editor's registered panels", () => {
-  test("are the six the editor always had, in their old places and stacks, and the history beside the console", () => {
+  test("are the six the editor always had, in their old places and stacks, the history beside the console and the project settings beside the inspector", () => {
     const registry = builtinPanels()
     assert.deepEqual(
       registry.list().map((d) => [d.id, d.defaultRegion, d.defaultGroup ?? 0]),
@@ -683,6 +683,7 @@ describe("the editor's registered panels", () => {
         ["history", "bottom", 0],
         ["hierarchy", "right", 0],
         ["inspector", "right", 1],
+        ["projectSettings", "right", 1],
         ["engine", "right", 2],
       ]
     )
@@ -690,7 +691,7 @@ describe("the editor's registered panels", () => {
       left: [["assets"]],
       center: [["viewport"]],
       bottom: [["console", "history"]],
-      right: [["hierarchy"], ["inspector"], ["engine"]],
+      right: [["hierarchy"], ["inspector", "projectSettings"], ["engine"]],
     })
   })
 
@@ -698,7 +699,7 @@ describe("the editor's registered panels", () => {
     const registry = builtinPanels()
     assert.equal(registry.get("viewport")!.closable, false)
     assert.equal(registry.get("viewport")!.unmountWhenHidden, true)
-    for (const id of ["assets", "console", "history", "hierarchy", "inspector", "engine"]) assert.equal(registry.get(id)!.closable, true, id)
+    for (const id of ["assets", "console", "history", "hierarchy", "inspector", "projectSettings", "engine"]) assert.equal(registry.get(id)!.closable, true, id)
     assert.deepEqual(registry.get("hierarchy")!.sizing, { flex: "0 0 30%" })
     assert.equal(registry.get("inspector")!.sizing, undefined, "flex 1: the rest")
     assert.deepEqual(registry.get("engine")!.sizing, { flex: "0 0 auto", maxHeight: "30%" })
