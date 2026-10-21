@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.14.0";
+export const PROTOCOL_VERSION = "1.15.0";
 
 // ==================== Types ====================
 
@@ -57,6 +57,7 @@ export interface EditorEvent {
   state?: string;
   frame?: number;
   uiRevision?: number;
+  extension?: string;
 }
 
 export interface InputEvent {
@@ -237,6 +238,12 @@ export interface EditorUiInfo {
   inspectorSections: unknown[];
 }
 
+export interface ExtensionResultInfo {
+  message?: string;
+  select?: string[];
+  warnings?: string[];
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -295,6 +302,7 @@ export const CommandType = {
   ListEditorExtensions: 0x80,
   GetEditorUi: 0x81,
   ReloadEditorExtensions: 0x84,
+  InvokeMenuItem: 0x82,
   Undo: 0x90,
   Redo: 0x91,
   BeginEditGroup: 0x92,
@@ -351,6 +359,7 @@ export const ResponseType = {
   ErrorCoded: 0x1C,
   EditorExtensions: 0x1D,
   EditorUi: 0x1E,
+  ExtensionResult: 0x1F,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -412,6 +421,7 @@ export const CommandResponse = {
   ListEditorExtensions: "EditorExtensions",
   GetEditorUi: "EditorUi",
   ReloadEditorExtensions: "EditorExtensions",
+  InvokeMenuItem: "ExtensionResult",
   Undo: "EditResult",
   Redo: "EditResult",
   BeginEditGroup: "Ok",
@@ -627,6 +637,13 @@ export interface SetStartupSceneRequest {
   path: string;
 }
 
+export interface InvokeMenuItemRequest {
+  itemId: string;
+  selection: unknown;
+  params: unknown;
+  uiRevision: number;
+}
+
 export interface BeginEditGroupRequest {
   label: string;
 }
@@ -817,6 +834,15 @@ export interface EditorExtensionsResponse {
 
 export interface EditorUiResponse {
   ui: EditorUiInfo;
+}
+
+export interface ExtensionResultResponse {
+  label: string;
+  revision: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  savedRevision: number;
+  result: ExtensionResultInfo;
 }
 
 export interface EditResultResponse {
@@ -1765,6 +1791,26 @@ export function decodeSetStartupSceneRequest(payload: Uint8Array): SetStartupSce
   return { path };
 }
 
+/** InvokeMenuItem's request payload (without the frame header) */
+export function encodeInvokeMenuItemRequest(value: InvokeMenuItemRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.itemId);
+  writer.json(value.selection);
+  writer.json(value.params);
+  writer.u32(value.uiRevision);
+  return writer.finish();
+}
+
+/** Reads InvokeMenuItem's request payload; bytes after the last field are ignored */
+export function decodeInvokeMenuItemRequest(payload: Uint8Array): InvokeMenuItemRequest {
+  const reader = new ProtocolReader(payload);
+  const itemId = reader.string();
+  const selection = reader.json() as unknown;
+  const params = reader.json() as unknown;
+  const uiRevision = reader.u32();
+  return { itemId, selection, params, uiRevision };
+}
+
 /** BeginEditGroup's request payload (without the frame header) */
 export function encodeBeginEditGroupRequest(value: BeginEditGroupRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2358,6 +2404,30 @@ export function decodeEditorUiResponse(payload: Uint8Array): EditorUiResponse {
   return { ui };
 }
 
+/** ExtensionResult's payload (without the frame header) */
+export function encodeExtensionResultResponse(value: ExtensionResultResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.label);
+  writer.u32(value.revision);
+  writer.bool(value.canUndo);
+  writer.bool(value.canRedo);
+  writer.u32(value.savedRevision);
+  writer.json(value.result);
+  return writer.finish();
+}
+
+/** Reads ExtensionResult's payload; bytes after the last field are ignored */
+export function decodeExtensionResultResponse(payload: Uint8Array): ExtensionResultResponse {
+  const reader = new ProtocolReader(payload);
+  const label = reader.string();
+  const revision = reader.u32();
+  const canUndo = reader.bool();
+  const canRedo = reader.bool();
+  const savedRevision = reader.u32();
+  const result = reader.json() as ExtensionResultInfo;
+  return { label, revision, canUndo, canRedo, savedRevision, result };
+}
+
 /** EditResult's payload (without the frame header) */
 export function encodeEditResultResponse(value: EditResultResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2499,6 +2569,7 @@ export const RequestCodecs = {
   GetLuaFields: { encode: encodeGetLuaFieldsRequest, decode: decodeGetLuaFieldsRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
+  InvokeMenuItem: { encode: encodeInvokeMenuItemRequest, decode: decodeInvokeMenuItemRequest },
   BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },
   WritePlaySnapshot: { encode: encodeWritePlaySnapshotRequest, decode: decodeWritePlaySnapshotRequest },
   SetPaused: { encode: encodeSetPausedRequest, decode: decodeSetPausedRequest },
@@ -2539,6 +2610,7 @@ export const ResponseCodecs = {
   ProjectInfo: { encode: encodeProjectInfoResponse, decode: decodeProjectInfoResponse },
   EditorExtensions: { encode: encodeEditorExtensionsResponse, decode: decodeEditorExtensionsResponse },
   EditorUi: { encode: encodeEditorUiResponse, decode: decodeEditorUiResponse },
+  ExtensionResult: { encode: encodeExtensionResultResponse, decode: decodeExtensionResultResponse },
   EditResult: { encode: encodeEditResultResponse, decode: decodeEditResultResponse },
   History: { encode: encodeHistoryResponse, decode: decodeHistoryResponse },
   Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },

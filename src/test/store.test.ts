@@ -493,6 +493,27 @@ describe("EditorStore", () => {
     assert.equal(store.extensionsChangeCount.peek(), changes + 2)
   })
 
+  test("extensionOutput events go to the extension output log, as plain text, and touch no counter", async () => {
+    const { api, store, timers } = makeStore()
+    await store.openProject()
+    const heard: number[] = []
+    store.extensionOutput.subscribe(() => heard.push(store.extensionOutput.lines.length))
+    const projects = store.projectChangeCount.peek()
+    const changes = store.extensionsChangeCount.peek()
+    api.events.events.push(
+      { seq: 1, kind: "extensionOutput", extension: "Align", level: "warn", message: "<b>x</b>", time: 5 },
+      { seq: 2, kind: "extensionOutput", extension: "Align" } // no message: no line
+    )
+    await timers.fire()
+    assert.deepEqual(
+      store.extensionOutput.lines.map((l) => [l.extension, l.level, l.message]),
+      [["Align", "warn", "<b>x</b>"]]
+    )
+    assert.deepEqual(heard, [1])
+    assert.equal(store.projectChangeCount.peek(), projects)
+    assert.equal(store.extensionsChangeCount.peek(), changes)
+  })
+
   test("a new host log (events the editor may have missed) refetches the scene", async () => {
     const { api, store, timers } = makeStore()
     api.openScene = { path: "res://a.scene", name: "a", uuid: "u", revision: 1, savedRevision: 1 }

@@ -45,9 +45,13 @@ import {
   ExtensionsInfo,
   ExtensionsResult,
   ExtensionsUi,
+  InvokeResult,
+  checkInvokeArguments,
   extensionErrorKindOf,
   hasCapability,
   parseExtensionsInfo,
+  parseInvokeResult,
+  supportsInvokeMenuItem,
   parseExtensionsUi,
 } from "./extensions"
 import { TlsSocketFactory, connectPinnedTls, isLoopbackHost, normaliseFingerprint } from "./tls-pin"
@@ -789,7 +793,7 @@ export class EngineClient {
     return this.send(Commands.SendInput, { events })
   }
 
-  // ==================== Editor extensions (protocol 1.14.0) ====================
+  // ==================== Editor extensions (protocol 1.14.0, running items since 1.15.0) ====================
 
   /** Whether the connected host's Hello answer lists the capability (false when not connected) */
   hasCapability(name: string): boolean {
@@ -818,13 +822,44 @@ export class EngineClient {
     return this.extensionCommand(Commands.ReloadEditorExtensions, (r) => parseExtensionsInfo(r.info))
   }
 
-  private async extensionCommand<Response, T>(
-    spec: CommandSpec<Record<string, never>, Response>,
-    parse: (response: Response) => T | null
+  /**
+   * Runs one menu item of an extension (protocol 1.15.0; a Write command, edit-only) as one undo step. selection is the
+   * UUIDs of the selected objects (at most 4096), params the item's form values ({} for none), uiRevision the one of
+   * the GetEditorUi the request was built from. The caller settles its pending edits and closes its edit groups first.
+   * "unsupported", without sending anything, when the host lacks the editorExtensions capability or speaks a protocol
+   * before 1.15 (a 1.14 host has the capability but not the command). Arguments of the wrong shape are an "invalid"
+   * error, also unsent. The host's refusals are kinds of their own: staleUi (fetch GetEditorUi again), editGroupOpen,
+   * disabled, failed (its changes were taken back), faulted, forbidden, readOnly. Never throws.
+   */
+  invokeMenuItem(
+    itemId: string,
+    selection: string[],
+    params: Record<string, unknown>,
+    uiRevision: number
+  ): Promise<ExtensionsResult<InvokeResult>> {
+    if (!supportsInvokeMenuItem(this.serverInfo?.capabilities, this.serverInfo?.protocolVersion)) {
+      return Promise.resolve({ status: "unsupported" })
+    }
+    const problem = checkInvokeArguments(itemId, selection, params, uiRevision)
+    if (problem !== null) {
+      return Promise.resolve({ status: "error", kind: "invalid", message: `InvokeMenuItem: ${problem}` })
+    }
+    return this.extensionCommand(Commands.InvokeMenuItem, (r) => parseInvokeResult(r), {
+      itemId,
+      selection,
+      params,
+      uiRevision,
+    })
+  }
+
+  private async extensionCommand<Request, Response, T>(
+    spec: CommandSpec<Request, Response>,
+    parse: (response: Response) => T | null,
+    request: Request = {} as Request
   ): Promise<ExtensionsResult<T>> {
     if (!this.hasCapability(EditorExtensionsCapability)) return { status: "unsupported" }
     try {
-      const value = parse(await this.send(spec, {}))
+      const value = parse(await this.send(spec, request))
       if (value === null) return { status: "error", kind: "malformed", message: `${spec.name}: the answer is not valid` }
       return { status: "ok", value }
     } catch (e) {
