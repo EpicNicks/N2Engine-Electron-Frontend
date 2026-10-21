@@ -43,6 +43,8 @@ function VectorRow(props: {
   mixed?: { x: boolean; y: boolean; z: boolean }
   disabled: boolean
   title?: string
+  /** Changes when the values were read again (see NumberInput's syncKey) */
+  syncKey?: unknown
   onAxis: (axis: (typeof Axes)[number], value: number) => void
   onInvalid: (message: string) => void
 }) {
@@ -59,6 +61,7 @@ function VectorRow(props: {
             ariaLabel={`${props.label} ${axis}`}
             value={props.value[axis]}
             mixed={props.mixed?.[axis] === true}
+            syncKey={props.syncKey}
             disabled={props.disabled}
             onValue={(n) => props.onAxis(axis, n)}
             onInvalid={props.onInvalid}
@@ -158,11 +161,13 @@ function TransformSection() {
     }
   }
   const invalid = (message: string) => store.reportError("Transform", message)
+  const syncKey = inspector.transformRev.value
   return (
     <div class="inspector-section">
       <h4 title={TransformTitle}>Transform</h4>
       <VectorRow
         label="Position"
+        syncKey={syncKey}
         value={transform.position}
         disabled={disabled}
         onAxis={(axis, n) => edit("position", axis, n)}
@@ -171,6 +176,7 @@ function TransformSection() {
       <VectorRow
         label="Rotation"
         title={TransformTitle}
+        syncKey={syncKey}
         value={euler}
         disabled={disabled}
         onAxis={(axis, n) => edit("rotation", axis, n)}
@@ -178,6 +184,7 @@ function TransformSection() {
       />
       <VectorRow
         label="Scale"
+        syncKey={syncKey}
         value={transform.scale}
         disabled={disabled}
         onAxis={(axis, n) => edit("scale", axis, n)}
@@ -420,6 +427,7 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
           value={value}
           mixed={mixed}
           mixedAxes={mixed ? mixedAxes(field, component.entries) : undefined}
+          syncKey={inspector.multi.objects.value}
           disabled={disabled}
           commit={commit}
           invalid={setError}
@@ -500,6 +508,7 @@ function MultiInspector() {
       <VectorRow
         label={label}
         title={part === "rotation" ? TransformTitle : undefined}
+        syncKey={multi.objects.value}
         value={{ x: axes.x.value, y: axes.y.value, z: axes.z.value }}
         mixed={{ x: axes.x.mixed, y: axes.y.mixed, z: axes.z.mixed }}
         disabled={disabled}
@@ -532,6 +541,7 @@ function MultiInspector() {
             label="Tag"
             value={view.tag.value}
             mixed={view.tag.mixed}
+            syncKey={multi.objects.value}
             disabled={disabled}
             onCommit={(tag) => void setProperties({ tag })}
           />
@@ -542,6 +552,7 @@ function MultiInspector() {
             field={layerField}
             value={view.layer.value}
             mixed={view.layer.mixed}
+            syncKey={multi.objects.value}
             disabled={disabled}
             onValue={(layer) => void setProperties({ layer })}
             onInvalid={(message) => store.reportError("Layer", message)}

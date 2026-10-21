@@ -47,6 +47,8 @@ export interface EditorProps {
   mixed?: boolean
   /** With mixed, the axes of a vector that differ (the other axes show the value they share) */
   mixedAxes?: readonly string[]
+  /** Changes whenever the objects were read again: text boxes then show the value again, even one that didn't change (a refused edit) */
+  syncKey?: unknown
 }
 
 /** What an editor shows for values that differ between the selected objects */
@@ -242,6 +244,8 @@ export function NumberInput(props: {
   ariaLabel?: string
   /** The selected objects differ: shows "—" until something is typed */
   mixed?: boolean
+  /** Changes when the value was read again: shown again even if it is the same (see EditorProps.syncKey) */
+  syncKey?: unknown
   onValue(value: number): void
   onInvalid(message: string): void
 }) {
@@ -255,7 +259,7 @@ export function NumberInput(props: {
       setText(shown)
       setBad(false)
     }
-  }, [shown])
+  }, [shown, props.syncKey])
 
   // The text is read from the box itself: the last keystroke may not have been rendered yet
   const finish = (typed: string) => {
@@ -298,7 +302,7 @@ export function NumberInput(props: {
   )
 }
 
-function NumberEditor({ field, value, disabled, commit, invalid, mixed }: EditorProps) {
+function NumberEditor({ field, value, disabled, commit, invalid, mixed, syncKey }: EditorProps) {
   const limits = numberLimits(field)
   const current = typeof value === "number" ? value : 0
   const step = limits.integer ? 1 : Math.max((limits.max - limits.min) / 200, 0.0001)
@@ -324,6 +328,7 @@ function NumberEditor({ field, value, disabled, commit, invalid, mixed }: Editor
         field={field}
         value={current}
         mixed={mixed}
+        syncKey={syncKey}
         disabled={disabled}
         onValue={(n) => commit(n, true)}
         onInvalid={invalid}
@@ -332,7 +337,7 @@ function NumberEditor({ field, value, disabled, commit, invalid, mixed }: Editor
   )
 }
 
-function VectorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxes }: EditorProps) {
+function VectorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxes, syncKey }: EditorProps) {
   const axes = axesOf(kindOf(field))
   const current = isObject(value) ? value : {}
   return (
@@ -344,6 +349,7 @@ function VectorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxe
           label={axis}
           value={typeof current[axis] === "number" ? (current[axis] as number) : 0}
           mixed={mixed && (mixedAxes === undefined || mixedAxes.includes(axis))}
+          syncKey={syncKey}
           disabled={disabled}
           onValue={(n) => commit({ ...Object.fromEntries(axes.map((a) => [a, current[a] ?? 0])), [axis]: n }, true, axis)}
           onInvalid={invalid}
@@ -418,6 +424,8 @@ export function TextInput(props: {
   label: string
   /** The selected objects differ: shows "—" until something is typed */
   mixed?: boolean
+  /** Changes when the value was read again: shown again even if it is the same */
+  syncKey?: unknown
   onCommit(text: string): void
 }) {
   const shown = props.mixed ? "" : props.value
@@ -425,7 +433,7 @@ export function TextInput(props: {
   const typing = useRef(false)
   useEffect(() => {
     if (!typing.current) setText(shown)
-  }, [shown])
+  }, [shown, props.syncKey])
   return (
     <input
       type="text"
@@ -453,11 +461,12 @@ export function TextInput(props: {
   )
 }
 
-function StringEditor({ field, value, disabled, commit, mixed }: EditorProps) {
+function StringEditor({ field, value, disabled, commit, mixed, syncKey }: EditorProps) {
   return (
     <TextInput
       label={field.displayName}
       mixed={mixed}
+      syncKey={syncKey}
       value={typeof value === "string" ? value : ""}
       disabled={disabled}
       onCommit={(text) => commit(text, true)}

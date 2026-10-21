@@ -95,6 +95,8 @@ export class InspectorState {
    * quaternion, so what is shown doesn't jump to another answer for the same rotation. Null with no transform.
    */
   readonly euler = signal<Vec3 | null>(null)
+  /** Counts the changes of transform and euler (an edit, its refusal, a read): the boxes show the value again at each */
+  readonly transformRev = signal(0)
   /** Several objects selected: their shared fields, edited together (inspector-multi.ts) */
   readonly multi: MultiInspectorState
   /** The object can't be read (it is gone, or the read failed): why */
@@ -359,6 +361,7 @@ export class InspectorState {
         this.transform.value = local
         // The triple shown is kept while it still means the stored rotation (no flip, no drift)
         this.euler.value = local ? stableEuler(this.euler.value, local.rotation) : null
+        this.transformRev.value++
       }
       this.components.value = views
       // What belonged to a component that is gone goes too
@@ -745,6 +748,7 @@ export class InspectorState {
     batch(() => {
       this.transform.value = next
       this.euler.value = euler
+      this.transformRev.value++
       this.setError(EntityKey, null)
     })
     try {
@@ -756,6 +760,7 @@ export class InspectorState {
           if (edits === this.transformEdits) {
             this.transform.value = previous
             this.euler.value = previousEuler
+            this.transformRev.value++
           }
           this.setError(EntityKey, messageOf(e))
         })
