@@ -186,7 +186,13 @@
       .console-filter { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
       .console-filter.warn { color: #ff9800; }
       .console-filter.error { color: #f44336; }
+      .console-sources { display: flex; align-items: center; gap: 8px; }
       .console-search { margin-left: auto; width: 180px; }
+      .console-search.invalid { outline: 1px solid #f44336; }
+      .console-toolbar button.toggle.on { background: #094771; color: #fff; }
+      .console-regex-error { padding: 2px 8px; font-size: 11px; color: #ef9a9a; border-bottom: 1px solid #333; flex-shrink: 0; }
+      .console-count { flex-shrink: 0; align-self: flex-start; min-width: 18px; padding: 0 6px; border-radius: 9px; background: #3a3d41; color: #ddd; text-align: center; font-size: 11px; }
+      .console-message mark { background: #614d00; color: inherit; border-radius: 2px; }
       .console-toolbar button { padding: 2px 10px; }
       .console-list { flex: 1; overflow: auto; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 12px; padding: 2px 0; min-height: 0; }
       .console-entry { display: flex; gap: 10px; padding: 1px 8px; white-space: pre-wrap; word-break: break-word; }
@@ -286,7 +292,8 @@
       .recent-remove:hover { background: #444; color: #fff; }
 
       /* Hierarchy */
-      .hierarchy-list { min-height: 100%; outline: none; }
+      .hierarchy-panel .panel-content { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+      .hierarchy-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; outline: none; }
       .hierarchy-list.drop-end { box-shadow: inset 0 -2px 0 #3794ff; }
       .hierarchy-item { display: flex; align-items: center; gap: 4px; padding: 2px 8px 2px 4px; cursor: pointer; user-select: none; white-space: nowrap; }
       .hierarchy-item:hover { background: #2a2d2e; }
@@ -300,6 +307,12 @@
       .hierarchy-item .arrow { width: 14px; flex-shrink: 0; text-align: center; color: #aaa; }
       .hierarchy-item .hierarchy-active { margin: 0; flex-shrink: 0; cursor: pointer; }
       .hierarchy-name { overflow: hidden; text-overflow: ellipsis; }
+      .hierarchy-search { display: flex; align-items: center; gap: 4px; padding: 4px; border-bottom: 1px solid #333; flex-shrink: 0; font-size: 12px; }
+      .hierarchy-search input[type=search] { flex: 1; min-width: 0; }
+      .hierarchy-search button { padding: 2px 8px; }
+      .hierarchy-search .hierarchy-count { color: #999; white-space: nowrap; }
+      .hierarchy-search button.on { background: #094771; color: #fff; }
+      .hierarchy-path { color: #777; margin-left: 6px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
       .hierarchy-rename { flex: 1; min-width: 0; padding: 0 4px; font-size: inherit; }
 
       /* Inspector */

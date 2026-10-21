@@ -4,9 +4,22 @@
 // The cursor follows the epoch rule (docs/logging-and-editor.html §events, event-pump.ts): the pump polls with the
 // epoch and nextSeq of the last response, and a response in another epoch starts a new log. A newly launched host is
 // a new log too: the cursor goes back to (0, 0) for it, so its events come from its start, startup lines included.
-import { computed, signal } from "@preact/signals-core"
+import { batch, computed, signal } from "@preact/signals-core"
 import type { EditorEvent } from "../protocol/protocol.generated"
 import { EventPump, EventPumpOptions, PollFunction, StartCursor } from "../protocol/event-pump"
+import {
+  ConsoleRow,
+  ConsoleSourceRegistry,
+  LineFilter,
+  collapseRepeats,
+  compileMatcher,
+  consoleSources,
+  countLevels,
+  filterEntries,
+  plainRows,
+  sourceOf,
+} from "./console-filter"
+import type { ConsoleFilterPrefValue } from "./console-filter-prefs"
 
 export type LogLevel = "info" | "warn" | "error"
 
@@ -18,10 +31,11 @@ export interface ConsoleEntry {
   /** Milliseconds since the Unix epoch */
   time: number
   /**
-   * The edit host's log, the editor's own note (a host session starting, events dropped, the host exiting), or the
-   * game's (the play child's log, while a game runs)
+   * The id of a registered source (console-filter.ts consoleSources): "host" the edit host's log, "editor" the
+   * editor's own note (a host session starting, events dropped, the host exiting), "game" the play child's log while a
+   * game runs, and whatever a feature registers (an id that is not registered is shown as the host's)
    */
-  source: "host" | "editor" | "game"
+  source: string
 }
 
 /** How many entries the console keeps; the oldest go first */
@@ -59,26 +73,66 @@ export interface ConsoleStoreOptions extends EventPumpOptions {
   onMissedEvents?: () => void
   /** The current time, for the editor's own entries */
   now?: () => number
+  /** The registry of sources (consoleSources by default) */
+  sources?: ConsoleSourceRegistry
 }
 
 export class ConsoleStore {
   readonly entries = signal<readonly ConsoleEntry[]>([])
   /** Which levels are shown */
   readonly shown = signal<Record<LogLevel, boolean>>({ info: true, warn: true, error: true })
-  /** Only entries containing this text (case-insensitive) are shown; "" shows all */
+  /** Ids of the sources switched off (see consoleSources) */
+  readonly hiddenSources = signal<ReadonlySet<string>>(new Set())
+  /** Only entries containing this text are shown; "" shows all */
   readonly search = signal("")
-  readonly visible = computed(() => {
+  /** The text is matched with its case */
+  readonly matchCase = signal(false)
+  /** The text is a regular expression */
+  readonly regex = signal(false)
+  /** Consecutive identical lines are one row with a count */
+  readonly collapse = signal(false)
+  /** The text filter, compiled once per change of the text or its toggles */
+  readonly matcher = computed(() =>
+    compileMatcher({ search: this.search.value, matchCase: this.matchCase.value, regex: this.regex.value })
+  )
+  private readonly lineFilter = computed<LineFilter>(() => ({
+    hiddenSources: this.hiddenSources.value,
+    matcher: this.matcher.value,
+  }))
+  /** The lines shown: the levels switched on, the sources switched on, matching the text */
+  readonly visible = computed(() =>
+    filterEntries(this.sources, this.entries.value, this.shown.value, this.lineFilter.value)
+  )
+  /** The rows shown: the visible lines, with repeats collapsed when that is on */
+  readonly rows = computed<ConsoleRow[]>(() =>
+    this.collapse.value ? collapseRepeats(this.visible.value) : plainRows(this.visible.value)
+  )
+  /** Lines per level among those passing the source and text filters (a level switched off still counts) */
+  readonly counts = computed(() => countLevels(this.sources, this.entries.value, this.lineFilter.value))
+  /** Lines per source among those passing the level and text filters (a source switched off still counts) */
+  readonly sourceCounts = computed(() => {
+    const counts: Record<string, number> = {}
     const shown = this.shown.value
-    const search = this.search.value.toLowerCase()
-    return this.entries.value.filter(
-      (entry) => shown[entry.level] && (search === "" || entry.message.toLowerCase().includes(search))
-    )
-  })
-  readonly counts = computed(() => {
-    const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
-    for (const entry of this.entries.value) counts[entry.level]++
+    const matcher = this.matcher.value
+    for (const entry of this.entries.value) {
+      if (!shown[entry.level] || !matcher.test(entry.message)) continue
+      const id = sourceOf(this.sources, entry)
+      counts[id] = (counts[id] ?? 0) + 1
+    }
     return counts
   })
+  /** The filters as a value, for the preferences */
+  readonly filterState = computed<ConsoleFilterPrefValue>(() => ({
+    levels: { ...this.shown.value },
+    hiddenSources: [...this.hiddenSources.value],
+    search: this.search.value,
+    matchCase: this.matchCase.value,
+    regex: this.regex.value,
+    collapse: this.collapse.value,
+  }))
+
+  /** The sources lines can have; a feature adds its own (the default is the page's registry) */
+  readonly sources: ConsoleSourceRegistry
 
   private readonly pump: EventPump<EditorEvent>
   private readonly maxEntries: number
@@ -88,7 +142,8 @@ export class ConsoleStore {
   private launch: number | null = null
 
   constructor(poll: PollFunction<EditorEvent>, options: ConsoleStoreOptions = {}) {
-    const { onEvents, onMissedEvents, maxEntries, now, ...pumpOptions } = options
+    const { onEvents, onMissedEvents, maxEntries, now, sources, ...pumpOptions } = options
+    this.sources = sources ?? consoleSources
     this.maxEntries = maxEntries ?? DefaultMaxEntries
     this.now = now ?? Date.now
     this.pump = new EventPump(
@@ -166,6 +221,24 @@ export class ConsoleStore {
 
   toggleLevel(level: LogLevel): void {
     this.shown.value = { ...this.shown.value, [level]: !this.shown.value[level] }
+  }
+
+  toggleSource(id: string): void {
+    const hidden = new Set(this.hiddenSources.value)
+    if (!hidden.delete(id)) hidden.add(id)
+    this.hiddenSources.value = hidden
+  }
+
+  /** Sets every filter at once (the project's saved ones); a source id that is not registered (yet) is kept */
+  applyFilterState(state: ConsoleFilterPrefValue): void {
+    batch(() => {
+      this.shown.value = { ...state.levels }
+      this.hiddenSources.value = new Set(state.hiddenSources)
+      this.search.value = state.search
+      this.matchCase.value = state.matchCase
+      this.regex.value = state.regex
+      this.collapse.value = state.collapse
+    })
   }
 
   private receive(events: EditorEvent[]): void {

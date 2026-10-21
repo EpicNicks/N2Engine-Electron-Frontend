@@ -1,10 +1,12 @@
 // The hierarchy panel: the scene's objects as a tree, with selection, drag-and-drop reparenting and reordering, rename,
-// the active toggle, creating objects from presets, duplicate, delete, a context menu and keyboard shortcuts. The
+// the active toggle, creating objects from presets, duplicate, delete, a context menu, keyboard shortcuts, and a search
+// box that narrows the rows (as the tree cut down to matches and their ancestors, or as a flat list). The
 // logic is in hierarchy-state.ts and hierarchy-tree.ts (tested in Node); this is the DOM around it.
 import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { EntityDragEffect, EntityDragType } from "./drag-types"
 import { CreatePresets } from "./hierarchy-state"
+import { MaxQueryLength } from "./hierarchy-filter-prefs"
 import { DropPosition, DropTarget, RootId, canDrop, resolveDrop } from "./hierarchy-tree"
 import { keymap } from "./keymap"
 import { useKeymapActions } from "./keymap-hooks"
@@ -74,9 +76,56 @@ function useCreateItems() {
     }))
 }
 
+/** The search box above the list: text, a result count, tree or list, and clear. Escape clears; Escape on nothing returns to the list. */
+function SearchBar({ input, list }: { input: { current: HTMLInputElement | null }; list: { current: HTMLElement | null } }) {
+  const { hierarchy } = useApp()
+  const query = hierarchy.query.value
+  const filter = hierarchy.filter.value
+  const mode = hierarchy.filterMode.value
+  return (
+    <div class="hierarchy-search" role="search">
+      <input
+        ref={input}
+        type="search"
+        placeholder="Search (t:Type tag:x layer:N)"
+        aria-label="Search the hierarchy"
+        title="Words match names. t:Type matches a component type, tag:x a tag, layer:N a layer. Every word has to match."
+        maxLength={MaxQueryLength}
+        value={query}
+        onInput={(e) => hierarchy.setQuery((e.currentTarget as HTMLInputElement).value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return
+          e.stopPropagation()
+          if (query !== "") hierarchy.setQuery("")
+          else list.current?.focus()
+        }}
+      />
+      {filter.active && (
+        <span class="hierarchy-count" aria-live="polite">
+          {filter.matches.size} {filter.matches.size === 1 ? "match" : "matches"}
+        </span>
+      )}
+      <button
+        class={mode === "list" ? "secondary on" : "secondary"}
+        aria-pressed={mode === "list"}
+        title="Show the matches as a flat list with their paths, instead of the tree"
+        onClick={() => hierarchy.setFilterMode(mode === "list" ? "tree" : "list")}
+      >
+        List
+      </button>
+      {query !== "" && (
+        <button class="secondary" aria-label="Clear the search" title="Clear the search (Esc)" onClick={() => hierarchy.setQuery("")}>
+          ✕
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function HierarchyPanel() {
   const { store, hierarchy } = useApp()
   const list = useRef<HTMLDivElement>(null)
+  const search = useRef<HTMLInputElement>(null)
   const createItems = useCreateItems()
 
   const connected = store.connected.value
@@ -88,6 +137,7 @@ export function HierarchyPanel() {
   const renaming = hierarchy.renaming.value
   const drop = indicator.value
   const hasObjects = tree.order.length > 0
+  const filtering = hierarchy.filter.value.active
   // A running game can't be edited: selecting still works, nothing that changes objects does
   const readOnly = hierarchy.readOnly.value
 
@@ -114,6 +164,10 @@ export function HierarchyPanel() {
       "hierarchy.previous": () => void hierarchy.step(-1, false),
       "hierarchy.extendNext": () => void hierarchy.step(1, true),
       "hierarchy.extendPrevious": () => void hierarchy.step(-1, true),
+      "hierarchy.search": () => {
+        search.current?.focus()
+        search.current?.select()
+      },
       "hierarchy.expand": () => void hierarchy.expandPrimary(),
       "hierarchy.collapse": () => void hierarchy.collapsePrimary(),
     },
@@ -133,7 +187,7 @@ export function HierarchyPanel() {
 
   /** The drop a drag over a row (or the empty space) means, or null when it isn't allowed or isn't our drag */
   const dropAt = (overId: string | null, position: DropPosition): DropTarget | null => {
-    if (dragging.value.length === 0 || readOnly) return null
+    if (dragging.value.length === 0 || readOnly || filtering) return null
     const target = resolveDrop(tree, overId, position, expanded)
     return target && canDrop(tree, dragging.value, target) ? target : null
   }
@@ -166,6 +220,7 @@ export function HierarchyPanel() {
   else if (!sceneInfo) content = <Empty>No scene loaded</Empty>
   else if (!hasObjects)
     content = <Empty>No objects in {sceneInfo.name || "the scene"}. Right-click to create one.</Empty>
+  else if (rows.length === 0) content = <Empty>No objects match the search</Empty>
   else
     content = rows.map((row) => {
       const node = tree.nodes.get(row.id)!
@@ -180,7 +235,7 @@ export function HierarchyPanel() {
           key={row.id}
           data-id={row.id}
           style={{ paddingLeft: `${row.depth * 14 + 4}px` }}
-          draggable={renaming !== row.id && !readOnly}
+          draggable={renaming !== row.id && !readOnly && !filtering}
           title={`${node.components.join(", ") || "No components"}\nTag: ${node.tag || "(none)"}, layer ${node.layer}`}
           role="treeitem"
           aria-selected={selection.ids.has(row.id)}
@@ -236,6 +291,11 @@ export function HierarchyPanel() {
               {node.name}
             </span>
           )}
+          {row.path !== undefined && row.path !== node.name && (
+            <span class="hierarchy-path" title={row.path}>
+              {row.path}
+            </span>
+          )}
         </div>
       )
     })
@@ -267,6 +327,7 @@ export function HierarchyPanel() {
         </button>
       }
     >
+      <SearchBar input={search} list={list} />
       <div
         class={drop?.id === null && drop ? "hierarchy-list drop-end" : "hierarchy-list"}
         ref={list}

@@ -9,6 +9,8 @@ import { globalActionHandlers } from "./global-actions"
 import { keymap } from "./keymap"
 import { useKeymapActions } from "./keymap-hooks"
 import { appPrefs } from "./prefs"
+import { attachConsoleFilterPrefs } from "./console-filter-prefs"
+import { attachHierarchyFilterPrefs } from "./hierarchy-filter-prefs"
 import { builtinPanels } from "./layout/builtin-panels"
 import { LayoutController } from "./layout/layout-controller"
 import { DynamicPrefix } from "./layout/layout-model"
@@ -320,15 +322,26 @@ export function Editor() {
   useEffect(() => {
     if (!connected) return
     let stale = false
+    let detachFilters = () => {}
     window.engine.getProjectInfo().then(
       (info) => {
-        if (!stale && isStorageKeyPart(info.project.projectId)) layout.setProject(info.project.projectId)
+        if (stale || !isStorageKeyPart(info.project.projectId)) return
+        layout.setProject(info.project.projectId)
+        // The hierarchy search and the console's filters are remembered per project too
+        const scope = appPrefs().project(info.project.projectId)
+        const detachHierarchy = attachHierarchyFilterPrefs(hierarchy, scope)
+        const detachConsole = attachConsoleFilterPrefs(store.console, scope)
+        detachFilters = () => {
+          detachHierarchy()
+          detachConsole()
+        }
       },
       // Without the id the layout is the user default's and isn't remembered for this project
       (e) => console.error("Failed to get the project's id for the layout:", e)
     )
     return () => {
       stale = true
+      detachFilters()
     }
   }, [connected, store.projectPath.value])
 

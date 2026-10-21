@@ -58,7 +58,7 @@ export interface ActionDef {
 }
 
 // The actions that exist today. Names the roadmap reserves for later, to be added when they exist, not before:
-// gizmo.toggleSpace (X), gizmo.togglePivot (Z) (FE4); camera bookmarks (Ctrl+Shift+1..9, Shift+1..9); hierarchy.search (Ctrl+F).
+// gizmo.toggleSpace (X), gizmo.togglePivot (Z) (FE4); camera bookmarks (Ctrl+Shift+1..9, Shift+1..9).
 export const DefaultActions: readonly ActionDef[] = [
   { id: "file.save", title: "Save the scene", scope: "global", chords: ["Mod+S"], allowInText: true },
   { id: "edit.undo", title: "Undo", scope: "global", chords: ["Mod+Z"] },
@@ -70,6 +70,7 @@ export const DefaultActions: readonly ActionDef[] = [
   { id: "hierarchy.previous", title: "Select the previous object", scope: "hierarchy", chords: ["ArrowUp"] },
   { id: "hierarchy.extendNext", title: "Extend the selection down", scope: "hierarchy", chords: ["Shift+ArrowDown"] },
   { id: "hierarchy.extendPrevious", title: "Extend the selection up", scope: "hierarchy", chords: ["Shift+ArrowUp"] },
+  { id: "hierarchy.search", title: "Search the hierarchy", scope: "hierarchy", chords: ["Mod+F"] },
   { id: "hierarchy.expand", title: "Expand the object", scope: "hierarchy", chords: ["ArrowRight"] },
   { id: "hierarchy.collapse", title: "Collapse the object", scope: "hierarchy", chords: ["ArrowLeft"] },
   { id: "viewport.frame", title: "Frame the selection", scope: "viewport", chords: ["KeyF"] },
