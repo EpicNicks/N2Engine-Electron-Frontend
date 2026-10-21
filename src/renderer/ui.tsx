@@ -15,6 +15,9 @@ import type { PlayController } from "./play-controller"
 import type { ViewportController } from "./viewport-controller"
 import type { UnsavedChoice } from "./store"
 import type { AutosaveChoice } from "./autosave"
+import type { ExtensionsState } from "./extensions-state"
+import type { ItemForm } from "./extension-form"
+import type { JsonObject } from "../shared/api"
 
 /** What every component can reach: the editor's store and the page's other state */
 export interface AppState {
@@ -26,6 +29,8 @@ export interface AppState {
   viewport: ViewportController
   audio: AudioController
   play: PlayController
+  /** The host's Lua editor extensions: the Tools menu, running an item, the admin list */
+  extensions: ExtensionsState
 }
 
 export const AppContext = createContext<AppState | null>(null)
@@ -234,14 +239,27 @@ export function ConfirmDialog() {
 // ==================== Context menu ====================
 
 export type MenuItem =
-  | { label: string; action: () => void; disabled?: boolean }
+  | {
+      label: string
+      action: () => void
+      disabled?: boolean
+      /** The tooltip: for a disabled item, why */
+      title?: string
+      /** The menu stays open when the item is chosen (Back, in a submenu) */
+      keepOpen?: boolean
+    }
+  /** Opens a level below, with a Back item first: a menu of nested groups (the Tools menu) */
+  | { label: string; submenu: MenuItem[]; disabled?: boolean; title?: string }
   /** A line between groups of items */
   | { separator: true }
 
 interface OpenMenu {
   x: number
   y: number
+  /** The items of the level shown (a submenu's, after Back and a separator, once one is entered) */
   items: MenuItem[]
+  /** The levels above the one shown, outermost first (empty at the top level) */
+  parents: MenuItem[][]
   /** Opened from the keyboard: the menu takes the focus (and gives it back), and its first item is marked */
   keyboard: boolean
   opener: HTMLElement | null
@@ -261,7 +279,36 @@ export function showContextMenu(x: number, y: number, items: MenuItem[], options
   const keyboard = options.keyboard === true
   menuMark.value = keyboard ? (choosable(items)[0] ?? -1) : -1
   menu.value =
-    items.length > 0 ? { x, y, items, keyboard, opener: document.activeElement as HTMLElement | null } : null
+    items.length > 0
+      ? { x, y, items, parents: [], keyboard, opener: document.activeElement as HTMLElement | null }
+      : null
+}
+
+/** Shows the items of a submenu in place of the level shown, after a Back item */
+function enterSubmenu(current: OpenMenu, submenu: MenuItem[]): void {
+  const back: MenuItem = { label: "Back", action: leaveSubmenu, keepOpen: true }
+  const items: MenuItem[] = [back, { separator: true }, ...submenu]
+  menu.value = { ...current, parents: [...current.parents, current.items], items }
+  // From the keyboard the first item below Back is marked, so Enter chooses it and Back stays an ArrowUp away
+  menuMark.value = current.keyboard ? (choosable(items)[1] ?? choosable(items)[0] ?? -1) : -1
+}
+
+/** Back to the level above */
+function leaveSubmenu(): void {
+  const current = menu.value
+  if (!current || current.parents.length === 0) return
+  const items = current.parents[current.parents.length - 1]
+  menu.value = { ...current, items, parents: current.parents.slice(0, -1) }
+  menuMark.value = current.keyboard ? (choosable(items)[0] ?? -1) : -1
+}
+
+/** Chooses an item: opens a submenu, runs a keep-open action, or closes the menu and runs the action */
+function chooseItem(current: OpenMenu, item: MenuItem): void {
+  if ("separator" in item || item.disabled) return
+  if ("submenu" in item) return enterSubmenu(current, item.submenu)
+  if (item.keepOpen) return item.action()
+  closeMenu()
+  item.action()
 }
 
 /** Closes the menu; one that had the focus gives it back to what opened it */
@@ -288,11 +335,14 @@ export function ContextMenu() {
         else if (e.key === "End") menuMark.value = items[items.length - 1]
         else if (e.key === "ArrowDown") menuMark.value = items[(at + 1) % items.length]
         else menuMark.value = items[(at - 1 + items.length) % items.length]
-      } else if ((e.key === "Enter" || e.key === " ") && at >= 0) {
+      } else if ((e.key === "Enter" || e.key === " " || e.key === "ArrowRight") && at >= 0) {
         e.preventDefault()
         const item = current.items[items[at]]
-        closeMenu()
-        if (!("separator" in item)) item.action()
+        // ArrowRight only opens a submenu; Enter and Space choose whatever the item is
+        if (e.key !== "ArrowRight" || "submenu" in item) chooseItem(current, item)
+      } else if (e.key === "ArrowLeft" && current.parents.length > 0) {
+        e.preventDefault()
+        leaveSubmenu()
       } else {
         closeMenu()
       }
@@ -333,14 +383,22 @@ export function ContextMenu() {
             class={`context-menu-item${item.disabled ? " disabled" : ""}${menuMark.value === i ? " marked" : ""}`}
             role="menuitem"
             aria-disabled={item.disabled === true}
-            key={item.label}
+            aria-haspopup={"submenu" in item ? "menu" : undefined}
+            title={item.title}
+            // Two items may share a label (an extension's menu): the position is the key
+            key={i}
             onClick={(e) => {
-              if (item.disabled) return e.stopPropagation() // the menu stays
-              closeMenu()
-              item.action()
+              // A disabled item, a submenu and Back keep the menu open (the click must not reach the document's closer)
+              if (item.disabled || "submenu" in item || item.keepOpen) e.stopPropagation()
+              chooseItem(current, item)
             }}
           >
             {item.label}
+            {"submenu" in item && (
+              <span class="context-menu-arrow" aria-hidden="true">
+                ›
+              </span>
+            )}
           </div>
         )
       )}
@@ -348,11 +406,38 @@ export function ContextMenu() {
   )
 }
 
-/** Whether a dialog (prompt, confirm, unsaved changes, autosave, the shortcuts list) is open: keys meant for the editor mustn't act then */
+// ==================== Parameter form ====================
+
+/** A form dialog on screen (form-dialog.tsx draws it): what it asks, and who is waiting for the answer */
+export interface FormRequest {
+  /** Counts forms, so a second one starts with fresh state */
+  id: number
+  title: string
+  form: ItemForm
+  okLabel: string
+  resolve: (params: JsonObject | null) => void
+}
+
+export const formRequest = signal<FormRequest | null>(null)
+let formCount = 0
+
+/**
+ * Asks for the values of a form (an extension menu item's parameters): the checked params, or null when cancelled.
+ * Another form still open is cancelled.
+ */
+export function formDialog(title: string, form: ItemForm, okLabel: string): Promise<JsonObject | null> {
+  formRequest.value?.resolve(null)
+  return new Promise((resolve) => {
+    formRequest.value = { id: ++formCount, title, form, okLabel, resolve }
+  })
+}
+
+/** Whether a dialog (prompt, confirm, form, unsaved changes, autosave, the shortcuts list) is open: keys meant for the editor mustn't act then */
 export function modalOpen(): boolean {
   return (
     promptRequest.value !== null ||
     confirmRequest.value !== null ||
+    formRequest.value !== null ||
     unsavedRequest.value !== null ||
     autosaveRequest.value !== null ||
     shortcutsRequest.value !== null

@@ -7,6 +7,7 @@
 import { batch, computed, signal } from "@preact/signals-core"
 import type { EditorEvent } from "../protocol/protocol.generated"
 import { EventPump, EventPumpOptions, PollFunction, StartCursor } from "../protocol/event-pump"
+import { parseExtensionOutput } from "../protocol/extension-output"
 import {
   ConsoleRow,
   ConsoleSourceRegistry,
@@ -40,6 +41,9 @@ export interface ConsoleEntry {
 
 /** How many entries the console keeps; the oldest go first */
 export const DefaultMaxEntries = 5000
+
+/** How many mirrored extension lines are remembered for dropping (the host's log line may come in a later poll) */
+const MaxMirrors = 200
 
 const Levels: readonly LogLevel[] = ["info", "warn", "error"]
 
@@ -138,6 +142,8 @@ export class ConsoleStore {
   private readonly maxEntries: number
   private readonly now: () => number
   private nextId = 1
+  /** The log lines the host mirrors an extensionOutput event as, still waiting to be dropped (see receive) */
+  private readonly mirrors: string[] = []
   /** The host launch the pump's cursor belongs to */
   private launch: number | null = null
 
@@ -243,9 +249,33 @@ export class ConsoleStore {
 
   private receive(events: EditorEvent[]): void {
     const entries: Array<Omit<ConsoleEntry, "id">> = []
+    // The host also logs each extension line as an Admin log line "extension <name>: <text>" (for clients that predate
+    // extensionOutput): the Extension entry stands in for that line, so it is not shown twice
     for (const event of events) {
+      const line = parseExtensionOutput(event)
+      if (line) this.mirrors.push(`extension ${line.extension}: ${line.message}`)
+    }
+    if (this.mirrors.length > MaxMirrors) this.mirrors.splice(0, this.mirrors.length - MaxMirrors)
+    for (const event of events) {
+      const line = parseExtensionOutput(event)
+      if (line) {
+        // Untrusted text, kept as text: the panel renders it as a text node
+        entries.push({
+          level: line.level,
+          message: `[${line.extension}] ${line.message}`,
+          time: line.time > 0 ? line.time : this.now(),
+          source: "extension",
+        })
+        continue
+      }
       const entry = entryFromEvent(event)
-      if (entry) entries.push(entry)
+      if (!entry) continue
+      const mirrored = this.mirrors.indexOf(entry.message)
+      if (mirrored >= 0) {
+        this.mirrors.splice(mirrored, 1)
+        continue
+      }
+      entries.push(entry)
     }
     this.append(entries)
   }

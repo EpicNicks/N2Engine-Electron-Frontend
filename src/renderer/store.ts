@@ -96,7 +96,16 @@ export interface StoreApi {
   remote: RemoteApi
   project: Pick<
     ProjectApi,
-    "openDialog" | "openRecent" | "openFolder" | "pickNewFolder" | "create" | "getRecent" | "removeRecent" | "close"
+    | "openDialog"
+    | "openRecent"
+    | "openFolder"
+    | "pickNewFolder"
+    | "create"
+    | "getRecent"
+    | "removeRecent"
+    | "close"
+    | "enableExtensions"
+    | "forgetExtensionTrust"
   >
   dialogs: Dialogs
 }
@@ -185,6 +194,12 @@ export class EditorStore {
   readonly remote = computed(() => this.host.value.mode === "remote")
   readonly host: Signal<HostState>
   readonly hostLocation = signal<HostLocation | null>(null)
+  /**
+   * The open local project's editor extensions and the trust the user gave its folder (null for a remote engine, with
+   * no project, and for a project with no .lua file in editor/). The main process decides the host's
+   * --editor-extensions from it; here it only shows (the banner, the Extensions section).
+   */
+  readonly extensionTrust = computed(() => this.host.value.extensionTrust ?? null)
   readonly connected = signal(false)
   /**
    * The remote host answered a connect with busy (another session holds it) and the editor is waiting to try again,
@@ -601,6 +616,25 @@ export class EditorStore {
   async stopHost(): Promise<void> {
     if (!(await this.confirmDiscard("stop the host"))) return
     await this.run("Stopping the editor host...", () => this.api.host.stop())
+  }
+
+  /**
+   * The banner's and the admin section's "Enable extensions": the main process asks whether to trust this project's
+   * editor extensions (its own dialog, which the page cannot answer), and on Trust restarts the host with them
+   * enabled. The restart discards the scene's unsaved changes, so they are asked about first. Resolves true when the
+   * host was restarted with extensions; false when the user said no at either question.
+   */
+  async enableExtensions(): Promise<boolean> {
+    if (!(await this.confirmDiscard("restart the host with extensions"))) return false
+    return (await this.run("Restarting the editor host with extensions...", () => this.api.project.enableExtensions())) === true
+  }
+
+  /**
+   * Forgets the trust given to this local project's folder. The running host keeps the extensions it loaded until it
+   * restarts (the state says so); nothing is restarted here.
+   */
+  async forgetExtensionTrust(): Promise<void> {
+    await this.run(null, () => this.api.project.forgetExtensionTrust())
   }
 
   /** Picks the N2EditorHost executable */

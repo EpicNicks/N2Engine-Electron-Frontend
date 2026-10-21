@@ -107,10 +107,10 @@ describe("the text matcher", () => {
 })
 
 describe("the source registry", () => {
-  test("host, game and editor are there; registering adds one, and again only renames it", () => {
+  test("host, game, editor and extension are there; registering adds one, and again only renames it", () => {
     assert.deepEqual(
       consoleSources.all().map((s) => s.id),
-      ["host", "game", "editor"]
+      ["host", "game", "editor", "extension"]
     )
     const registry = new ConsoleSourceRegistry([{ id: "host", label: "Host" }])
     registry.register({ id: "extension", label: "Extension" })

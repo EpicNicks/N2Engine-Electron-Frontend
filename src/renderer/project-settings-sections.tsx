@@ -14,6 +14,7 @@ import {
   RenderingLogic,
   StartupSceneKey,
 } from "./project-settings-logic"
+import { ExtensionsSection } from "./extensions-ui"
 import { SectionRegistry, type SettingsSectionDef } from "./project-settings-registry"
 import type { ProjectSettingsModel } from "./project-settings-state"
 import {
@@ -331,6 +332,7 @@ settingsSections.register({
       : DeterminismAdminReason,
 })
 settingsSections.register({ id: "layers", title: "Layers", order: 60, component: LayersSection, logic: LayersLogic })
-// 70 and 80 are left for Network (B11) and Editor Extensions (E-X4)
+// 70 is left for Network (B11)
+settingsSections.register({ id: "extensions", title: "Extensions", order: 80, component: ExtensionsSection })
 settingsSections.register({ id: "input", title: "Input", order: 90, component: InputSection, logic: InputLogic })
 settingsSections.register({ id: "raw", title: "Raw JSON", order: 100, component: RawSection, logic: RawLogic })

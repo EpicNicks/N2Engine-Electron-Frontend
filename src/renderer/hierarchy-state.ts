@@ -250,6 +250,20 @@ export class HierarchyState {
     if (selection.primary !== previous) this.options.onPrimaryChange?.(selection.primary)
   }
 
+  /**
+   * Selects these objects (an extension's menu item asked for it): the ones the tree has, with the way to them opened;
+   * the last is the primary. Nothing changes when none of them is in the tree.
+   */
+  selectIds(ids: readonly string[]): void {
+    const tree = this.tree.value
+    const found = [...new Set(ids)].filter((id) => tree.nodes.has(id))
+    if (found.length === 0) return
+    batch(() => {
+      for (const id of found) this.expandAncestors(id)
+      this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
+    })
+  }
+
   click(id: string, modifiers: ClickModifiers = {}): void {
     this.setSelection(
       clickSelect(

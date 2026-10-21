@@ -293,7 +293,16 @@ export class FakeApi implements StoreApi {
       this.pushConnection(false)
       this.pushHost({ status: "stopped", projectPath: null })
     },
+    /** What enableExtensions answers (the user's answer in the main process's dialog) */
+    enableExtensions: async () => {
+      this.calls.push("enableExtensions")
+      return this.extensionsTrusted
+    },
+    forgetExtensionTrust: async () => {
+      this.calls.push("forgetExtensionTrust")
+    },
   }
+  extensionsTrusted = true
 
   /** The remote engines the main process remembers; connect's calls and the tokens it was given */
   remoteRecent: RemoteSettings[] = [{ target: "me@cloud", hostPort: 7000 }]
