@@ -14,7 +14,7 @@ import { componentToJsonSchema } from "./jsonschema"
 import * as limits from "./limits"
 import { writesAllowed } from "./policy"
 import { encodePng, fitSize } from "./png"
-import { Budget, envelopeJson } from "./scrub"
+import { Budget, envelopeJson, type Scrubber } from "./scrub"
 import { BridgeName, BridgeVersion, SupportedSpecRevisions } from "./version"
 
 /** The sentence every tool description carries (and the server's instructions repeat) */
@@ -43,6 +43,16 @@ export interface ToolOutput {
   nextCursor?: string
   notes?: string[]
   image?: { mimeType: string; base64: string }
+  /** More pictures after image (n2_play_script: at most limits.MaxScriptScreenshots in all) */
+  images?: Array<{ mimeType: string; base64: string }>
+}
+
+/** What a long call can use besides the host: the client's cancellation, and progress notifications */
+export interface CallHooks {
+  /** Aborted when the client cancels the call (notifications/cancelled) */
+  signal?: AbortSignal
+  /** Sends notifications/progress when the client asked for progress (a progressToken); otherwise nothing */
+  progress?(done: number, total: number, message: string): void
 }
 
 export interface ToolDef {
@@ -52,7 +62,7 @@ export interface ToolDef {
   input: z.ZodType
   output: z.ZodType
   annotations: ToolAnnotationsHint
-  handler(context: HostContext, args: never): Promise<ToolOutput>
+  handler(context: HostContext, args: never, call: CallHooks): Promise<ToolOutput>
   /** A write tool: listed only for an editor on a host that is not read-only, and only when the operator's policy allows */
   write?: boolean
   /**
@@ -65,7 +75,7 @@ export interface ToolDef {
 
 export function tool<S extends z.ZodType>(def: Omit<ToolDef, "input" | "handler" | "irreversible"> & {
   input: S
-  handler(context: HostContext, args: z.infer<S>): Promise<ToolOutput>
+  handler(context: HostContext, args: z.infer<S>, call: CallHooks): Promise<ToolOutput>
   irreversible?(context: HostContext, args: z.infer<S>): Promise<string | null>
 }): ToolDef {
   return def as unknown as ToolDef
@@ -819,6 +829,11 @@ export function isSensitiveLogLine(message: string): boolean {
   return /^(audit:|Rate limit|Refused Hello)/i.test(text)
 }
 
+/** A host log line as the model sees it: no peer= addresses, no host paths, cut at the line limit */
+export function scrubLogMessage(s: Scrubber, message: string): string {
+  return s.str(message.replace(/\s+peer=\S+/g, ""), { maxChars: limits.ConsoleLineChars, anyPath: true })
+}
+
 const consoleTool = tool({
   name: "n2_get_console",
   title: "Console log",
@@ -882,7 +897,7 @@ const consoleTool = tool({
           seq: event.seq,
           level: s.name(event.level ?? "info", 16),
           time: typeof event.time === "number" ? event.time : 0,
-          message: s.str(String(event.message).replace(/\s+peer=\S+/g, ""), { maxChars: limits.ConsoleLineChars, anyPath: true }),
+          message: scrubLogMessage(s, String(event.message)),
         })
       }
       if (!consumedAll) break

@@ -15,6 +15,7 @@ import { RateLimiter } from "./ratelimit"
 import { DefaultPolicy, type HostAccess, type Policy } from "./policy"
 import type { Scrubber } from "./scrub"
 import { SessionManager } from "./session"
+import { PlayController, type PlayOptions } from "./play"
 import type { HostConnector, HostLink } from "./host"
 
 export interface BridgeOptions {
@@ -34,6 +35,11 @@ export interface BridgeOptions {
   sleep?: (ms: number) => Promise<void>
   /** The bridge's stderr log (the scrubber is applied to every line) */
   log?: (message: string) => void
+  /**
+   * Play (design M9): the --launch backend's host, project and renderer, for a game of the bridge's own. Ignored by any
+   * other backend, so a --connect bridge never has the play tools, whatever it is given.
+   */
+  play?: PlayOptions
 }
 
 /** What a tool handler gets: the open session and what was learned when it opened */
@@ -55,6 +61,8 @@ export interface HostContext {
   allowAdmin: boolean
   /** Set by the server when an irreversible operation was allowed, for the journal */
   consent: "elicited" | "operator" | null
+  /** The bridge's game (the --launch backend only), else null */
+  play: PlayController | null
 }
 
 export interface SessionState {
@@ -74,6 +82,8 @@ export class Bridge {
   /** What the last host connection reported (null before the first one): the write tools' listing depends on it */
   private access: HostAccess | null = null
   private readonly connectListeners = new Set<(access: HostAccess) => void>()
+  /** The game of the --launch backend; null for any other backend */
+  readonly play: PlayController | null
 
   constructor(private readonly options: BridgeOptions) {
     this.scrubber = options.scrubber
@@ -81,6 +91,7 @@ export class Bridge {
     this.sessions = options.sessions ?? new SessionManager({ maxWrites: this.policy.maxWrites })
     this.limiter = new RateLimiter(options.rateLimitPerMinute ?? RateLimitPerMinute, 60000, options.now)
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.play = options.play && options.connector.kind === "launch" ? new PlayController(options.play, this.scrubber, (m) => this.log(m)) : null
   }
 
   get backend(): string {
@@ -139,6 +150,7 @@ export class Bridge {
       sessions: this.sessions,
       allowAdmin: this.allowAdmin,
       consent: null,
+      play: this.play,
     }
     const timeoutMs = this.options.callTimeoutMs ?? DefaultCallTimeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -260,6 +272,7 @@ export class Bridge {
     } catch {
       // closing is best effort
     }
+    this.play?.dispose()
     this.options.connector.dispose()
     this.sessions.dispose()
   }
