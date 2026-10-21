@@ -12,10 +12,14 @@ import {
   buildInputPatch,
   buildLayersPatch,
   buildRawPatch,
+  collisionMatrixOf,
   fieldById,
   jsonText,
   layerNames,
+  pairText,
+  parsePairKey,
   readPath,
+  rowsCollide,
   textOfValue,
   type FieldSpec,
 } from "./project-settings-schema"
@@ -51,7 +55,11 @@ export const GeneralLogic: SectionLogic = {
 
 export const LayersLogic: SectionLogic = {
   build: ({ settings, edits }) => buildLayersPatch(settings, edits),
-  textOf: ({ settings }, key) => layerNames(settings)[Number(key.split(".")[1])] ?? "",
+  textOf: ({ settings }, key) => {
+    const pair = parsePairKey(key)
+    if (pair !== null) return pairText(rowsCollide(collisionMatrixOf(settings).rows, pair[0], pair[1]))
+    return layerNames(settings)[Number(key.split(".")[1])] ?? ""
+  },
 }
 
 export const InputLogic: SectionLogic = {

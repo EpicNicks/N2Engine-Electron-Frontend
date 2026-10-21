@@ -458,6 +458,18 @@
       .ps-layer { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
       .ps-layer label { width: 20px; font-size: 11px; color: #888; text-align: right; }
       .ps-layer input { flex: 1; min-width: 0; }
+      .ps-matrix-block { margin-top: 12px; }
+      .ps-matrix-block h4 { margin: 4px 0; font-size: 12px; font-weight: 600; }
+      .ps-matrix-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 4px; }
+      .ps-matrix-scroll { overflow: auto; max-height: 480px; }
+      .ps-matrix { border-collapse: collapse; font-size: 10px; }
+      .ps-matrix th { color: #aaa; font-weight: normal; padding: 1px 3px; white-space: nowrap; }
+      .ps-matrix thead th { writing-mode: vertical-rl; transform: rotate(180deg); text-align: left; vertical-align: bottom; }
+      .ps-matrix tbody th { text-align: right; }
+      .ps-matrix th input { margin: 2px; }
+      .ps-matrix td { padding: 0; text-align: center; border: 1px solid #333; }
+      .ps-matrix td input { margin: 2px; }
+      .ps-matrix td.dirty { background: #4d3b00; }
       .ps-json { width: 100%; box-sizing: border-box; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
       .ps-actions { margin-top: 10px; }
       .ps-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
