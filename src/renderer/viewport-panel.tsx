@@ -11,7 +11,8 @@ import { RotateLayout } from "./viewport-rotate"
 import { ScaleLayout } from "./viewport-scale"
 import { followViewportSelection } from "./viewport-selection"
 import { pointerActionFor, wheelPixels, PointerAction } from "./viewport-input"
-import { ViewportKeyboard, toolLabel } from "./viewport-keys"
+import { ViewportKeyboard } from "./viewport-keys"
+import { ViewportToolbar } from "./viewport-toolbar"
 import { InputForwarder, scrollLines } from "./play-input"
 import { ViewportRenderer, editTarget, gameTarget } from "./viewport-renderer"
 import { framePixelOf } from "./viewport-size"
@@ -146,6 +147,8 @@ export function Viewport() {
       frameSelected: () => viewport.frameSelected().catch(reportFailure("Failed to frame the selection")),
       live: () => play.live.peek(),
       setMode: (mode) => viewport.setMode(mode),
+      toggleSpace: () => viewport.toggleSpace(),
+      togglePivot: () => viewport.togglePivot(),
     })
     let gesture: Gesture | null = null
     let flyFrame: number | null = null
@@ -527,21 +530,14 @@ export function Viewport() {
           >
             Frame
           </button>
-          <span
-            class="viewport-help viewport-mode"
-            title={
-              "The tool: W move, E rotate, R scale, Q select only (the keys fly the camera while the right button is held). " +
-              "Drag a gizmo handle to change the selected objects (Ctrl: snap, Esc: cancel)."
-            }
-          >
-            {toolLabel(keymap, viewport.mode.value)}
-          </span>
+          <ViewportToolbar viewport={viewport} canEdit={store.canEdit.value} onUsed={() => container.current?.focus()} />
           <span
             class="viewport-help"
             title={
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
-              "(Shift: faster). F: frame the selection. W E R Q: move, rotate, scale, select only. Click: select (Ctrl or Shift: add or remove; empty space clears). " +
-              "Drag a gizmo handle to change the selected objects (Ctrl: snap, Esc: cancel)."
+              "(Shift: faster). F: frame the selection. W E R Q: move, rotate, scale, select only. X: world or local space. Z: pivot or center. " +
+              "Click: select (Ctrl or Shift: add or remove; empty space clears). " +
+              "Drag a gizmo handle to change the selected objects (Ctrl: invert snapping, Esc: cancel)."
             }
           >
             Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · click select · F frame

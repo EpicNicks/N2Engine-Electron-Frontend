@@ -191,7 +191,7 @@ describe("the gizmo's tool keys", () => {
   })
 
   test("the shortcuts list names the four tools in the viewport's section, with their keys", () => {
-    const rows = keymap.describe().filter((row) => row.id.startsWith("gizmo."))
+    const rows = keymap.describe().filter((row) => row.id.startsWith("gizmo.") && row.id !== "gizmo.space" && row.id !== "gizmo.pivot")
     assert.deepEqual(
       rows.map((row) => [row.id, row.title, row.scopeTitle, row.chords]),
       [

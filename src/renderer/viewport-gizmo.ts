@@ -11,6 +11,7 @@
 // position change through its own parent chain the way the engine composes transforms (localPositionAfterMove).
 import type { Mat4, Vec3 } from "../protocol/protocol.generated"
 import { GizmoDragDeps, GizmoTarget, TransformDrag, TransformResult } from "./viewport-drag"
+import { snapDeltaAbsolute, snapDeltaRelative, snapValue } from "./viewport-snap"
 import {
   Pixel,
   add,
@@ -39,6 +40,16 @@ export const AxisDirections: Readonly<Record<Axis, Vec3>> = {
   x: vec3(1, 0, 0),
   y: vec3(0, 1, 0),
   z: vec3(0, 0, 1),
+}
+
+/** The three axes a gizmo's handles run along: the world's, or (in local space) the primary object's own */
+export type AxisFrame = Readonly<Record<Axis, Vec3>>
+/** The world axes as a frame */
+export const WorldAxes: AxisFrame = AxisDirections
+
+/** Whether a frame is the world's axes exactly (a handle along them can be snapped to the world grid) */
+export function isWorldFrame(axes: AxisFrame): boolean {
+  return Axes.every((a) => axes[a].x === AxisDirections[a].x && axes[a].y === AxisDirections[a].y && axes[a].z === AxisDirections[a].z)
 }
 
 export type Plane = "xy" | "xz" | "yz"
@@ -137,7 +148,8 @@ export function gizmoLayout(
   origin: Vec3,
   width: number,
   height: number,
-  pixelRatio: number = 1
+  pixelRatio: number = 1,
+  axes: AxisFrame = WorldAxes
 ): GizmoLayout | null {
   const frame = gizmoFrame(view, viewProjection, origin, width, height, pixelRatio)
   if (!frame) return null
@@ -145,7 +157,7 @@ export function gizmoLayout(
 
   const handles: GizmoHandle[] = []
   for (const axis of Axes) {
-    const end = worldToScreen(viewProjection, add(origin, scale(AxisDirections[axis], worldLength)), width, height)
+    const end = worldToScreen(viewProjection, add(origin, scale(axes[axis], worldLength)), width, height)
     if (!end || Math.hypot(end.x - center.x, end.y - center.y) < MinHandlePixels * pixelRatio) continue
     handles.push({ axis, from: { x: center.x, y: center.y }, to: { x: end.x, y: end.y } })
   }
@@ -154,15 +166,15 @@ export function gizmoLayout(
   const planes: PlaneHandle[] = []
   for (const plane of Planes) {
     const { a, b, normal } = PlaneAxes[plane]
-    const facing = Math.abs(dot(toCamera, AxisDirections[normal]))
+    const facing = Math.abs(dot(toCamera, axes[normal]))
     if (!(facing >= PlaneMinFacing)) continue
     // The square lies on the camera's side of both axes, so it is in front of the handles and never behind the gizmo
-    const sa = dot(toCamera, AxisDirections[a]) >= 0 ? 1 : -1
-    const sb = dot(toCamera, AxisDirections[b]) >= 0 ? 1 : -1
+    const sa = dot(toCamera, axes[a]) >= 0 ? 1 : -1
+    const sb = dot(toCamera, axes[b]) >= 0 ? 1 : -1
     const corner = (u: number, v: number): Pixel | null => {
       const world = add(
         origin,
-        add(scale(AxisDirections[a], sa * u * worldLength), scale(AxisDirections[b], sb * v * worldLength))
+        add(scale(axes[a], sa * u * worldLength), scale(axes[b], sb * v * worldLength))
       )
       const screen = worldToScreen(viewProjection, world, width, height)
       return screen ? { x: screen.x, y: screen.y } : null
@@ -257,16 +269,25 @@ export function localPositionAfterMove(target: GizmoTarget, deltaWorld: Vec3): V
   return add(target.localPosition, local)
 }
 
-/** The drag's move rounded to a multiple of step (ctrl held) */
+/** A value rounded to a multiple of step (see viewport-snap.ts: no floating-point tail, no negative zero) */
 export function snapTo(value: number, step: number): number {
-  return step > 0 ? Math.round(value / step) * step : value
+  return snapValue(value, step)
 }
 
 export const SnapStep = 0.5
 
+/** How a translate drag snaps (Ctrl or the toolbar's toggle on): the step, relative to the start or to the world grid, and where the pivot began (for the grid) */
+export interface TranslateSnapping {
+  step: number
+  absolute: boolean
+  origin: Vec3
+}
+
 /** What a drag of a handle gives: its handle, and the world move for the pointer now */
 export interface DragSource {
   readonly handle: HandleId
+  /** The axes the handle runs along (default: the world's), for snapping the move along them */
+  readonly axes?: AxisFrame
   /** The move in the world since the drag began; null (keep the last one) when the pointer's ray can't be followed */
   deltaAt(pixel: Pixel): Vec3 | null
 }
@@ -288,7 +309,8 @@ export class AxisDrag {
     private readonly height: number,
     startParam: number,
     private readonly farPlane: number,
-    private readonly maxStep: number
+    private readonly maxStep: number,
+    readonly axes: AxisFrame = WorldAxes
   ) {
     this.startParam = startParam
   }
@@ -306,11 +328,12 @@ export class AxisDrag {
     width: number,
     height: number,
     farPlane: number = Infinity,
-    maxStep: number = Infinity
+    maxStep: number = Infinity,
+    axes: AxisFrame = WorldAxes
   ): AxisDrag | null {
     const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
-    const hit = ray ? closestOnLine(ray, origin, AxisDirections[axis]) : null
-    return hit === null ? null : new AxisDrag(axis, origin, viewProjection, width, height, hit.t, farPlane, maxStep)
+    const hit = ray ? closestOnLine(ray, origin, axes[axis]) : null
+    return hit === null ? null : new AxisDrag(axis, origin, viewProjection, width, height, hit.t, farPlane, maxStep, axes)
   }
 
   get handle(): Axis {
@@ -319,7 +342,7 @@ export class AxisDrag {
 
   deltaAt(pixel: Pixel): Vec3 | null {
     const along = this.moveAt(pixel)
-    return along === null ? null : scale(AxisDirections[this.axis], along)
+    return along === null ? null : scale(this.axes[this.axis], along)
   }
 
   /**
@@ -328,7 +351,7 @@ export class AxisDrag {
    */
   moveAt(pixel: Pixel): number | null {
     const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
-    const hit = ray ? closestOnLine(ray, this.origin, AxisDirections[this.axis]) : null
+    const hit = ray ? closestOnLine(ray, this.origin, this.axes[this.axis]) : null
     if (!hit || !(hit.s > 0) || hit.s > this.farPlane) return null
     const move = hit.t - this.startParam
     if (!Number.isFinite(move)) return null
@@ -368,7 +391,8 @@ export class PlaneDrag implements DragSource {
     private readonly height: number,
     private readonly start: Vec3,
     private readonly farPlane: number,
-    private readonly maxStep: number
+    private readonly maxStep: number,
+    readonly axes: AxisFrame = WorldAxes
   ) {}
 
   /** Null when the drag can't start: the pointer's ray can't be made, or meets the plane edge-on, behind or too far */
@@ -380,17 +404,18 @@ export class PlaneDrag implements DragSource {
     width: number,
     height: number,
     farPlane: number = Infinity,
-    maxStep: number = Infinity
+    maxStep: number = Infinity,
+    axes: AxisFrame = WorldAxes
   ): PlaneDrag | null {
     const ray = screenRay(viewProjection, pixel.x, pixel.y, width, height)
-    const hit = ray ? rayPlane(ray, origin, AxisDirections[PlaneAxes[plane].normal]) : null
+    const hit = ray ? rayPlane(ray, origin, axes[PlaneAxes[plane].normal]) : null
     if (!hit || hit.s > farPlane) return null
-    return new PlaneDrag(plane, origin, viewProjection, width, height, hit.point, farPlane, maxStep)
+    return new PlaneDrag(plane, origin, viewProjection, width, height, hit.point, farPlane, maxStep, axes)
   }
 
   deltaAt(pixel: Pixel): Vec3 | null {
     const ray = screenRay(this.viewProjection, pixel.x, pixel.y, this.width, this.height)
-    const hit = ray ? rayPlane(ray, this.origin, AxisDirections[PlaneAxes[this.handle].normal]) : null
+    const hit = ray ? rayPlane(ray, this.origin, this.axes[PlaneAxes[this.handle].normal]) : null
     if (!hit || hit.s > this.farPlane) return null
     const raw = sub(hit.point, this.start)
     if (!isFiniteVec3(raw)) return null
@@ -411,7 +436,8 @@ export class GizmoDrag extends TransformDrag {
     deps: GizmoDragDeps,
     target: GizmoTarget | readonly GizmoTarget[],
     private readonly drag: DragSource,
-    private readonly snap: boolean = false
+    private readonly snap: boolean = false,
+    private readonly snapping: TranslateSnapping = { step: SnapStep, absolute: false, origin: vec3(0, 0, 0) }
   ) {
     super(deps, target, { step: "Move", failed: "Failed to move the object" })
   }
@@ -424,14 +450,7 @@ export class GizmoDrag extends TransformDrag {
     if (this.isFinished) return null
     let delta = this.drag.deltaAt(pixel)
     if (delta === null || !isFiniteVec3(delta)) return null
-    if (snap) {
-      const axes = this.drag.handle
-      delta = vec3(
-        axes.includes("x") ? snapTo(delta.x, SnapStep) : delta.x,
-        axes.includes("y") ? snapTo(delta.y, SnapStep) : delta.y,
-        axes.includes("z") ? snapTo(delta.z, SnapStep) : delta.z
-      )
-    }
+    if (snap) delta = this.snapped(delta)
     const world = delta
     const results = this.targets.map((t, index): TransformResult => {
       const position = localPositionAfterMove(t, world)
@@ -442,6 +461,25 @@ export class GizmoDrag extends TransformDrag {
     if (!this.submit(results)) return null
     this.worldDelta = world
     return this.position
+  }
+
+  /**
+   * The move snapped: relative (the default), its component along each of the handle's axes rounded to the step; or
+   * absolute, where the pivot would be rounded to the world grid, which only a handle along the world's axes can do
+   * (along an object's own rotated axis the snap stays relative).
+   */
+  private snapped(delta: Vec3): Vec3 {
+    const frame = this.drag.axes ?? WorldAxes
+    const names = Axes.filter((a) => this.drag.handle.includes(a))
+    if (this.snapping.absolute && isWorldFrame(frame)) {
+      const moved = { x: names.includes("x"), y: names.includes("y"), z: names.includes("z") }
+      return snapDeltaAbsolute(this.snapping.origin, delta, moved, this.snapping.step)
+    }
+    return snapDeltaRelative(
+      delta,
+      names.map((a) => frame[a]),
+      this.snapping.step
+    )
   }
 }
 

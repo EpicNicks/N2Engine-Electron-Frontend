@@ -11,6 +11,7 @@ import { useKeymapActions } from "./keymap-hooks"
 import { appPrefs } from "./prefs"
 import { attachConsoleFilterPrefs } from "./console-filter-prefs"
 import { attachHierarchyFilterPrefs } from "./hierarchy-filter-prefs"
+import { attachViewportSnapPrefs, attachViewportToolPrefs } from "./viewport-tool-prefs"
 import { builtinPanels } from "./layout/builtin-panels"
 import { LayoutController } from "./layout/layout-controller"
 import { DynamicPrefix } from "./layout/layout-model"
@@ -274,7 +275,7 @@ function Toolbar({ layout }: { layout: LayoutController }) {
 }
 
 export function Editor() {
-  const { store, scene, hierarchy, inspector, assets } = useApp()
+  const { store, scene, hierarchy, inspector, assets, viewport } = useApp()
 
   // The panels follow the connection, the selection, the assets and the scene's changes (scene-follow.ts)
   useEffect(() => followScene({ store, scene, hierarchy, inspector, assets }), [])
@@ -283,10 +284,13 @@ export function Editor() {
   useEffect(() => {
     keymap.setMac(isMacPlatform(navigator.userAgent))
     const detachPrefs = keymap.attachPrefs(appPrefs().user)
+    // The viewport's tool, space and pivot are remembered per user (the snap settings per project, below)
+    const detachTool = attachViewportToolPrefs(viewport, appPrefs().user)
     const detach = keymap.install(document, { isModalOpen: modalOpen })
     return () => {
       detach()
       detachPrefs()
+      detachTool()
     }
   }, [])
   useKeymapActions(globalActionHandlers({ store, hierarchy, inspector, assets }))
@@ -331,9 +335,11 @@ export function Editor() {
         const scope = appPrefs().project(info.project.projectId)
         const detachHierarchy = attachHierarchyFilterPrefs(hierarchy, scope)
         const detachConsole = attachConsoleFilterPrefs(store.console, scope)
+        const detachSnap = attachViewportSnapPrefs(viewport, scope)
         detachFilters = () => {
           detachHierarchy()
           detachConsole()
+          detachSnap()
         }
       },
       // Without the id the layout is the user default's and isn't remembered for this project
