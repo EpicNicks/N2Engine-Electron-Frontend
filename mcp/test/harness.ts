@@ -1,0 +1,117 @@
+// Test harness: a bridge wired to a FakeHost, served over an in-memory MCP connection to the SDK's own client. The bridge
+// connects to the fake host over a plain loopback socket here (the real --connect backend, with TLS and a pinned
+// fingerprint, is tested in connect-backend.test.ts).
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
+import { serveStdio } from "@modelcontextprotocol/server/stdio"
+import { Bridge, type BridgeOptions } from "../src/bridge"
+import { EngineClient } from "../../src/protocol/engine-client"
+import { LaunchUser, ClientName, type HostConnector } from "../src/host"
+import { Scrubber } from "../src/scrub"
+import { createServer } from "../src/server"
+import { FakeHost, type FakeHostOptions } from "./fake-host"
+
+export const TestToken = "test-token-0123456789abcdef-SECRET"
+
+/** The bridge's connection to a fake host over plain loopback */
+export function plainConnector(host: FakeHost, token: string = TestToken, user: string = LaunchUser): HostConnector & { disposed: number } {
+  const connector = {
+    kind: "connect",
+    disposed: 0,
+    async connect() {
+      const client = new EngineClient()
+      const info = await client.connect("127.0.0.1", host.port, { token, user, clientName: ClientName })
+      return { client, info }
+    },
+    dispose() {
+      connector.disposed++
+    },
+  }
+  return connector
+}
+
+export interface Harness {
+  host: FakeHost
+  bridge: Bridge
+  scrubber: Scrubber
+  client: Client
+  logs: string[]
+  /** Calls a tool and returns the result (isError results are results, not exceptions) */
+  call(name: string, args?: Record<string, unknown>): Promise<ToolResult>
+  close(): Promise<void>
+}
+
+export interface ToolResult {
+  isError?: boolean
+  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>
+  structuredContent?: any
+  _meta?: Record<string, unknown>
+}
+
+export interface HarnessOptions {
+  host?: FakeHostOptions
+  bridge?: Partial<BridgeOptions>
+  /** "legacy": the client opens with initialize (2025-11-25); "auto": it probes server/discover first (2026-07-28) */
+  era?: "legacy" | "auto"
+  /** A host that is already running (shared between harnesses) */
+  existingHost?: FakeHost
+}
+
+const open: Harness[] = []
+
+/** Closes every harness a test left open (an assertion that failed before its close): so a failure doesn't hang the run */
+export async function closeAllHarnesses(): Promise<void> {
+  await Promise.all(open.splice(0).map((h) => h.close()))
+}
+
+export async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
+  const host = options.existingHost ?? (await new FakeHost({ token: TestToken, ...options.host }).start())
+  const scrubber = new Scrubber()
+  scrubber.addSecret(TestToken)
+  const logs: string[] = []
+  const connector = options.bridge?.connector ?? plainConnector(host)
+  const bridge = new Bridge({
+    scrubber,
+    connector,
+    busyWaitMs: 5,
+    sleep: () => Promise.resolve(),
+    log: (m) => logs.push(m),
+    ...options.bridge,
+  })
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
+  const served = serveStdio(() => createServer(bridge), { transport: serverSide })
+  const client = new Client(
+    { name: "test-client", version: "0" },
+    { versionNegotiation: { mode: options.era === "auto" ? "auto" : "legacy" } }
+  )
+  await client.connect(clientSide)
+  const harness: Harness = {
+    host,
+    bridge,
+    scrubber,
+    client,
+    logs,
+    async call(name, args = {}) {
+      return (await client.callTool({ name, arguments: args })) as unknown as ToolResult
+    },
+    async close() {
+      await client.close().catch(() => undefined)
+      await served.close().catch(() => undefined)
+      bridge.dispose()
+      if (!options.existingHost) await host.stop()
+      const at = open.indexOf(harness)
+      if (at >= 0) open.splice(at, 1)
+    },
+  }
+  open.push(harness)
+  return harness
+}
+
+/** The text of a result's first text block */
+export function textOf(result: ToolResult): string {
+  return result.content.find((c) => c.type === "text")?.text ?? ""
+}
+
+/** Every string a result holds (text blocks and structured content), for scanning */
+export function everything(result: ToolResult): string {
+  return JSON.stringify(result)
+}
