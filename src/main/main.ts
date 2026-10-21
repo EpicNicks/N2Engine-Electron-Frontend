@@ -5,6 +5,8 @@ import { EngineClient } from "../protocol/engine-client"
 import { Channels, HostState, PlayState } from "../shared/api"
 import { buildAppMenuTemplate } from "./app-menu"
 import { EngineHost } from "./engine-ipc"
+import { askTrust } from "./extension-prompt"
+import { ExtensionTrust, ExtensionTrustStore } from "./extension-trust"
 import { TokenEnvVariable } from "./host-launcher"
 import { HostSettings } from "./host-settings"
 import { EditorPage } from "./ipc"
@@ -65,6 +67,14 @@ const engine = new EngineHost(new EngineClient(), page, {
 })
 engine.register(ipcMain)
 
+// Editor extensions (editor/*.lua) run code on the host: the editor passes --editor-extensions only for a local folder
+// the user trusted (extension-trust.ts). The record is in the user data folder, which no project can write.
+const extensionTrust = new ExtensionTrust({
+  store: new ExtensionTrustStore(path.join(userData, "extension-trust.json")),
+  ask: (projectDir, scan) => askTrust(getWindow(), projectDir, scan),
+  log: (message) => console.log(message),
+})
+
 const projectSession = new ProjectSession({
   files,
   recent,
@@ -74,6 +84,7 @@ const projectSession = new ProjectSession({
   pins,
   publish: publishHostState,
   renderer: () => settings.renderer(),
+  extensions: extensionTrust,
   log: (message) => console.log(message),
 })
 

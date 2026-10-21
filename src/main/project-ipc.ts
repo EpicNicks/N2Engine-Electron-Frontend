@@ -106,6 +106,9 @@ export function registerProjectIpc(ipcMain: IpcMain, deps: ProjectIpcDeps): void
     recent.remove(projectPath)
   })
   handle(Channels.projectClose, () => session.closeProject())
+  // No folder comes from the page: both act on the open local project, and the question is the main process's dialog
+  handle(Channels.projectEnableExtensions, () => session.enableExtensions())
+  handle(Channels.projectForgetExtensionTrust, () => session.forgetExtensionTrust())
 
   handle(Channels.hostGetState, () => session.state)
   handle(Channels.hostRestart, () => session.restartHost())

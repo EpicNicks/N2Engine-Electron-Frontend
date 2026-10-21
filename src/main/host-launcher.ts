@@ -103,6 +103,11 @@ export interface HostArgOptions {
   tokensFile?: string
   /** --exit-on-disconnect (the default: true). A launcher that reconnects after an idle close turns it off. */
   exitOnDisconnect?: boolean
+  /**
+   * --editor-extensions: the host loads the project's editor/*.lua extensions, which are code that runs on the host.
+   * Only ExtensionTrust (extension-trust.ts) sets it, for a folder the user trusted. Never passed with --play.
+   */
+  editorExtensions?: boolean
 }
 
 /** The host's arguments: the token travels in the environment, so only the variable's name is here */
@@ -113,6 +118,8 @@ export function buildHostArgs(projectDir: string, options: HostArgOptions = {}):
   if (options.tokensFile) args.push("--tokens-file", options.tokensFile)
   else args.push("--token-env", TokenEnvVariable)
   if (options.playFile) args.push("--play", options.playFile)
+  // Exactly true, and never for a play host (it refuses the combination, and a game is not an editor)
+  if (options.editorExtensions === true && !options.playFile) args.push("--editor-extensions")
   if (options.exitOnDisconnect !== false) args.push("--exit-on-disconnect")
   args.push("--exit-on-stdin-eof")
   return args
@@ -143,6 +150,8 @@ export interface LaunchOptions {
   tokensFile?: string
   /** --exit-on-disconnect, default true (see HostArgOptions) */
   exitOnDisconnect?: boolean
+  /** --editor-extensions (see HostArgOptions) */
+  editorExtensions?: boolean
   /** Defaults to generateToken() */
   token?: string
   readyTimeoutMs?: number
