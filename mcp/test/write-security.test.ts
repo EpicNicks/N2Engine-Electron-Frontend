@@ -335,13 +335,26 @@ describe("budgets", () => {
     await h.close()
   })
 
-  test("undo, redo and file writes count against the budget too", async () => {
-    const { h } = await setup({ bridge: { policy: policy({ maxWrites: 4 }) } })
+  test("file writes count against the budget; undo and redo do not", async () => {
+    const { h } = await setup({ bridge: { policy: policy({ maxWrites: 3 }) } })
     await h.call("n2_create_entity", { name: "A" })
-    await h.call("n2_undo", {})
-    await h.call("n2_redo", {})
+    for (let i = 0; i < 3; i++) {
+      assert.ok(!(await h.call("n2_undo", {})).isError)
+      assert.ok(!(await h.call("n2_redo", {})).isError)
+    }
     await h.call("n2_write_text_asset", { path: "res://x.txt", text: "x" })
-    assert.equal(code(await h.call("n2_write_text_asset", { path: "res://y.txt", text: "y" })), "budget_exceeded")
+    await h.call("n2_write_text_asset", { path: "res://y.txt", text: "y" })
+    assert.equal(code(await h.call("n2_write_text_asset", { path: "res://z.txt", text: "z" })), "budget_exceeded")
+    await h.close()
+  })
+
+  test("n2_session_revert still works after the write budget is used up", async () => {
+    const { h } = await setup({ bridge: { policy: policy({ maxWrites: 2 }) } })
+    await h.call("n2_create_entity", { name: "A" })
+    await h.call("n2_create_entity", { name: "B" })
+    assert.equal(code(await h.call("n2_create_entity", { name: "C" })), "budget_exceeded")
+    const r = await h.call("n2_session_revert", { restoreFiles: false })
+    assert.ok(!r.isError, textOf(r))
     await h.close()
   })
 

@@ -281,7 +281,6 @@ async function moveSteps(ctx: HostContext, agent: Session, direction: "undo" | "
           "The newest undo step on the host is not this session's: somebody edited after the agent, or the history was cleared by opening a scene. Nothing was undone."
         )
       }
-      agent.spend(1)
       const result = await ctx.client.undo()
       if (result.label !== expected) throw new BridgeError("internal", "The host undid a different step than expected.", "Call n2_status and tell the person.")
       agent.live.pop()
@@ -295,7 +294,6 @@ async function moveSteps(ctx: HostContext, agent: Session, direction: "undo" | "
       }
       const next = history.cursor < history.entries.length ? history.entries[history.cursor].label : null
       if (next !== expected) throw conflict("The step to redo is not the one this session undid (the history changed since). Nothing was redone.")
-      agent.spend(1)
       const result = await ctx.client.redo()
       if (result.label !== expected) throw new BridgeError("internal", "The host redid a different step than expected.", "Call n2_status and tell the person.")
       agent.undone.pop()
@@ -906,11 +904,12 @@ const revertSession = tool({
     let undone = 0
     try {
       for (let i = 0; i < k; i++) {
+        // Undo and restore are not counted against the write budget: the safety revert must work when the budget is used
         const expected = agent.live[agent.live.length - 1]
-        agent.spend(1)
         const result = await ctx.client.undo()
         if (result.label !== expected) throw new BridgeError("internal", "The host undid a different step than expected.", "Call n2_status and tell the person.")
         agent.live.pop()
+        agent.undone.push(expected)
         undone++
       }
     } catch (e) {
@@ -948,7 +947,6 @@ const revertSession = tool({
         files.push({ path, outcome: "changed_since" })
         continue
       }
-      agent.spend(1)
       await ctx.client.writeTextAsset(f.path, backup)
       f.restored = true
       files.push({ path, outcome: "restored" })

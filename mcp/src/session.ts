@@ -169,7 +169,9 @@ export class Session {
     const full: JournalEntry = { seq: this.nextSeq++, at: now, ...entry }
     this.journal.push(full)
     if (this.journal.length > limits.MaxJournalEntries) {
-      this.journal.shift()
+      // Keep entries that hold file backups so a revert still restores them
+      const drop = this.journal.findIndex((x) => !x.file)
+      this.journal.splice(drop < 0 ? 0 : drop, 1)
       this.droppedEntries++
     }
     return full

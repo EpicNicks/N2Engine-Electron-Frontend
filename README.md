@@ -426,7 +426,7 @@ node dist/n2-mcp.mjs --connect editor.example.net:9999 --fingerprint <sha256> --
 | What | Limit |
 |---|---|
 | Tool calls | 120 per minute (`rate_limited`, with the seconds to wait); the retry after a confirmation question is not counted |
-| Write commands | 2000 per agent session (`--max-writes`); a call that would pass it is refused before anything is sent (`budget_exceeded`) |
+| Write commands | 2000 per agent session (`--max-writes`; undo, redo and the revert do not count, so a session can always be undone); a call that would pass it is refused before anything is sent (`budget_exceeded`) |
 | Batch | 500 ops |
 | Text asset writes | 100 KB each, 200 per session; a file of 512 KB or more is not overwritten (it can't be backed up); 16 MB of backups per session |
 | Sessions | 16 at once, 24 hours idle |

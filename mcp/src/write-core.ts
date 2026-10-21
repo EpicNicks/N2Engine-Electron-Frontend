@@ -183,7 +183,9 @@ export async function inGroup<T>(ctx: HostContext, agent: Session, tool: string,
   }
   const top = after && after.cursor > 0 ? after.entries[after.cursor - 1].label : null
   // The label is unique in this process, so it on top means the group made its step
-  const stepAdded = top === label
+  // and a step of an earlier bridge run with the same label does not count: the history must have moved
+  const foreignTop = before !== null && after !== null && before.cursor === after.cursor && before.cursor > 0 && before.entries[before.cursor - 1].label === label
+  const stepAdded = top === label && !foreignTop
   if (failure === null && endError !== null) failure = { error: endError }
   if (failure !== null) {
     if (after === null) throw failureError(ctx, tool, new GroupFailure(failure.error, "unknown"))
