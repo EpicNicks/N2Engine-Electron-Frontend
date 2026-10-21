@@ -3,6 +3,7 @@
 // unknown input and never throws: unknown fields are ignored, missing ones take a default, and a shape that cannot be
 // used at all becomes null (the wrappers turn that into a typed "malformed" result).
 import type { FieldSchema } from "./protocol.generated"
+import { parseProtocolVersion } from "./protocol.generated"
 import { parseFieldSchema } from "./component-schema"
 
 /** ServerInfo.capabilities names the host has when it was built with the editor extension commands (since 1.14.0) */
@@ -13,21 +14,45 @@ export function hasCapability(capabilities: unknown, name: string): boolean {
   return Array.isArray(capabilities) && capabilities.includes(name)
 }
 
-/** The ErrorCoded codes of 1.14.0 that concern extensions (the code is the contract, never the message) */
+/**
+ * InvokeMenuItem (since 1.15.0) has no capability of its own: a 1.14 host has "editorExtensions" too, and answers the
+ * command with an unknown-command Error. So running an item needs the capability and a host of at least this minor.
+ */
+export const InvokeMenuItemMinMinor = 15
+
+/** Whether a host with these ServerInfo capabilities and protocol version has InvokeMenuItem (never throws) */
+export function supportsInvokeMenuItem(capabilities: unknown, protocolVersion: unknown): boolean {
+  if (!hasCapability(capabilities, EditorExtensionsCapability)) return false
+  const version = typeof protocolVersion === "string" ? parseProtocolVersion(protocolVersion) : null
+  return version !== null && (version.major > 1 || (version.major === 1 && version.minor >= InvokeMenuItemMinMinor))
+}
+
+/**
+ * The ErrorCoded codes that concern extensions (the code is the contract, never the message): the first three since
+ * 1.14.0 (answered by InvokeMenuItem since 1.15.0), staleUiRevision and editGroupOpen since 1.15.0
+ */
 export const ExtensionErrorCodes = {
   extensionsDisabled: "extensionsDisabled",
   extensionFailed: "extensionFailed",
   extensionFaulted: "extensionFaulted",
+  staleUiRevision: "staleUiRevision",
+  editGroupOpen: "editGroupOpen",
 } as const
 
 /** What a failed extension command was, kept apart from the denials (forbidden, readOnly) and from busy */
 export type ExtensionErrorKind =
   /** The host was not started with --editor-extensions */
   | "disabled"
-  /** An extension's call failed (reserved by 1.14.0: nothing answers it yet) */
+  /** An extension's call failed and the host took its changes back (InvokeMenuItem, since 1.15.0) */
   | "failed"
-  /** The extension is disabled until the next reload (reserved by 1.14.0) */
+  /** The extension is disabled until the next reload (InvokeMenuItem, since 1.15.0) */
   | "faulted"
+  /** The uiRevision sent is not the host's current one: nothing ran, fetch GetEditorUi again (1.15.0) */
+  | "staleUi"
+  /** The client has an edit group open: nothing ran, end the group first (1.15.0) */
+  | "editGroupOpen"
+  /** The arguments were refused before anything was sent (a selection or params of the wrong shape) */
+  | "invalid"
   /** The role may not run the command */
   | "forbidden"
   /** The host is read-only */
@@ -46,6 +71,10 @@ export function extensionErrorKindOf(code: string | undefined): ExtensionErrorKi
       return "failed"
     case ExtensionErrorCodes.extensionFaulted:
       return "faulted"
+    case ExtensionErrorCodes.staleUiRevision:
+      return "staleUi"
+    case ExtensionErrorCodes.editGroupOpen:
+      return "editGroupOpen"
     case "forbidden":
       return "forbidden"
     case "readOnly":
@@ -211,4 +240,74 @@ export function parseExtensionsUi(value: unknown): ExtensionsUi | null {
     }
   }
   return { uiRevision: count(value.uiRevision), menuItems }
+}
+
+/** The most objects InvokeMenuItem takes in its selection (the host refuses more) */
+export const MaxInvokeSelection = 4096
+
+const UuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+/**
+ * Why InvokeMenuItem's arguments would be refused (null when they would not be): checked before sending, so a bad
+ * call costs no round trip and never reaches the host. The host stays the authority (a name its form lacks, a value
+ * out of its field's range).
+ */
+export function checkInvokeArguments(itemId: unknown, selection: unknown, params: unknown, uiRevision: unknown): string | null {
+  if (typeof itemId !== "string" || itemId === "" || itemId.includes("\0")) return "itemId must be a non-empty string"
+  if (!Array.isArray(selection)) return "selection must be an array of object UUIDs"
+  if (selection.length > MaxInvokeSelection) return `selection has more than ${MaxInvokeSelection} objects`
+  if (!selection.every((id) => typeof id === "string" && UuidPattern.test(id))) return "selection must hold only UUID strings"
+  if (!isObject(params)) return "params must be a JSON object"
+  if (typeof uiRevision !== "number" || !Number.isInteger(uiRevision) || uiRevision < 0 || uiRevision > 0xffffffff) {
+    return "uiRevision must be an unsigned 32-bit integer"
+  }
+  return null
+}
+
+/** What an item returned: each part is left out by the host when empty, so a missing one is empty here */
+export interface ExtensionResult {
+  /** UNTRUSTED text from project code: show it as text, never as HTML */
+  message: string
+  /** Object UUIDs the item asks the editor to select */
+  select: string[]
+  /** UNTRUSTED text, like message */
+  warnings: string[]
+}
+
+/** The edit the item made, as EditResult has it (an item that changed nothing leaves the revisions as they were) */
+export interface ExtensionEdit {
+  label: string
+  revision: number
+  savedRevision: number
+  canUndo: boolean
+  canRedo: boolean
+}
+
+/** InvokeMenuItem's answer: what the item returned and the history state after its step */
+export interface InvokeResult {
+  result: ExtensionResult
+  edit: ExtensionEdit
+}
+
+/** ExtensionResult's JSON part: unknown fields ignored, missing ones empty, wrong types dropped; null when not an object */
+export function parseExtensionResultInfo(value: unknown): ExtensionResult | null {
+  if (!isObject(value)) return null
+  return { message: text(value.message), select: strings(value.select), warnings: strings(value.warnings) }
+}
+
+/** The whole ExtensionResult response as a typed value, or null when the result part is not an object */
+export function parseInvokeResult(response: unknown): InvokeResult | null {
+  if (!isObject(response)) return null
+  const result = parseExtensionResultInfo(response.result)
+  if (result === null) return null
+  return {
+    result,
+    edit: {
+      label: text(response.label),
+      revision: count(response.revision),
+      savedRevision: count(response.savedRevision),
+      canUndo: response.canUndo === true,
+      canRedo: response.canRedo === true,
+    },
+  }
 }
