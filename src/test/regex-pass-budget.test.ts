@@ -1,11 +1,19 @@
-// The console's regex filter draws all its work on one bucket of steps per matcher: at most MaxUpdateSteps for one
-// update (the list, both kinds of count and the highlighting together), refilled at RegexStepsPerSecond while lines
-// stream in. A pattern that is linear per line but slow over a full console turns itself off with a message instead of
+// The console's regex filter draws its work on two buckets of steps per matcher, one for testing the lines (shared by
+// the list and both kinds of count) and one for highlighting, so at most MaxUpdateSteps for one update, refilled at
+// RegexStepsPerSecond while lines stream in; highlighting can never starve the filter. A pattern that is linear per line but slow over a full console turns itself off with a message instead of
 // freezing the page, and the list and the counts always agree on whether it is off. Also the ignore-case class folding.
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { ConsoleStore, ConsoleEntry, LogLevel } from "../renderer/console-store"
-import { compileMatcher, MaxRegexInput, MaxUpdateSteps, RegexStepsPerSecond } from "../renderer/console-filter"
+import { ConsoleStore, ConsoleEntry, FilterDebounceMs, LogLevel } from "../renderer/console-store"
+import {
+  compileMatcher,
+  MaxHighlightSteps,
+  MaxRegexInput,
+  MaxTestSteps,
+  MaxUpdateSteps,
+  RegexStepsPerSecond,
+  TestStepsPerSecond,
+} from "../renderer/console-filter"
 import { compileProgram, exec } from "../renderer/safe-regex"
 
 const never = async () => ({ epoch: 1, nextSeq: 1, dropped: 0, events: [] }) as never
@@ -43,7 +51,7 @@ function stepsPerLine(pattern: string, message: string): number {
 describe("the step bucket", () => {
   test("the costly pattern costs what the tests below assume", () => {
     const s = stepsPerLine(Costly, long)
-    assert.ok(s > 100_000 && s < MaxUpdateSteps / 10, `${s} steps per line`)
+    assert.ok(s > 100_000 && s < MaxTestSteps / 10, `${s} steps per line`)
   })
 
   test("a slow pattern over a full console turns itself off and nothing is filtered", { timeout: 20000 }, () => {
@@ -75,8 +83,8 @@ describe("the step bucket", () => {
       // The shown (info) lines alone fit in the bucket, all the lines don't: the list used to stay filtered while
       // the counts turned the regular expression off
       const s = stepsPerLine(Costly, long)
-      const info = Math.floor((0.5 * MaxUpdateSteps) / s)
-      const warn = Math.ceil((0.7 * MaxUpdateSteps) / s)
+      const info = Math.floor((0.5 * MaxTestSteps) / s)
+      const warn = Math.ceil((0.7 * MaxTestSteps) / s)
       const { log } = storeWithClock()
       log.addEntries([
         ...Array.from({ length: info }, () => entry(long, "info")),
@@ -97,7 +105,7 @@ describe("the step bucket", () => {
 
   test("a pattern just under the bucket per batch does not stall every batch: it turns off", { timeout: 30000 }, () => {
     const s = stepsPerLine(Costly, long)
-    const perBatch = Math.floor((0.8 * MaxUpdateSteps) / s) // each batch alone fits in one update's budget
+    const perBatch = Math.floor((0.8 * MaxTestSteps) / s) // each batch alone fits in one update's budget
     const { log, clock } = storeWithClock()
     log.regex.value = true
     log.search.value = Costly
@@ -122,7 +130,7 @@ describe("the step bucket", () => {
 
   test("a costly pattern on a slow stream stays on and only tests the new lines", { timeout: 30000 }, () => {
     const s = stepsPerLine(Costly, long)
-    const perBatch = Math.floor((0.3 * MaxUpdateSteps) / s)
+    const perBatch = Math.floor((0.3 * MaxTestSteps) / s)
     const { log, clock } = storeWithClock()
     log.regex.value = true
     log.search.value = Costly
@@ -142,16 +150,71 @@ describe("the step bucket", () => {
     assert.equal(log.visible.value.length, 0)
   })
 
-  test("highlighting draws on the same bucket and running it dry only stops marking", { timeout: 20000 }, () => {
+  test("highlighting has its own bucket and running it dry only stops marking", { timeout: 20000 }, () => {
     const matcher = compileMatcher({ search: "x(.*y)?", matchCase: false, regex: true }, () => 0)
     const message = "x".repeat(4096)
     const started = Date.now()
     let unmarked = 0
     for (let i = 0; i < 5000; i++) if (matcher.ranges(message + i).length === 0) unmarked++
     assert.ok(Date.now() - started < 10000)
-    assert.ok(matcher.spent <= MaxUpdateSteps, "highlighting a full console spends at most the bucket")
+    assert.ok(matcher.spent <= MaxHighlightSteps, "highlighting a full console spends at most its bucket")
     assert.ok(unmarked > 0, "the rows past the bucket are not marked")
     assert.equal(matcher.slow, false, "running out of highlight budget does not disable the filter")
+  })
+
+  test("highlighting that runs its bucket dry does not starve the filter of the next lines", { timeout: 30000 }, () => {
+    // A cheap pattern with a match every few characters: testing 2000 rows costs little, highlighting them all costs
+    // far more than a bucket. The next batch of lines (non-matching, so each is read to its end) must still be filtered.
+    const { log, clock } = storeWithClock()
+    log.addEntries(Array.from({ length: 2000 }, (_, i) => entry(("12 ".repeat(1366) + i).slice(-4096))))
+    log.regex.value = true
+    log.search.value = "[0-9]+"
+    assert.equal(update(log).visible, 2000)
+    const beforeHighlight = log.matcher.value.spent
+    let unmarked = 0
+    for (const row of log.rows.value) if (log.matcher.value.ranges(row.entry.message).length === 0) unmarked++
+    assert.ok(unmarked > 0, "highlighting ran its bucket dry")
+    assert.ok(log.matcher.value.spent - beforeHighlight <= MaxHighlightSteps)
+    clock.now += 250
+    log.addEntries(Array.from({ length: 150 }, () => entry("a".repeat(4096))))
+    const u = update(log)
+    assert.equal(u.slow, false, "the filter stays on")
+    assert.equal(u.visible, 2000, "and the new lines are filtered out")
+    assert.equal(u.counts.info, 2000)
+  })
+
+  test("the editor waits for typing to pause before it applies a changed text filter", () => {
+    const pending = new Map<number, () => void>()
+    let nextHandle = 1
+    const timers = {
+      setTimeout: (callback: () => void, ms: number) => {
+        assert.equal(ms, FilterDebounceMs)
+        pending.set(nextHandle, callback)
+        return nextHandle++
+      },
+      clearTimeout: (handle: unknown) => void pending.delete(handle as number),
+    }
+    const fire = () => {
+      const callbacks = [...pending.values()]
+      pending.clear()
+      for (const callback of callbacks) callback()
+    }
+    const log = new ConsoleStore(never, { now: () => 1000, clock: () => 0, timers, filterDelayMs: FilterDebounceMs })
+    log.addEntries([entry("alpha"), entry("beta")])
+    log.regex.value = true
+    const first = log.matcher.value
+    for (const typed of ["b", "be", "bet", "beta"]) log.search.value = typed
+    assert.equal(log.matcher.value, first, "no matcher is compiled while typing")
+    assert.equal(log.visible.value.length, 2)
+    assert.equal(pending.size, 1, "each change restarts the one wait")
+    fire()
+    assert.deepEqual(log.visible.value.map((e) => e.message), ["beta"], "the pattern applies once typing pauses")
+    log.search.value = ""
+    assert.equal(pending.size, 0, "clearing the text applies at once")
+    assert.equal(log.visible.value.length, 2)
+    log.applyFilterState({ levels: { info: true, warn: true, error: true }, hiddenSources: [], search: "alp", matchCase: false, regex: false, collapse: false })
+    assert.equal(pending.size, 0, "the saved filters apply at once")
+    assert.deepEqual(log.visible.value.map((e) => e.message), ["alpha"])
   })
 
   test("a line that passes gets its first match highlighted while the bucket lasts", () => {
@@ -180,19 +243,21 @@ describe("the step bucket", () => {
   test("the budget is sane", () => {
     assert.ok(MaxUpdateSteps >= MaxRegexInput * 100, "a few ordinary lines never run it dry")
     assert.ok(RegexStepsPerSecond < MaxUpdateSteps, "the refill is slower than one full update")
+    assert.ok(TestStepsPerSecond < MaxTestSteps)
+    assert.equal(MaxUpdateSteps, MaxTestSteps + MaxHighlightSteps)
   })
 })
 
 describe("ignore-case classes fold non-ASCII letters the way RegExp does", () => {
   const cases: Array<[string, string]> = [
-    ["[а-я]+", "П"],
-    ["[à]", "À"],
-    ["[ā]", "Ā"],
-    ["[^à]", "À"],
-    ["[À]", "à"],
-    ["[k]", "K"],
-    ["[K]", "k"],
-    ["[a-z]", "ſ"],
+    ["[\u0430-\u044f]+", "\u041f"],
+    ["[\u00e0]", "\u00c0"],
+    ["[\u0101]", "\u0100"],
+    ["[^\u00e0]", "\u00c0"],
+    ["[\u00c0]", "\u00e0"],
+    ["[k]", "\u212a"],
+    ["[\u212a]", "k"],
+    ["[a-z]", "\u017f"],
     ["[^a-z]", "K"],
   ]
   for (const [source, text] of cases) {

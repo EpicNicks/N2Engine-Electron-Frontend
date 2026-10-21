@@ -76,15 +76,24 @@ export const MaxRegexInput = 4096
 export const HighlightStepsPerChar = 64
 /**
  * The matcher is linear in a line, but thousands of lines of 4096 characters with a pattern of hundreds of steps add
- * up, and the log keeps arriving, so all of a matcher's work (testing the lines, highlighting the rows) draws on one
- * bucket of steps. The bucket holds at most MaxUpdateSteps, so that is the most one update can spend however many
- * passes it makes, and it refills at RegexStepsPerSecond, so that is the most the filter spends on average while lines
- * stream in. Testing that runs the bucket dry turns the regular expression off for the pattern (TextMatcher.slow);
- * highlighting that runs it dry only stops marking. The numbers are justified in the README.
+ * up, and the log keeps arriving, so a matcher's work draws on two buckets of steps: one for testing the lines, one for
+ * highlighting the rows, kept apart so that highlighting can never starve the filter. A bucket holds at most its size,
+ * so the two sizes together (MaxUpdateSteps) are the most one update can spend however many passes it makes, and each
+ * refills at its rate, so the two rates together (RegexStepsPerSecond) are the most the filter spends on average while
+ * lines stream in. Testing that runs its bucket dry turns the regular expression off for the pattern
+ * (TextMatcher.slow); highlighting that runs its bucket dry only stops marking. The numbers are justified in the README.
  */
-export const MaxUpdateSteps = 20_000_000
-/** The bucket's refill rate in steps per second (see MaxUpdateSteps) */
-export const RegexStepsPerSecond = 4_000_000
+export const MaxTestSteps = 15_000_000
+/** The testing bucket's refill rate in steps per second */
+export const TestStepsPerSecond = 3_000_000
+/** The highlighting bucket's size (see MaxTestSteps) */
+export const MaxHighlightSteps = 5_000_000
+/** The highlighting bucket's refill rate in steps per second */
+export const HighlightStepsPerSecond = 1_000_000
+/** The most one update can spend: both buckets full */
+export const MaxUpdateSteps = MaxTestSteps + MaxHighlightSteps
+/** The most the filter spends per second on average: both refill rates */
+export const RegexStepsPerSecond = TestStepsPerSecond + HighlightStepsPerSecond
 /** The highlights remembered per matcher (a render asks again for every row; it is cleared when it is this full) */
 const MaxRangeCache = 6000
 
@@ -92,7 +101,7 @@ const MaxRangeCache = 6000
 export interface TextResults {
   /** Whether the entry passes (asked only for the entries the results were made from) */
   passes(entry: ConsoleEntry): boolean
-  /** The regular expression ran the bucket dry and is off for this pattern: every line passes */
+  /** The regular expression ran its testing bucket dry and is off for this pattern: every line passes */
   slow: boolean
 }
 
@@ -101,16 +110,16 @@ export interface TextMatcher {
   test(message: string): boolean
   /**
    * Tests the lines once for the list and the counts together. A line this matcher has tested is remembered, so only
-   * new lines cost steps; if the bucket runs dry part way the matcher turns slow and every line passes.
+   * new lines cost steps; if the testing bucket runs dry part way the matcher turns slow and every line passes.
    */
   testEntries(entries: readonly ConsoleEntry[]): TextResults
   /** [start, end) ranges of the matches in the message, in order, for highlighting; none without text */
   ranges(message: string): Array<[number, number]>
   /** Why the regular expression isn't valid (shown inline); null when it is, or when regex is off */
   error: string | null
-  /** The regular expression ran the bucket dry and is off for this pattern (editing the pattern tries again) */
+  /** The regular expression ran its testing bucket dry and is off for this pattern (editing the pattern tries again) */
   readonly slow: boolean
-  /** The matcher steps spent so far (the bucket bounds it; for tests) */
+  /** The matcher steps spent so far (the buckets bound it; for tests) */
   readonly spent: number
   /** The filter does something */
   active: boolean
@@ -118,6 +127,25 @@ export interface TextMatcher {
 
 /** A clock in milliseconds (performance.now by default; tests pass their own) */
 export type Clock = () => number
+
+/** Steps to spend: full when made, refilled for the time since it was last drawn on, never over full */
+class StepBucket {
+  left: number
+  private filled: number
+  constructor(
+    private readonly size: number,
+    private readonly perSecond: number,
+    private readonly clock: Clock
+  ) {
+    this.left = size
+    this.filled = clock()
+  }
+  refill(): void {
+    const now = this.clock()
+    if (now > this.filled) this.left = Math.min(this.size, this.left + ((now - this.filled) * this.perSecond) / 1000)
+    this.filled = now
+  }
+}
 
 const allPass: TextResults = { passes: () => true, slow: false }
 const slowResults: TextResults = { passes: () => true, slow: true }
@@ -171,29 +199,23 @@ export function compileMatcher(filter: TextFilter, clock: Clock = () => performa
   const limited = (message: string) => (message.length > MaxRegexInput ? message.slice(0, MaxRegexInput) : message)
   let slow = false
   let spent = 0
-  // The bucket: full when the matcher is made, refilled for the time since it was last drawn on, never over full
-  let left = MaxUpdateSteps
-  let filled = clock()
-  const refill = () => {
-    const now = clock()
-    if (now > filled) left = Math.min(MaxUpdateSteps, left + ((now - filled) * RegexStepsPerSecond) / 1000)
-    filled = now
-  }
+  const testing = new StepBucket(MaxTestSteps, TestStepsPerSecond, clock)
+  const highlighting = new StepBucket(MaxHighlightSteps, HighlightStepsPerSecond, clock)
   let cache = new Map<string, Array<[number, number]>>()
   const tested = new WeakMap<ConsoleEntry, boolean>()
   // One run of the matcher with at most `allowed` steps, taken from the bucket; dry when it ran out
-  const run = (text: string, from: number, firstOnly: boolean, allowed: number) => {
+  const run = (bucket: StepBucket, text: string, from: number, firstOnly: boolean, allowed: number) => {
     const cap = Math.max(0, Math.floor(allowed))
     const budget = { left: cap }
     const m = exec(program, text, from, firstOnly, budget)
     const used = cap - Math.max(budget.left, 0)
     spent += used
-    left -= used
+    bucket.left -= used
     return { m, used, dry: budget.left < 0 }
   }
-  // Tests one line; null when the bucket ran dry (the matcher is slow from then on)
+  // Tests one line; null when the testing bucket ran dry (the matcher is slow from then on)
   const testOne = (message: string): boolean | null => {
-    const r = run(limited(message), 0, true, left)
+    const r = run(testing, limited(message), 0, true, testing.left)
     if (!r.dry) return r.m !== null
     slow = true
     cache = new Map()
@@ -202,12 +224,12 @@ export function compileMatcher(filter: TextFilter, clock: Clock = () => performa
   return {
     test(message) {
       if (slow) return true
-      refill()
+      testing.refill()
       return testOne(message) ?? true
     },
     testEntries(entries) {
       if (slow) return slowResults
-      refill()
+      testing.refill()
       for (const entry of entries) {
         if (tested.has(entry)) continue
         const passes = testOne(entry.message)
@@ -220,16 +242,16 @@ export function compileMatcher(filter: TextFilter, clock: Clock = () => performa
       if (slow) return []
       const hit = cache.get(message)
       if (hit) return hit
-      refill()
+      highlighting.refill()
       const text = limited(message)
       const out: Array<[number, number]> = []
       let line = Infinity // the first match is limited by the bucket only, the rest by the line too
       let final = true // false when the bucket cut the line short: it is asked again on a later render
       for (let from = 0; from <= text.length; ) {
-        const r = run(text, from, false, Math.min(left, line))
+        const r = run(highlighting, text, from, false, Math.min(highlighting.left, line))
         line = line === Infinity ? HighlightStepsPerChar * (text.length + 1) - r.used : line - r.used
         if (r.dry) {
-          final = left > 0
+          final = highlighting.left > 0
           break
         }
         const m = r.m

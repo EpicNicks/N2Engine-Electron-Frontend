@@ -27,7 +27,7 @@ import {
 } from "../protocol/editor-events"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import { AutosaveChoice, describeAutosave, sceneKey, shouldOfferAutosave } from "./autosave"
-import { ConsoleStore, ConsoleStoreOptions } from "./console-store"
+import { ConsoleStore, ConsoleStoreOptions, FilterDebounceMs } from "./console-store"
 import { basename, normalizeScenePath, scenePathProblem } from "./paths"
 import {
   BusyRetryState,
@@ -357,6 +357,7 @@ export class EditorStore {
     this.giveUpAfterMs = retry.giveUpAfterMs ?? GiveUpAfterMilliseconds
     this.host = signal(api.host.state())
     this.console = new ConsoleStore((epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents), {
+      filterDelayMs: FilterDebounceMs,
       ...consoleOptions,
       onEvents: (events) => {
         this.onEvents(events)
