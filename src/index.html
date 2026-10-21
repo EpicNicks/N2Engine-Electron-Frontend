@@ -458,6 +458,18 @@
       .ps-layer { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
       .ps-layer label { width: 20px; font-size: 11px; color: #888; text-align: right; }
       .ps-layer input { flex: 1; min-width: 0; }
+      .ps-matrix-block { margin-top: 12px; }
+      .ps-matrix-block h4 { margin: 4px 0; font-size: 12px; font-weight: 600; }
+      .ps-matrix-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; margin-bottom: 4px; }
+      .ps-matrix-scroll { overflow: auto; max-height: 480px; }
+      .ps-matrix { border-collapse: collapse; font-size: 10px; }
+      .ps-matrix th { color: #aaa; font-weight: normal; padding: 1px 3px; white-space: nowrap; }
+      .ps-matrix thead th { writing-mode: vertical-rl; transform: rotate(180deg); text-align: left; vertical-align: bottom; }
+      .ps-matrix tbody th { text-align: right; }
+      .ps-matrix th input { margin: 2px; }
+      .ps-matrix td { padding: 0; text-align: center; border: 1px solid #333; }
+      .ps-matrix td input { margin: 2px; }
+      .ps-matrix td.dirty { background: #4d3b00; }
       .ps-json { width: 100%; box-sizing: border-box; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
       .ps-actions { margin-top: 10px; }
       .ps-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -573,6 +585,19 @@
       .ext-files { margin: 4px 0 8px; padding-left: 18px; font-family: Consolas, monospace; font-size: 12px; word-break: break-all; }
       .ext-trust { margin-top: 12px; border-top: 1px solid #333; padding-top: 4px; }
       .ext-trust h4 { margin: 8px 0 4px; font-size: 12px; font-weight: 600; }
+
+      /* Typed import settings (FE10): the form of a Texture, Model or Font in the assets panel's detail */
+      .import-settings-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; }
+      .import-settings-head button { font-size: 11px; padding: 1px 6px; }
+      .import-form { display: flex; flex-direction: column; gap: 4px; }
+      .import-field { display: grid; grid-template-columns: 45% 1fr; align-items: center; gap: 2px 6px; font-size: 12px; }
+      .import-field label { color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .import-field.set label { color: #ddd; }
+      .import-control { display: flex; gap: 4px; align-items: center; min-width: 0; }
+      .import-control input, .import-control select { flex: 1; min-width: 0; }
+      .import-unit { color: #888; font-size: 11px; }
+      .import-field-error { grid-column: 1 / -1; color: #f48771; font-size: 11px; }
+      .import-other-text { margin: 2px 0; padding: 4px; max-height: 90px; overflow: auto; background: #1e1e1e; border: 1px solid #333; font-size: 11px; }
 
       /* Scrollbars */
       ::-webkit-scrollbar { width: 10px; height: 10px; }
