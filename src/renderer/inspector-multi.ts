@@ -6,11 +6,14 @@
 // What is shared: components are matched by type, the first of each type on every object; a LuaComponent only when
 // all of them run the same script (its script fields are then the shared ones). Fields of kinds that have no neutral
 // "mixed" display and no safe way to apply one value to many (references, lists, JSON) are not shown: those are edited
-// one object at a time. Name, Add Component and Remove Component are not multi-edited.
+// one object at a time. The name is not multi-edited. Add Component adds the type to every object, and Remove removes
+// a shared component (the first of its type) from every object, each as one edit group too.
 //
-// A failure: each object is a request of its own, and the host takes a request all or nothing, so a refused object
-// leaves the others as they were set (the group still ends: it is one undo step for what was applied). The panel says
-// how many were changed and why the first refused, and reads the objects again, so what is shown is what the host has.
+// A failure: each object is a request of its own, and the host takes a request all or nothing. The first refusal
+// aborts the edit: nothing more is sent, and the group is ended as every edit group is (in a finally; never left open,
+// since the host refuses Undo and extension invokes while one is), so what was applied before it is one undo step.
+// The panel says how many were applied, how many were not sent and why the object refused, and reads the objects
+// again, so what is shown is what the host has. An edit that ends after the selection moved on reports nothing there.
 import { batch, computed, signal } from "@preact/signals-core"
 import type { ComponentSchema, EntityDetails, FieldSchema, Quat, Vec3 } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
@@ -32,7 +35,14 @@ import {
 
 type Engine = Pick<
   EngineApi,
-  "isConnected" | "getEntity" | "getLuaFields" | "setEntityProperties" | "setComponentFields" | "setLocalTransform"
+  | "isConnected"
+  | "getEntity"
+  | "getLuaFields"
+  | "setEntityProperties"
+  | "setComponentFields"
+  | "setLocalTransform"
+  | "addComponent"
+  | "removeComponent"
 >
 
 /** What the multi inspector needs of the single one: the component types, and whether anything may be changed */
@@ -45,6 +55,8 @@ interface Options {
   groups?: Pick<EditGroups, "begin" | "end">
   /** A failure that is news to everyone (a denial: it turns the writes off) */
   onError?(what: string, error: unknown): void
+  /** Whether the user agreed (the page's confirm dialog), asked before a component is removed from every object */
+  confirm?(message: string, okLabel: string): Promise<boolean>
 }
 
 /** The type of the component a script runs in */
@@ -218,7 +230,8 @@ const messageOf = (e: unknown): string => errorTextOf(e)
 
 /** A change to send to one object */
 interface Job {
-  entityId: string
+  /** The object's name, as it was when the edit was asked for (the selection may move on meanwhile) */
+  name: string
   send(): Promise<void>
 }
 
@@ -237,8 +250,14 @@ export class MultiInspectorState {
     const objects = this.objects.value
     return objects && objects.length > 1 ? buildMultiView(objects) : null
   })
+  /** The component types ANY selected object has: a singleton one of them can't be added to all */
+  readonly presentTypes = computed<ReadonlySet<string>>(
+    () => new Set((this.objects.value ?? []).flatMap((object) => object.components.map((component) => component.type)))
+  )
 
   private fetches = 0
+  /** Counts selections: an edit that ends after the selection moved on doesn't report on the new one */
+  private selections = 0
   private queue: Promise<void> = Promise.resolve()
   /** Edits not finished (an edit and the read after it): Undo and Save wait for them */
   private running = 0
@@ -271,6 +290,7 @@ export class MultiInspectorState {
 
   reset(): void {
     this.fetches++
+    this.selections++
     batch(() => {
       this.ids.value = []
       this.objects.value = null
@@ -295,6 +315,7 @@ export class MultiInspectorState {
     const next = ids.length > 1 ? [...ids] : []
     if (next.length === current.length && next.every((id, i) => id === current[i])) return
     this.fetches++
+    this.selections++
     batch(() => {
       this.ids.value = next
       this.objects.value = null
@@ -375,16 +396,17 @@ export class MultiInspectorState {
     return this.objects.peek()?.find((object) => object.header.id === entityId)?.header.name ?? entityId
   }
 
+  private job(entityId: string, send: () => Promise<unknown>): Job {
+    return { name: this.nameOf(entityId), send: () => send().then(() => undefined) }
+  }
+
   /** The active flag, tag or layer of every selected object */
   setProperties(properties: { active?: boolean; tag?: string; layer?: number }): Promise<void> {
     this.requireEditable()
     const objects = this.objects.peek() ?? []
     const jobs: Job[] = objects
       .filter((object) => Object.entries(properties).some(([key, value]) => object.header[key as "tag"] !== value))
-      .map((object) => ({
-        entityId: object.header.id,
-        send: () => this.engine.setEntityProperties(object.header.id, properties),
-      }))
+      .map((object) => this.job(object.header.id, () => this.engine.setEntityProperties(object.header.id, properties)))
     return this.run(objects.length, jobs)
   }
 
@@ -415,10 +437,9 @@ export class MultiInspectorState {
         }
       }
       if (!changed) continue
-      jobs.push({
-        entityId: object.header.id,
-        send: () => this.engine.setLocalTransform(object.header.id, position, rotation, scale),
-      })
+      jobs.push(
+        this.job(object.header.id, () => this.engine.setLocalTransform(object.header.id, position, rotation, scale))
+      )
     }
     return this.run(objects.length, jobs)
   }
@@ -444,19 +465,52 @@ export class MultiInspectorState {
       }
       // Only what differs, and in the order the host wants (inspector-fields' planRequests)
       for (const request of planRequests(entry.values, fieldPatch(field, own)).requests) {
-        jobs.push({
-          entityId: entry.entityId,
-          send: () => this.engine.setComponentFields(entry.entityId, entry.componentId, request).then(() => undefined),
-        })
+        jobs.push(
+          this.job(entry.entityId, () => this.engine.setComponentFields(entry.entityId, entry.componentId, request))
+        )
       }
     }
     return this.run(component.entries.length, jobs)
   }
 
+  /** Adds a component of this type (with its default values) to every selected object, as one edit group */
+  addComponent(typeName: string): Promise<void> {
+    this.requireEditable()
+    const objects = this.objects.peek() ?? []
+    const type = this.host.types.value?.find((schema) => schema.typeName === typeName)
+    if (type?.singleton && this.presentTypes.peek().has(typeName)) {
+      throw new Error(`An object can have only one ${typeName}, and a selected object has one`)
+    }
+    const jobs = objects.map((object) =>
+      this.job(object.header.id, () => this.engine.addComponent(object.header.id, typeName))
+    )
+    return this.run(objects.length, jobs)
+  }
+
+  /**
+   * Removes a shared component (the first of its type on each object) from every selected object after asking, as one
+   * edit group; resolves false when the user said no. The host clears the references to them (Undo puts them back).
+   */
+  async removeComponent(component: MultiComponent): Promise<boolean> {
+    this.requireEditable()
+    const count = component.entries.length
+    const confirm = this.options.confirm
+    if (confirm && !(await confirm(`Remove ${component.type} from ${count} objects?`, "Remove"))) return false
+    // Read-only meanwhile (a play session started while the dialog was open): nothing is sent
+    this.requireEditable()
+    const jobs = component.entries.map((entry) =>
+      this.job(entry.entityId, () => this.engine.removeComponent(entry.entityId, entry.componentId))
+    )
+    await this.run(count, jobs)
+    return true
+  }
+
   /** Runs the changes as one edit group, one after the other, one edit at a time; then reads the objects again */
   private run(count: number, jobs: Job[]): Promise<void> {
     this.running++
-    const task = this.queue.then(() => this.runJobs(count, jobs))
+    // The selection the edit was asked for: a failure is reported only while it is still the one shown
+    const selection = this.selections
+    const task = this.queue.then(() => this.runJobs(count, jobs, selection))
     this.queue = task.then(
       () => this.finished(),
       () => this.finished()
@@ -468,32 +522,36 @@ export class MultiInspectorState {
     if (--this.running === 0) this.idle.splice(0).forEach((resolve) => resolve())
   }
 
-  private async runJobs(count: number, jobs: Job[]): Promise<void> {
+  private async runJobs(count: number, jobs: Job[], selection: number): Promise<void> {
     this.editProblem.value = null
     if (jobs.length === 0) return
-    const failures: string[] = []
-    let reported = false
+    let done = 0
+    let failure: string | null = null
     const label = `Edit ${count} objects`
     const handle = (await this.options.groups?.begin(label)) ?? null
     try {
       for (const job of jobs) {
         try {
           await job.send()
+          done++
         } catch (e) {
-          failures.push(`${this.nameOf(job.entityId)}: ${messageOf(e)}`)
-          // A denial is news to everyone (it turns the writes off); said once, not once per object
-          if (!reported && errorCodeOf(e) !== undefined) {
-            reported = true
-            this.options.onError?.("Failed to edit the objects", e)
-          }
+          failure = `${job.name}: ${messageOf(e)}`
+          // A denial is news to everyone (it turns the writes off)
+          if (errorCodeOf(e) !== undefined) this.options.onError?.("Failed to edit the objects", e)
+          // The first refusal aborts the edit: nothing more is sent
+          break
         }
       }
     } finally {
+      // Ended whatever happened: a group left open would swallow every later edit and block Undo
       await this.options.groups?.end(handle)
     }
-    if (failures.length > 0) {
-      const done = jobs.length - failures.length
-      this.editProblem.value = `${failures.length} of ${jobs.length} changes failed (${done} applied; Undo takes back what was applied). ${failures[0]}`
+    // An edit of objects that are no longer selected says nothing about the ones that are
+    if (failure !== null && selection === this.selections) {
+      const skipped = jobs.length - done - 1
+      this.editProblem.value =
+        `The edit stopped at a refusal: ${done} of ${jobs.length} changes applied` +
+        `${done > 0 ? " (Undo takes back what was applied)" : ""}, ${skipped} not sent. ${failure}`
     }
     // What the host has is the truth, whatever happened
     await this.refresh()
