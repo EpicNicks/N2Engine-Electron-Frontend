@@ -11,6 +11,7 @@ import { RotateLayout } from "./viewport-rotate"
 import { ScaleLayout } from "./viewport-scale"
 import { followViewportSelection } from "./viewport-selection"
 import { pointerActionFor, wheelPixels, PointerAction } from "./viewport-input"
+import { MarqueeOp, Rect, selectGesture } from "./viewport-marquee"
 import { ViewportKeyboard } from "./viewport-keys"
 import { ViewportToolbar } from "./viewport-toolbar"
 import { InputForwarder, scrollLines } from "./play-input"
@@ -117,6 +118,24 @@ function drawScale(ctx: CanvasRenderingContext2D, layout: ScaleLayout, active: A
   const half = 7 * ratio
   ctx.fillStyle = active === "uniform" ? "#ffffff" : "#c8c8c8"
   ctx.fillRect(layout.origin.x - half, layout.origin.y - half, half * 2, half * 2)
+}
+
+/** The marquee: a translucent rectangle, its outline dashed while Alt (fully inside) is held; a sign for add or remove */
+function drawMarquee(ctx: CanvasRenderingContext2D, shape: { rect: Rect; inside: boolean; op: MarqueeOp }, ratio: number): void {
+  const { minX, minY, maxX, maxY } = shape.rect
+  ctx.fillStyle = "rgba(80, 160, 255, 0.15)"
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY)
+  ctx.strokeStyle = "rgba(80, 160, 255, 0.9)"
+  ctx.lineWidth = ratio
+  ctx.setLineDash(shape.inside ? [4 * ratio, 3 * ratio] : [])
+  ctx.strokeRect(minX + 0.5, minY + 0.5, maxX - minX, maxY - minY)
+  ctx.setLineDash([])
+  if (shape.op !== "replace") {
+    ctx.font = `${12 * ratio}px sans-serif`
+    ctx.textBaseline = "top"
+    ctx.fillStyle = "#ffffff"
+    ctx.fillText(shape.op === "add" ? "+" : "-", maxX + 4 * ratio, maxY + 2 * ratio)
+  }
 }
 
 /** What a drag has made so far ("X +37.5 deg"), beside the gizmo */
@@ -239,6 +258,8 @@ export function Viewport() {
         }
         const readout = origin ? viewport.dragReadout() : null
         if (origin && readout) drawReadout(ctx, readout, origin, ratio)
+        const marquee = viewport.marqueeShape()
+        if (marquee) drawMarquee(ctx, marquee, ratio)
       })
     }
 
@@ -295,7 +316,7 @@ export function Viewport() {
       host.setPointerCapture(e.pointerId)
       gesture = { action, pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY }
       if (action === "select") {
-        viewport.pointerDown(framePixel(e), e.ctrlKey)
+        selectGesture.down(viewport, framePixel(e), e)
       } else if (action === "look") {
         host.style.cursor = "grabbing"
         flyTime = performance.now()
@@ -319,7 +340,7 @@ export function Viewport() {
       const ratio = window.devicePixelRatio || 1
       switch (gesture.action) {
         case "select":
-          viewport.pointerMove(framePixel(e), e.ctrlKey)
+          selectGesture.move(viewport, framePixel(e), e)
           return
         case "orbit":
           viewport.orbit(dx, dy)
@@ -351,11 +372,9 @@ export function Viewport() {
       host.style.cursor = ""
       if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId)
       if (ended.action === "select") {
-        // Ctrl/Cmd and Shift both toggle the picked object, as in Unity's scene view (a click, not a drag: Ctrl at the
-        // press snaps)
-        viewport
-          .pointerUp(framePixel(e), { toggle: e.ctrlKey || e.metaKey || e.shiftKey })
-          .catch(reportFailure("Failed to end the move"))
+        // A click: Ctrl/Cmd and Shift both toggle the picked object, as in Unity's scene view (Ctrl at the press snaps a
+        // gizmo drag). A marquee: Shift adds, Ctrl/Cmd removes, Alt takes only what is fully inside (viewport-marquee.ts)
+        selectGesture.up(viewport, framePixel(e), e).catch(reportFailure("Failed to end the move"))
       }
     }
 
@@ -537,10 +556,11 @@ export function Viewport() {
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
               "(Shift: faster). F: frame the selection. W E R Q: move, rotate, scale, select only. X: world or local space. Z: pivot or center. " +
               "Click: select (Ctrl or Shift: add or remove; empty space clears). " +
+              "Drag on empty space: marquee select (Shift: add, Ctrl: remove, Alt while dragging: only what is fully inside, Esc: cancel). " +
               "Drag a gizmo handle to change the selected objects (Ctrl: invert snapping, Esc: cancel)."
             }
           >
-            Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · click select · F frame
+            Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · click/drag select · F frame
           </span>
         </div>
       )}

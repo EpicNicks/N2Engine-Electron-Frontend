@@ -48,6 +48,7 @@ import { ClickSlop, isClick } from "./viewport-input"
 import { selectionKeyOf } from "./viewport-selection"
 import { SnapSettings, SnapTool, defaultSnapSettings, snapActive, stepRadians } from "./viewport-snap"
 import { GizmoPivot, GizmoSpace, gizmoAxes, otherPivot, otherSpace, pivotPosition } from "./viewport-tool-settings"
+import { MarqueeBoundsCache, MarqueeKeys, MarqueeOp, NoMarqueeKeys, Rect, clampRect, marqueeHits, marqueeOpOf, rectFrom } from "./viewport-marquee"
 
 /** The host's picking and bounds (PickEntity and GetEntityBounds, protocol 1.8.0) */
 export interface PickBackend {
@@ -86,6 +87,21 @@ export interface ViewportDeps {
    * way a click in the hierarchy does (plain: just it; Ctrl: toggle; Shift: extend; nothing and no modifier: clear)
    */
   select(entityId: string | null, modifiers: ClickModifiers): void
+  /**
+   * The objects a marquee may select (marqueeCandidatesOf: the hierarchy's active objects, in its order) and the
+   * revision of the scene they were listed at; null when there are none to offer. Without it (or selectMany) a drag on
+   * empty space draws no marquee.
+   */
+  marqueeCandidates?(): { revision: number; ids: readonly string[] } | null
+  /** A marquee found these objects (in the hierarchy's order): the editor's selection is replaced, added to or removed from */
+  selectMany?(entityIds: readonly string[], op: MarqueeOp): void
+}
+
+/** A marquee being drawn: where the press was, where the pointer is and the keys held */
+interface Marquee {
+  from: Pixel
+  to: Pixel
+  keys: MarqueeKeys
 }
 
 /** What the gizmo does: the three tools, or none (select only) */
@@ -194,6 +210,12 @@ export class ViewportController {
   private readonly read = new Map<string, GizmoTarget | null>()
   private ended: Promise<void> = Promise.resolve()
   private pressed: { pixel: Pixel; onGizmo: boolean } | null = null
+  /** The marquee being drawn (a press on empty space that moved past the click slop) */
+  private marquee: Marquee | null = null
+  /** The candidates' world boxes, read once per scene revision (see marqueeKey) */
+  private readonly marqueeBounds: MarqueeBoundsCache
+  /** Counts the scene changes seen: a change the hierarchy has not re-read yet still makes the cached boxes old */
+  private sceneChanges = 0
   /** The click to pick for (one pick in flight; clicks meanwhile wait, and only the newest of them is asked) */
   private readonly pickSender: LatestWinsSender<PickClick>
   /** Counts clicks (and misses): only the newest click's answer is applied */
@@ -224,6 +246,7 @@ export class ViewportController {
       (click) => this.pick(click),
       (e) => deps.onError("Failed to pick an object", e)
     )
+    this.marqueeBounds = new MarqueeBoundsCache(async (ids) => (deps.picking ? deps.picking.bounds(ids) : null))
   }
 
   /** Who asks the host for a frame (the panel's renderer): called when the camera or the selected object moved */
@@ -344,6 +367,8 @@ export class ViewportController {
     this.loads++
     if (this.drag) void this.finishDrag("abandon", false)
     this.pressed = null
+    this.marquee = null
+    this.marqueeBounds.clear()
     this.target.value = null
     this.movers = []
     this.moversKey = null
@@ -432,6 +457,7 @@ export class ViewportController {
 
   zoom(deltaPixels: number): void {
     if (this.drag) return // the drag's maths is for the camera it began with
+    if (this.marquee) return // the rectangle is over the picture as it was when it was drawn
     this.camera.zoom(deltaPixels)
     this.cameraChanged()
   }
@@ -566,6 +592,9 @@ export class ViewportController {
    */
   objectsChanged(entityIds: readonly string[], full: boolean, replaced: boolean = false): void {
     const id = this.deps.selected()
+    // Any change (a move, a new object, another scene) makes the marquee's boxes old
+    this.sceneChanges++
+    this.marqueeBounds.clear()
     if (this.drag) {
       if (replaced) {
         void this.finishDrag("abandon", true)
@@ -722,7 +751,7 @@ export class ViewportController {
 
   /** The pointer moved without a button: the handle under it lights up */
   hover(pixel: Pixel | null): void {
-    if (this.drag) return
+    if (this.drag || this.marquee) return
     const handle = pixel ? this.handleAt(pixel) : null
     if (handle !== this.hoverHandle.value) {
       this.hoverHandle.value = handle
@@ -829,11 +858,18 @@ export class ViewportController {
     }
   }
 
-  /** The pointer moved during a drag, with Ctrl held or not (it inverts the snap toggle the drag began with) */
-  pointerMove(pixel: Pixel, ctrl: boolean): void {
+  /**
+   * The pointer moved with the left button down, with Ctrl held or not (it inverts the snap toggle a gizmo drag began
+   * with), and the keys the marquee reads. A press on empty space that moves past the click slop begins a marquee
+   * (when the host can measure objects); the rectangle then follows the pointer.
+   */
+  pointerMove(pixel: Pixel, ctrl: boolean, keys: MarqueeKeys = NoMarqueeKeys): void {
     const drag = this.drag
     const start = this.dragStart
-    if (!drag || !start) return
+    if (!drag || !start) {
+      this.moveMarquee(pixel, keys)
+      return
+    }
     if (drag.update(pixel, snapActive(this.dragToggle, ctrl)) !== null) {
       // The gizmo follows at once, on this side of the round trip
       this.dragOrigin = add(start, drag.worldDelta)
@@ -846,10 +882,16 @@ export class ViewportController {
    * that stayed put (within the click slop) is a click: with picking, it selects the object under the pointer, or none,
    * with the modifier keys held at the release. Resolves when the pick has been answered.
    */
-  async pointerUp(pixel: Pixel, modifiers: ClickModifiers = {}): Promise<void> {
+  async pointerUp(pixel: Pixel, modifiers: ClickModifiers = {}, keys?: MarqueeKeys): Promise<void> {
     const pressed = this.pressed
     this.pressed = null
     if (this.drag) return this.finishDrag("end", true)
+    const marquee = this.marquee
+    if (marquee) {
+      this.marquee = null
+      this.redraw()
+      return this.finishMarquee(marquee.from, pixel, keys ?? marquee.keys)
+    }
     if (pressed && !pressed.onGizmo && isClick(pressed.pixel, pixel, ClickSlop * this.ratio)) this.click(pixel, modifiers)
     await this.pickSender.flush()
   }
@@ -857,6 +899,11 @@ export class ViewportController {
   /** The press was cancelled (Escape, or the window lost the pointer): a drag in progress puts the object back */
   async cancel(): Promise<void> {
     this.pressed = null
+    if (this.marquee) {
+      // Escape: the rectangle goes and the selection is left as it was
+      this.marquee = null
+      this.redraw()
+    }
     if (this.drag) await this.finishDrag("cancel", true)
   }
 
@@ -940,6 +987,84 @@ export class ViewportController {
     ) {
       this.deps.select(id, click.modifiers)
     }
+  }
+
+  // ==================== Marquee ====================
+
+  /** Whether a marquee can be drawn: the editor offers candidates and takes a selection, and the host can measure */
+  private get canMarquee(): boolean {
+    return !!this.deps.marqueeCandidates && !!this.deps.selectMany && this.canPick && this.deps.engine.isConnected()
+  }
+
+  /** Whether a marquee is being drawn */
+  get isMarquee(): boolean {
+    return this.marquee !== null
+  }
+
+  /** The marquee's rectangle (frame pixels) and what it will do, for the overlay; null when none is being drawn */
+  marqueeShape(): { rect: Rect; inside: boolean; op: MarqueeOp } | null {
+    const m = this.marquee
+    if (!m) return null
+    return { rect: rectFrom(m.from, m.to), inside: m.keys.inside, op: marqueeOpOf(m.keys) }
+  }
+
+  private moveMarquee(pixel: Pixel, keys: MarqueeKeys): void {
+    if (this.marquee) {
+      this.marquee = { ...this.marquee, to: pixel, keys }
+      this.redraw()
+      return
+    }
+    const pressed = this.pressed
+    if (!pressed || pressed.onGizmo || isClick(pressed.pixel, pixel, ClickSlop * this.ratio) || !this.canMarquee) return
+    this.marquee = { from: pressed.pixel, to: pixel, keys }
+    this.hoverHandle.value = null
+    // The boxes are asked for now, so they are likely in by the release
+    const key = this.marqueeKey()
+    if (key) void this.marqueeBounds.get(key.key, key.ids).catch(() => undefined)
+    this.redraw()
+  }
+
+  /** What the cached boxes are for: the connection, the scene changes seen and the hierarchy's revision; null with no candidates */
+  private marqueeKey(): { key: string; ids: readonly string[] } | null {
+    const candidates = this.deps.marqueeCandidates?.()
+    if (!candidates || candidates.ids.length === 0) return null
+    return { key: `${this.connections}|${this.sceneChanges}|${candidates.revision}|${candidates.ids.length}`, ids: candidates.ids }
+  }
+
+  /**
+   * The marquee was released at `to`: the candidates whose projected box it takes (marqueeHits) go to selectMany with
+   * the keys held. Applied only when nothing else (a click, the hierarchy, the connection) changed the selection while
+   * the boxes were read.
+   */
+  private async finishMarquee(from: Pixel, to: Pixel, keys: MarqueeKeys): Promise<void> {
+    const selectMany = this.deps.selectMany
+    const size = this.size
+    if (!selectMany || !size || !this.canMarquee) return
+    // A marquee makes the answer of a click before it out of date, as a later click does
+    const generation = ++this.clickGeneration
+    this.pickSender.discard()
+    const connection = this.connections
+    const selection = this.selectionKey()
+    const op = marqueeOpOf(keys)
+    const rect = clampRect(rectFrom(from, to), size.width, size.height)
+    const key = this.marqueeKey()
+    let hits: string[] = []
+    if (rect && key) {
+      let bounds
+      try {
+        bounds = await this.marqueeBounds.get(key.key, key.ids)
+      } catch (e) {
+        if (connection === this.connections) this.deps.onError("Failed to measure the objects for the marquee", e)
+        return
+      }
+      // The camera can't move during the drag (zoom is refused, the other camera gestures are other buttons); a frame
+      // resized while the boxes were read leaves the rectangle over another picture
+      const m = this.matrices()
+      if (!m || this.size?.width !== size.width || this.size?.height !== size.height) return
+      hits = marqueeHits(m.viewProjection, size.width, size.height, rect, key.ids, bounds, keys.inside)
+    }
+    if (connection !== this.connections || generation !== this.clickGeneration || selection !== this.selectionKey()) return
+    selectMany(hits, op)
   }
 
   private redraw(): void {

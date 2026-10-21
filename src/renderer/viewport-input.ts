@@ -1,5 +1,6 @@
 // What the viewport's mouse and keys mean, as pure functions (the page's handlers only forward events to them):
 //   left button            select (the gizmo's handle under the pointer takes it first)
+//   left drag              marquee select from empty space (viewport-marquee.ts: Shift adds, Ctrl removes, Alt fully inside)
 //   Alt + left button      orbit
 //   middle button          pan
 //   right button           look (the fly camera); W A S D move, E and Q go up and down, Shift is faster
