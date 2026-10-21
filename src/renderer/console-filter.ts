@@ -1,6 +1,7 @@
 // The console's filters with no state and no DOM: the source registry, the text matcher (plain or regular expression,
 // with the ranges to highlight), filtering the lines and collapsing repeats. Unit tested in Node.
 import type { ConsoleEntry, LogLevel } from "./console-store"
+import { compileProgram, exec, UnsupportedPattern, type Program } from "./safe-regex"
 
 // ==================== Sources ====================
 
@@ -65,36 +66,111 @@ export interface TextFilter {
 
 /** A pattern longer than this is refused (a regex this long is not a filter) */
 export const MaxPatternLength = 200
-/** A regex is tried on at most this much of a line, so a pattern that backtracks badly costs a bounded amount */
+/** A regex is tried on at most this much of a line (the matcher is linear in it, so a line costs a bounded amount) */
 export const MaxRegexInput = 4096
-
 /**
- * A group that repeats and itself holds a repeat, as in (a+)+ or (.*x)*: the shape behind catastrophic backtracking, which
- * no length cap bounds (it is exponential in the line) and which cannot be interrupted once running. Refused up front.
+ * Highlighting runs the matcher once per match, and each run can look past the end of its match (a higher-priority
+ * thread may still be alive), so finding every match of a line is not linear. After the first match, the steps for
+ * one line's highlighting are capped at this many per character of the line; past it the matches found so far are the
+ * highlight.
  */
-const NestedRepeat = /\((?:[^()\\]|\\.)*[+*]\??(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d*,\d*\})/
+export const HighlightStepsPerChar = 64
+/**
+ * The matcher is linear in a line, but thousands of lines of 4096 characters with a pattern of hundreds of steps add
+ * up, and the log keeps arriving, so a matcher's work draws on two buckets of steps: one for testing the lines, one for
+ * highlighting the rows, kept apart so that highlighting can never starve the filter. A bucket holds at most its size,
+ * so the two sizes together (MaxUpdateSteps) are the most one update can spend however many passes it makes, and each
+ * refills at its rate, so the two rates together (RegexStepsPerSecond) are the most the filter spends on average while
+ * lines stream in. Testing that runs its bucket dry turns the regular expression off for the pattern
+ * (TextMatcher.slow); highlighting that runs its bucket dry only stops marking. The numbers are justified in the README.
+ */
+export const MaxTestSteps = 15_000_000
+/** The testing bucket's refill rate in steps per second */
+export const TestStepsPerSecond = 3_000_000
+/** The highlighting bucket's size (see MaxTestSteps) */
+export const MaxHighlightSteps = 5_000_000
+/** The highlighting bucket's refill rate in steps per second */
+export const HighlightStepsPerSecond = 1_000_000
+/** The most one update can spend: both buckets full */
+export const MaxUpdateSteps = MaxTestSteps + MaxHighlightSteps
+/** The most the filter spends per second on average: both refill rates */
+export const RegexStepsPerSecond = TestStepsPerSecond + HighlightStepsPerSecond
+/** The highlights remembered per matcher (a render asks again for every row; it is cleared when it is this full) */
+const MaxRangeCache = 6000
+
+/** Which of a list of lines pass the text filter: one result shared by the list and both kinds of count */
+export interface TextResults {
+  /** Whether the entry passes (asked only for the entries the results were made from) */
+  passes(entry: ConsoleEntry): boolean
+  /** The regular expression ran its testing bucket dry and is off for this pattern: every line passes */
+  slow: boolean
+}
 
 export interface TextMatcher {
-  /** Whether the line passes (everything passes when there is no text, or when the regex is not valid) */
+  /** Whether the line passes (everything passes when there is no text, when the regex is not valid, or when it is slow) */
   test(message: string): boolean
+  /**
+   * Tests the lines once for the list and the counts together. A line this matcher has tested is remembered, so only
+   * new lines cost steps; if the testing bucket runs dry part way the matcher turns slow and every line passes.
+   */
+  testEntries(entries: readonly ConsoleEntry[]): TextResults
   /** [start, end) ranges of the matches in the message, in order, for highlighting; none without text */
   ranges(message: string): Array<[number, number]>
   /** Why the regular expression isn't valid (shown inline); null when it is, or when regex is off */
   error: string | null
+  /** The regular expression ran its testing bucket dry and is off for this pattern (editing the pattern tries again) */
+  readonly slow: boolean
+  /** The matcher steps spent so far (the buckets bound it; for tests) */
+  readonly spent: number
   /** The filter does something */
   active: boolean
 }
 
-const passAll: TextMatcher = { test: () => true, ranges: () => [], error: null, active: false }
+/** A clock in milliseconds (performance.now by default; tests pass their own) */
+export type Clock = () => number
 
-export function compileMatcher(filter: TextFilter): TextMatcher {
+/** Steps to spend: full when made, refilled for the time since it was last drawn on, never over full */
+class StepBucket {
+  left: number
+  private filled: number
+  constructor(
+    private readonly size: number,
+    private readonly perSecond: number,
+    private readonly clock: Clock
+  ) {
+    this.left = size
+    this.filled = clock()
+  }
+  refill(): void {
+    const now = this.clock()
+    if (now > this.filled) this.left = Math.min(this.size, this.left + ((now - this.filled) * this.perSecond) / 1000)
+    this.filled = now
+  }
+}
+
+const allPass: TextResults = { passes: () => true, slow: false }
+const slowResults: TextResults = { passes: () => true, slow: true }
+
+const passAll: TextMatcher = {
+  test: () => true,
+  testEntries: () => allPass,
+  ranges: () => [],
+  error: null,
+  slow: false,
+  spent: 0,
+  active: false,
+}
+
+export function compileMatcher(filter: TextFilter, clock: Clock = () => performance.now()): TextMatcher {
   const { search, matchCase, regex } = filter
   if (search === "") return passAll
   if (!regex) {
     const fold = (text: string) => (matchCase ? text : text.toLowerCase())
     const needle = fold(search)
+    const test = (message: string) => fold(message).includes(needle)
     return {
-      test: (message) => fold(message).includes(needle),
+      test,
+      testEntries: () => ({ passes: (entry) => test(entry.message), slow: false }),
       ranges(message) {
         const hay = fold(message)
         const out: Array<[number, number]> = []
@@ -104,37 +180,102 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
         return out
       },
       error: null,
+      slow: false,
+      spent: 0,
       active: true,
     }
   }
-  let pattern: RegExp
+  let program: Program
   try {
     if (search.length > MaxPatternLength) throw new Error(`The pattern is longer than ${MaxPatternLength} characters`)
-    if (NestedRepeat.test(search)) {
-      throw new Error("A repeated group that itself repeats can take far too long: simplify the pattern")
-    }
-    pattern = new RegExp(search, matchCase ? "g" : "gi")
+    // The engine's RegExp only checks the syntax (compiling runs no match, so it cannot hang) and gives its message;
+    // the matching is the linear-time matcher's, which has no backtracking to blow up (safe-regex.ts)
+    new RegExp(search, matchCase ? "" : "i")
+    program = compileProgram(search, !matchCase)
   } catch (e) {
     // Half-typed patterns are normal: they filter nothing (the list doesn't flash empty) and the reason shows inline
-    return { ...passAll, error: e instanceof Error ? e.message : String(e) }
+    const reason = e instanceof UnsupportedPattern ? `Not supported in the filter: ${e.message}` : e instanceof Error ? e.message : String(e)
+    return { ...passAll, error: reason }
   }
   const limited = (message: string) => (message.length > MaxRegexInput ? message.slice(0, MaxRegexInput) : message)
+  let slow = false
+  let spent = 0
+  const testing = new StepBucket(MaxTestSteps, TestStepsPerSecond, clock)
+  const highlighting = new StepBucket(MaxHighlightSteps, HighlightStepsPerSecond, clock)
+  let cache = new Map<string, Array<[number, number]>>()
+  const tested = new WeakMap<ConsoleEntry, boolean>()
+  // One run of the matcher with at most `allowed` steps, taken from the bucket; dry when it ran out
+  const run = (bucket: StepBucket, text: string, from: number, firstOnly: boolean, allowed: number) => {
+    const cap = Math.max(0, Math.floor(allowed))
+    const budget = { left: cap }
+    const m = exec(program, text, from, firstOnly, budget)
+    const used = cap - Math.max(budget.left, 0)
+    spent += used
+    bucket.left -= used
+    return { m, used, dry: budget.left < 0 }
+  }
+  // Tests one line; null when the testing bucket ran dry (the matcher is slow from then on)
+  const testOne = (message: string): boolean | null => {
+    const r = run(testing, limited(message), 0, true, testing.left)
+    if (!r.dry) return r.m !== null
+    slow = true
+    cache = new Map()
+    return null
+  }
   return {
     test(message) {
-      pattern.lastIndex = 0
-      return pattern.test(limited(message))
+      if (slow) return true
+      testing.refill()
+      return testOne(message) ?? true
+    },
+    testEntries(entries) {
+      if (slow) return slowResults
+      testing.refill()
+      for (const entry of entries) {
+        if (tested.has(entry)) continue
+        const passes = testOne(entry.message)
+        if (passes === null) return slowResults
+        tested.set(entry, passes)
+      }
+      return { passes: (entry) => tested.get(entry) ?? true, slow: false }
     },
     ranges(message) {
+      if (slow) return []
+      const hit = cache.get(message)
+      if (hit) return hit
+      highlighting.refill()
       const text = limited(message)
       const out: Array<[number, number]> = []
-      pattern.lastIndex = 0
-      for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
-        if (m[0].length === 0) pattern.lastIndex++ // an empty match must not loop
-        else out.push([m.index, m.index + m[0].length])
+      let line = Infinity // the first match is limited by the bucket only, the rest by the line too
+      let final = true // false when the bucket cut the line short: it is asked again on a later render
+      for (let from = 0; from <= text.length; ) {
+        const r = run(highlighting, text, from, false, Math.min(highlighting.left, line))
+        line = line === Infinity ? HighlightStepsPerChar * (text.length + 1) - r.used : line - r.used
+        if (r.dry) {
+          final = highlighting.left > 0
+          break
+        }
+        const m = r.m
+        if (m === null) break
+        if (m[1] === m[0]) from = m[0] + 1 // an empty match is not highlighted and must not loop
+        else {
+          out.push(m)
+          from = m[1]
+        }
+      }
+      if (final) {
+        if (cache.size >= MaxRangeCache) cache = new Map()
+        cache.set(message, out)
       }
       return out
     },
     error: null,
+    get slow() {
+      return slow
+    },
+    get spent() {
+      return spent
+    },
     active: true,
   }
 }
@@ -160,15 +301,16 @@ export function highlightPieces(
 /** The filters that pick lines (the levels are applied separately) */
 export interface LineFilter {
   hiddenSources: ReadonlySet<string>
-  matcher: TextMatcher
+  /** The text filter's results for the lines (TextMatcher.testEntries), shared by the list and the counts */
+  text: TextResults
 }
 
 /** Whether the line passes the source and text filters (not the levels) */
 export function passesLine(registry: ConsoleSourceRegistry, entry: ConsoleEntry, filter: LineFilter): boolean {
-  return !filter.hiddenSources.has(sourceOf(registry, entry)) && filter.matcher.test(entry.message)
+  return !filter.hiddenSources.has(sourceOf(registry, entry)) && filter.text.passes(entry)
 }
 
-/** The lines with their levels shown, passing the source and text filters; one pass */
+/** The lines with their levels shown, passing the source and text filters */
 export function filterEntries(
   registry: ConsoleSourceRegistry,
   entries: readonly ConsoleEntry[],
@@ -189,6 +331,22 @@ export function countLevels(
 ): Record<LogLevel, number> {
   const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
   for (const entry of entries) if (passesLine(registry, entry, filter)) counts[entry.level]++
+  return counts
+}
+
+/** Lines per source among those passing the level and text filters (a source switched off still counts) */
+export function countSources(
+  registry: ConsoleSourceRegistry,
+  entries: readonly ConsoleEntry[],
+  shown: Readonly<Record<LogLevel, boolean>>,
+  text: TextResults
+): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const entry of entries) {
+    if (!shown[entry.level] || !text.passes(entry)) continue
+    const id = sourceOf(registry, entry)
+    counts[id] = (counts[id] ?? 0) + 1
+  }
   return counts
 }
 

@@ -88,9 +88,12 @@ export function extensionCount(trust: Pick<ExtensionTrustState, "files" | "more"
  */
 export function ExtensionTrustBanner() {
   const { store } = useApp()
-  const [dismissed, setDismissed] = useState(false)
+  // Dismissal belongs to one host launch of one project: a later launch or another project shows the banner again
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null)
   const trust = store.extensionTrust.value
-  if (dismissed || trust === null || trust.enabled || store.host.value.mode !== "local") return null
+  const hostNow = store.host.value
+  const key = `${hostNow.launch}|${hostNow.projectPath ?? ""}`
+  if (dismissedFor === key || trust === null || trust.enabled || store.host.value.mode !== "local") return null
   const busy = store.busy.value !== null
   return (
     <div class="extension-banner" role="status">
@@ -101,7 +104,7 @@ export function ExtensionTrustBanner() {
       <button onClick={() => void store.enableExtensions()} disabled={busy}>
         Enable extensions...
       </button>
-      <button class="secondary" aria-label="Dismiss" onClick={() => setDismissed(true)}>
+      <button class="secondary" aria-label="Dismiss" onClick={() => setDismissedFor(key)}>
         ×
       </button>
     </div>
