@@ -79,9 +79,9 @@ describe("the gizmo's tool keys", () => {
   test("also from a control inside the view; the key is the physical one, whatever the layout types", () => {
     press(document.getElementById("tool")!, "KeyE", { key: "e" })
     assert.equal(controller.mode.value, "rotate")
-    press(host, "KeyR", { key: "к" }) // the Russian layout's letter on the R key
+    press(host, "KeyR", { key: "\u043a" }) // the Russian layout's letter on the R key
     assert.equal(controller.mode.value, "scale")
-    press(host, "KeyW", { key: "ц" })
+    press(host, "KeyW", { key: "\u0446" })
     assert.equal(controller.mode.value, "translate")
     // A key that types "e" but is not the E key is not a tool key
     press(host, "KeyK", { key: "e" })
