@@ -417,6 +417,79 @@ export function layerNames(settings: unknown): string[] {
 
 export const layerKey = (index: number): string => `layer.${index}`
 
+// ---- The collision matrix (Layers.cpp Serialize / Deserialize)
+//
+// collisionMatrix is 32 row masks: bit b of row a (1 << b) says layer a collides with layer b. The host refuses the block
+// unless it is an array of exactly 32 integers in 0..0xFFFFFFFF, and it treats the matrix as symmetric: a pair collides
+// only when both rows say so. With no matrix every layer collides with every layer.
+
+/** Every layer: a row mask with all 32 bits */
+export const AllLayersMask = 0xffffffff
+
+/** Whether a value is what the host takes as a row mask: an integer in 0..0xFFFFFFFF */
+export function isRowMask(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= AllLayersMask
+}
+
+/** The edit key of a pair of layers: the same for (a, b) and (b, a), so a toggle of either is one edit */
+export function pairKey(a: number, b: number): string {
+  return a <= b ? `pair.${a}.${b}` : `pair.${b}.${a}`
+}
+
+/** The two layers of a pair key (lower first), or null for another key or a layer out of 0..31 */
+export function parsePairKey(key: string): [number, number] | null {
+  const m = /^pair\.(\d+)\.(\d+)$/.exec(key)
+  if (!m) return null
+  const a = Number(m[1])
+  const b = Number(m[2])
+  if (a > b || b >= LayerCount) return null
+  return [a, b]
+}
+
+/** Whether layers a and b collide in the row masks (bit b of row a) */
+export function rowsCollide(rows: readonly number[], a: number, b: number): boolean {
+  return ((rows[a] >>> b) & 1) === 1
+}
+
+/** Sets or clears the pair in both rows (bit b of row a and bit a of row b), keeping the masks unsigned */
+export function setRowsPair(rows: number[], a: number, b: number, collide: boolean): void {
+  if (collide) {
+    rows[a] = (rows[a] | (1 << b)) >>> 0
+    rows[b] = (rows[b] | (1 << a)) >>> 0
+  } else {
+    rows[a] = (rows[a] & ~(1 << b)) >>> 0
+    rows[b] = (rows[b] & ~(1 << a)) >>> 0
+  }
+}
+
+export interface CollisionMatrix {
+  /** The 32 row masks as the engine uses them: symmetric (a pair collides only when both rows say so) */
+  rows: number[]
+  /** Why the project's matrix is not used as written (not 32 masks), or null */
+  problem: string | null
+}
+
+/** The project's collision matrix as the engine reads it: all colliding when absent, a pair only when both rows agree */
+export function collisionMatrixOf(settings: unknown): CollisionMatrix {
+  const written = readPath(settings, ["layers", "collisionMatrix"])
+  const rows: number[] = new Array<number>(LayerCount).fill(AllLayersMask)
+  if (written === undefined) return { rows, problem: null }
+  if (!Array.isArray(written) || written.length !== LayerCount || !written.every(isRowMask)) {
+    return {
+      rows,
+      problem: `The project's collision matrix is not ${LayerCount} masks of 0 to ${AllLayersMask}, so the host does not use it; it is shown as every layer colliding, and Apply writes a valid one.`,
+    }
+  }
+  const masks = written as number[]
+  for (let a = 0; a < LayerCount; a++) {
+    for (let b = a; b < LayerCount; b++) setRowsPair(rows, a, b, rowsCollide(masks, a, b) && rowsCollide(masks, b, a))
+  }
+  return { rows, problem: null }
+}
+
+/** The text of a pair's edit: "1" collides, "0" does not */
+export const pairText = (collide: boolean): string => (collide ? "1" : "0")
+
 export function buildLayersPatch(settings: unknown, edits: Edits): BuiltSection {
   const current = layerNames(settings)
   const next = [...current]
@@ -443,10 +516,29 @@ export function buildLayersPatch(settings: unknown, edits: Edits): BuiltSection 
       seen.set(name, i)
     }
   }
+  // The matrix: the pairs whose edit differs from the host's, on top of the matrix the host uses
+  const matrix = collisionMatrixOf(settings)
+  const rows = [...matrix.rows]
+  let matrixChanged = false
+  for (let a = 0; a < LayerCount; a++) {
+    for (let b = a; b < LayerCount; b++) {
+      const key = pairKey(a, b)
+      if (!(key in edits)) continue
+      const collide = edits[key] === "1"
+      setRowsPair(rows, a, b, collide)
+      if (collide !== rowsCollide(matrix.rows, a, b)) {
+        changed.push(key)
+        matrixChanged = true
+      }
+    }
+  }
   if (changed.length === 0) return { ...NothingBuilt, errors }
   if (Object.keys(errors).length > 0) return { patch: null, errors, changed, restart: [] }
-  // An array is replaced whole by a merge patch, so all 32 names go; the collision matrix is not touched
-  return { patch: { layers: { layers: next } }, errors, changed, restart: [] }
+  // An array is replaced whole by a merge patch: all 32 names go when one changed, all 32 rows when a pair changed
+  const block: JsonObject = {}
+  if (changed.some((key) => key.startsWith("layer."))) block.layers = next
+  if (matrixChanged) block.collisionMatrix = rows
+  return { patch: { layers: block }, errors, changed, restart: [] }
 }
 
 // ==================== Input and raw JSON ====================

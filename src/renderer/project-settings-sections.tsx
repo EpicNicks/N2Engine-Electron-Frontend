@@ -3,6 +3,7 @@
 // (project-settings-logic.ts). A later change adds Network (B11) or Editor Extensions (E-X4) with one register() call:
 // see the extension point in project-settings-registry.ts. Nothing in the panel or in these sections changes for it.
 import type { ComponentChildren, ComponentType } from "preact"
+import { useState } from "preact/hooks"
 import {
   DeterminismLogic,
   GeneralLogic,
@@ -25,8 +26,12 @@ import {
   MathFields,
   PhysicsFields,
   RenderingFields,
+  collisionMatrixOf,
   isBuiltinLayer,
   layerKey,
+  pairKey,
+  pairText,
+  rowsCollide,
   type FieldSpec,
 } from "./project-settings-schema"
 
@@ -253,11 +258,109 @@ function LayersSection({ model, def }: SectionProps) {
   }
   return (
     <div class="ps-form">
-      <p class="ps-intro">
-        The 32 layer names. The built-in layers are fixed; a name can be used once. The collision matrix is kept as it is: it
-        is not edited here yet (a later change adds the 32 by 32 grid).
-      </p>
+      <p class="ps-intro">The 32 layer names. The built-in layers are fixed; a name can be used once.</p>
       <div class="ps-layers">{rows}</div>
+      <CollisionMatrixEditor model={model} def={def} disabled={disabled} />
+    </div>
+  )
+}
+
+/**
+ * The collision matrix as a grid of checkboxes: (a, b) and (b, a) are one pair (one edit key), so ticking either ticks
+ * both. The unnamed layers are left out until "Show the unnamed layers" is ticked; a row's or a column's own checkbox
+ * sets every pair of that layer that is shown.
+ */
+function CollisionMatrixEditor({ model, def, disabled }: SectionProps & { disabled: boolean }) {
+  const [showAll, setShowAll] = useState(false)
+  const matrix = collisionMatrixOf(model.settings.value)
+  const edits = model.edits.value[def.id] ?? {}
+  const dirty = new Set(model.built(def.id).changed)
+  const names: string[] = []
+  for (let i = 0; i < LayerCount; i++) names.push(model.textOf(def.id, layerKey(i)))
+  const unnamed = names.filter((n) => n === "").length
+  const shown: number[] = []
+  for (let i = 0; i < LayerCount; i++) if (showAll || names[i] !== "") shown.push(i)
+  const collides = (a: number, b: number): boolean => {
+    const edit = edits[pairKey(a, b)]
+    return edit !== undefined ? edit === "1" : rowsCollide(matrix.rows, a, b)
+  }
+  const title = (i: number) => (names[i] === "" ? `Layer ${i} (unnamed)` : `Layer ${i}: ${names[i]}`)
+  /** A line's checkbox: ticked when every shown pair of the layer collides, mixed when some do */
+  const lineBox = (layer: number, label: string) => {
+    const count = shown.filter((other) => collides(layer, other)).length
+    const all = shown.length > 0 && count === shown.length
+    return (
+      <input
+        type="checkbox"
+        aria-label={label}
+        title={`Every layer shown collides with ${title(layer)} (or, unticked, none does)`}
+        checked={all}
+        indeterminate={count > 0 && !all}
+        disabled={disabled}
+        onChange={() => {
+          const texts: Record<string, string> = {}
+          for (const other of shown) texts[pairKey(layer, other)] = pairText(!all)
+          model.setEdits(def.id, texts)
+        }}
+      />
+    )
+  }
+  return (
+    <div class="ps-matrix-block">
+      <h4>Collision matrix</h4>
+      <p class="ps-intro">
+        Which layers' colliders touch (contacts and triggers). A pair is one setting: ticking row a, column b ticks row b,
+        column a too. Apply writes all 32 rows to the project.
+      </p>
+      {matrix.problem && (
+        <p class="ps-warning" role="note">
+          {matrix.problem}
+        </p>
+      )}
+      <label class="ps-matrix-toggle">
+        <input type="checkbox" checked={showAll} onChange={() => setShowAll(!showAll)} /> Show the unnamed layers ({unnamed})
+      </label>
+      <div class="ps-matrix-scroll">
+        <table class="ps-matrix" aria-label="Layer collision matrix">
+          <thead>
+            <tr>
+              <th />
+              {shown.map((b) => (
+                <th key={b} scope="col" title={title(b)}>
+                  <span class="ps-matrix-name">{names[b] === "" ? String(b) : `${b} ${names[b]}`}</span>
+                  {lineBox(b, `All of column ${b}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((a) => (
+              <tr key={a}>
+                <th scope="row" title={title(a)}>
+                  <span class="ps-matrix-name">{names[a] === "" ? String(a) : `${a} ${names[a]}`}</span>
+                  {lineBox(a, `All of row ${a}`)}
+                </th>
+                {shown.map((b) => {
+                  const key = pairKey(a, b)
+                  const on = collides(a, b)
+                  return (
+                    <td key={b} class={dirty.has(key) ? "dirty" : undefined}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Layers ${a} and ${b} collide`}
+                        title={`${title(a)} and ${title(b)}`}
+                        checked={on}
+                        disabled={disabled}
+                        onChange={() => model.setEdit(def.id, key, pairText(!on))}
+                      />
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
