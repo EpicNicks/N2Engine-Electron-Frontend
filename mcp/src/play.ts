@@ -211,12 +211,13 @@ export class PlayController {
 
   /**
    * The game's log since the last read in this launch (from its start the first time), at most `limit` lines kept by
-   * `keep`; the cursor moves past everything read, kept or not. dropped counts events the game's ring lost.
+   * `keep`; the cursor moves past everything read, kept or not. dropped counts events the game's ring lost. With `own`,
+   * the read starts and ends at that cursor instead (n2_play_script's), and n2_play_observe's is left alone.
    */
-  async readLog(limit: number, keep: (e: EditorEvent) => boolean): Promise<{ lines: LogLine[]; dropped: number; more: boolean }> {
+  async readLog(limit: number, keep: (e: EditorEvent) => boolean, own?: LogCursor): Promise<{ lines: LogLine[]; dropped: number; more: boolean }> {
     const client = this.client()
     const launch = this.session.state.launch
-    let cursor = this.logCursor && this.logCursor.launch === launch ? this.logCursor : { launch, epoch: 0, seq: 0 }
+    let cursor = own ?? (this.logCursor && this.logCursor.launch === launch ? this.logCursor : { launch, epoch: 0, seq: 0 })
     const lines: LogLine[] = []
     let dropped = 0
     let more = false
@@ -244,8 +245,15 @@ export class PlayController {
       if (stoppedEarly || batch.events.length < 1024) break
       if (round === 3) more = true
     }
-    this.logCursor = cursor
+    if (own) Object.assign(own, cursor)
+    else this.logCursor = cursor
     return { lines, dropped, more }
+  }
+
+  /** A log cursor at the game's newest event: what is logged from now on */
+  async logNow(): Promise<LogCursor> {
+    const batch = await this.client().pollEvents(0, 0, 0)
+    return { launch: this.session.state.launch, epoch: batch.epoch, seq: batch.nextSeq }
   }
 
   /** The play budgets of an agent session */
@@ -288,6 +296,12 @@ export class PlayController {
     this.session.shutdown()
     this.editor = null
   }
+}
+
+interface LogCursor {
+  launch: number
+  epoch: number
+  seq: number
 }
 
 interface LogLine {
@@ -686,14 +700,17 @@ const playScript = tool({
     let passed = true
     let completed = true
     let ended = false
+    // The script's own log cursor: n2_play_observe still sees every line since its previous call
+    let cursor: LogCursor | null = null
     const collect = async (): Promise<void> => {
-      const { lines } = await c.readLog(1000, () => true)
+      cursor ??= await c.logNow()
+      const { lines } = await c.readLog(1000, () => true, cursor)
       seen.push(...lines)
       if (seen.length > limits.ConsoleResourceLines * 4) seen.splice(0, seen.length - limits.ConsoleResourceLines * 4)
     }
     try {
       // Lines logged before the script are not its own
-      await c.readLog(1000, () => true)
+      cursor = await c.logNow()
       if (c.view().status === "playing") await c.setPaused(true)
       for (let i = 0; i < total; i++) {
         if (call.signal?.aborted) throw cancelled()

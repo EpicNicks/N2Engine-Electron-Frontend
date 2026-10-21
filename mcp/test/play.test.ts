@@ -335,6 +335,18 @@ describe("n2_play_script", () => {
     await h.close()
   })
 
+  test("the script reads the log with its own cursor: a line from before it is not its own, and observe still sees it", async () => {
+    const h = await startPlayHarness()
+    await started(h)
+    h.game.addLogEvents(["info", "before the script"])
+    const r = await h.call("n2_play_script", { ops: [{ expectLog: { contains: "before the script", absent: true } }] })
+    assert.ok(!r.isError, textOf(r))
+    assert.equal(r.structuredContent.data.passed, true)
+    const o = await h.call("n2_play_observe")
+    assert.ok(o.structuredContent.data.log.lines.some((l: { message: string }) => l.message === "before the script"))
+    await h.close()
+  })
+
   test("cancellation between ops: the script stops, releases every key and button, and leaves the game paused and usable", async () => {
     const h = await startPlayHarness()
     await started(h)
