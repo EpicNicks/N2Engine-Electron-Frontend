@@ -4,9 +4,11 @@
 import { useRef } from "preact/hooks"
 import { entriesAfter } from "./console-store"
 import { AssetDragEffect, AssetDragType, assetDragData } from "./drag-types"
-import { isTextAssetPath } from "./asset-edit"
+import { isTextAssetPath, parseImportSettings } from "./asset-edit"
 import { AssetRow, RootFolder, formatModified, formatSize, isFiltering, nameOf, parentOf, shortUuid } from "./asset-tree"
-import { isDirty } from "./assets-state"
+import { isDirty, settingsEdited } from "./assets-state"
+import { ImportSettingsForm } from "./assets-import-form"
+import { ImportCheck, ImportSchema, checkImportSettings, firstImportError, importSchemaFor } from "./assets-import-schema"
 import { useKeymapActions } from "./keymap-hooks"
 import { AppState, Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
 
@@ -249,26 +251,54 @@ function ImportSettingsEditor() {
   const { store, assets } = useApp()
   const detail = assets.detail.value
   if (!detail) return null
-  const edited = detail.settings !== detail.baseline
+  const edited = settingsEdited(detail)
+  const writable = store.connected.value && store.canWrite.value
+  // A type with a typed form (Texture, Model, Font) shows it unless JSON was asked for; the others are JSON only
+  const schema = importSchemaFor(detail.info?.type)
+  const view = schema ? assets.settingsView.value : "json"
+  // The form needs a JSON object; while the text is not one, only the JSON view can fix it
+  const formUsable = schema !== null && parseImportSettings(detail.settings).ok
+  // What the engine would ignore stops Apply (applySettings checks it again)
+  const blocked = schema ? firstImportError(checkFormSettings(schema, detail.settings), detail.fields, schema) : null
   return (
     <div class="import-settings">
-      <div class="detail-label">Import settings (JSON)</div>
-      <textarea
-        class="import-settings-text"
-        spellcheck={false}
-        value={detail.settings}
-        disabled={detail.info === null}
-        readOnly={!store.canWrite.value}
-        aria-label="Import settings"
-        onInput={(e) => assets.editSettings((e.currentTarget as HTMLTextAreaElement).value)}
-      />
+      <div class="import-settings-head">
+        <span class="detail-label">{view === "form" ? `Import settings (${schema!.type})` : "Import settings (JSON)"}</span>
+        {schema && (
+          <button
+            class="secondary"
+            disabled={view === "json" && !formUsable}
+            title={view === "json" && !formUsable ? "The JSON must be a valid object to edit it as a form" : undefined}
+            onClick={() => assets.setSettingsView(view === "form" ? "json" : "form")}
+          >
+            {view === "form" ? "Edit as JSON" : "Edit as form"}
+          </button>
+        )}
+      </div>
+      {view === "form" && schema ? (
+        <ImportSettingsForm schema={schema} detail={detail} assets={assets} disabled={detail.info === null || !writable} />
+      ) : (
+        <textarea
+          class="import-settings-text"
+          spellcheck={false}
+          value={detail.settings}
+          disabled={detail.info === null}
+          readOnly={!store.canWrite.value}
+          aria-label="Import settings"
+          onInput={(e) => assets.editSettings((e.currentTarget as HTMLTextAreaElement).value)}
+        />
+      )}
+      {!writable && store.connected.value && (
+        <div class="asset-hint">Read only: {store.readOnlyReason.value}</div>
+      )}
       {detail.outdated && (
         <div class="asset-warning">The settings changed on the host while you were editing; Apply replaces them.</div>
       )}
       {detail.error && <div class="asset-error">{detail.error}</div>}
       <div class="import-settings-buttons">
         <button
-          disabled={!edited || detail.saving || !store.connected.value || !store.canWrite.value}
+          disabled={!edited || detail.saving || !writable || blocked !== null}
+          title={blocked ?? undefined}
           onClick={() =>
             assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
           }
@@ -281,6 +311,13 @@ function ImportSettingsEditor() {
       </div>
     </div>
   )
+}
+
+/** The typed check of the settings text; a text that is not an object has nothing to check (Apply says why) */
+function checkFormSettings(schema: ImportSchema, settings: string): ImportCheck {
+  const parsed = parseImportSettings(settings)
+  if (!parsed.ok) return { fieldErrors: {}, blockError: null, unknownKeys: [], warnings: [] }
+  return checkImportSettings(schema, parsed.value)
 }
 
 export function AssetsPanel() {
@@ -299,9 +336,10 @@ export function AssetsPanel() {
   // Ctrl+S applies the import settings being edited, in their field only (anywhere else in the panel it saves the scene)
   useKeymapActions({
     "assets.applySettings": (e) => {
-      if (!(e.target as Element | null)?.closest?.(".import-settings-text")) return false
+      // The JSON text or a field of the typed form
+      if (!(e.target as Element | null)?.closest?.(".import-settings-text, .import-form")) return false
       const detail = assets.detail.value
-      if (detail && detail.settings !== detail.baseline) {
+      if (detail && settingsEdited(detail)) {
         assets.applySettings().catch((err) => store.reportError("Failed to set the import settings", err))
       }
     },
