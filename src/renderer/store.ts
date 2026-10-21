@@ -17,6 +17,7 @@ import type {
 } from "../shared/api"
 import type { EditResultResponse, EditorEvent, SceneInfoResponse } from "../protocol/protocol.generated"
 import { EmptyHistoryStatus, HistoryStatus, historyStatusOf } from "../protocol/edit-history"
+import { ExtensionOutputLog } from "../protocol/extension-output"
 import {
   AssetsChangedEvent,
   SceneChange,
@@ -315,6 +316,12 @@ export class EditorStore {
    */
   readonly extensionsUiRevision = signal<number | null>(null)
   readonly extensionsChangeCount = signal(0)
+  /**
+   * What the host's editor extensions wrote with Editor.Log (extensionOutput events, protocol 1.15.0, Admin-only so
+   * an editor or viewer role gets none): a bounded log to subscribe to, emptied when a connection is made. The text
+   * is untrusted: show it as text only. Nothing in the editor shows it yet.
+   */
+  readonly extensionOutput = new ExtensionOutputLog()
 
   readonly console: ConsoleStore
   /** Counts scene fetches, so a slow answer can't replace a newer one */
@@ -721,6 +728,7 @@ export class EditorStore {
       this.deniedAsReadOnly.value = false
       this.serverInfo.value = connected ? this.api.engine.serverInfo() : null
       this.extensionsUiRevision.value = null // another host (or none): its revision is not this one's
+      if (connected) this.extensionOutput.clear() // another connection: its lines are not this one's
       if (!connected) {
         this.scene.value = null
         this.sceneFetches++ // an answer still on its way is for a connection that is gone
@@ -1045,6 +1053,10 @@ export class EditorStore {
     let assetsChange: AssetsChangedEvent | null = null
     batch(() => {
       for (const event of events) {
+        if (event.kind === "extensionOutput") {
+          this.extensionOutput.addEvent(event)
+          continue
+        }
         const parsed = parseStateEvent(event)
         if (!parsed) continue
         if (parsed.kind === "sceneChanged") {
