@@ -108,6 +108,13 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
     const refusal = refuse.get(id)
     if (refusal) throw ipcError({ error: refusal.message, code: refusal.code })
   }
+  const failures = new Map<string, Error>()
+  const failing = (command: string) => {
+    const error = failures.get(command)
+    if (error) throw error
+  }
+  const asked: string[] = []
+  const state = { answer: true }
   const find = (id: string) => {
     const object = objects.get(id)
     if (!object) throw new Error(`Entity not found: ${id}`)
@@ -141,8 +148,22 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
     },
     setLocalTransform: async (id: string, position: Vec3, rotation: Quat, scale: Vec3) => {
       calls.push(["setLocalTransform", [id, position, rotation, scale]])
+      failing("setLocalTransform")
       gate(id)
       find(id).transform = { position, rotation, scale }
+    },
+    addComponent: async (id: string, typeName: string) => {
+      calls.push(["addComponent", [id, typeName]])
+      gate(id)
+      const componentId = `${id}-${typeName.toLowerCase()}-${find(id).components.length}`
+      find(id).components.push({ type: typeName, uuid: componentId, values: { isActive: true } })
+      return { componentId, values: { isActive: true } }
+    },
+    removeComponent: async (id: string, componentId: string) => {
+      calls.push(["removeComponent", [id, componentId]])
+      gate(id)
+      const object = find(id)
+      object.components = object.components.filter((c) => c.uuid !== componentId)
     },
   }
   const groups = options.groups
@@ -152,10 +173,36 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
         endEditGroup: async () => void calls.push(["endEditGroup", []]),
       })
     : undefined
-  const multi = new MultiInspectorState(host, engine, { groups, onError: (what, e) => errors.push([what, e]) })
+  const multi = new MultiInspectorState(host, engine, {
+    groups,
+    onError: (what, e) => errors.push([what, e]),
+    confirm: async (message: string) => {
+      asked.push(message)
+      return state.answer
+    },
+  })
   const names = () => calls.map(([name]) => name).filter((name) => name !== "getEntity" && name !== "getLuaFields")
   const component = (type: string) => multi.view.value!.components.find((c) => c.type === type)!
-  return { multi, objects, calls, refuse, errors, host, groups, names, component }
+  const engineFail = (command: string, error: Error) => void failures.set(command, error)
+  return {
+    multi,
+    objects,
+    calls,
+    refuse,
+    errors,
+    host,
+    groups,
+    names,
+    component,
+    engineFail,
+    asked,
+    get answer() {
+      return state.answer
+    },
+    set answer(value: boolean) {
+      state.answer = value
+    },
+  }
 }
 
 describe("buildMultiView", () => {
@@ -486,23 +533,17 @@ describe("MultiInspectorState: editing", () => {
 })
 
 describe("MultiInspectorState: partial failure and read-only", () => {
-  test("a refused object is reported by name; the others stay applied; the group still ends; what is shown is the host's", async () => {
+  test("a refusal aborts the edit: nothing more is sent, the group still ends, what is shown is the host's", async () => {
     const w = world({ a: { layer: 0 }, b: { name: "Bravo", layer: 0 }, c: { layer: 0 } })
     await w.multi.select(["a", "b", "c"])
     w.refuse.set("b", { message: "Entity is locked" })
     await w.multi.setProperties({ layer: 4 })
-    assert.deepEqual(w.names(), [
-      "beginEditGroup",
-      "setEntityProperties",
-      "setEntityProperties",
-      "setEntityProperties",
-      "endEditGroup",
-    ])
+    // c is not sent: the edit stopped at b
+    assert.deepEqual(w.names(), ["beginEditGroup", "setEntityProperties", "setEntityProperties", "endEditGroup"])
     const problem = w.multi.editProblem.value ?? ""
-    assert.match(problem, /1 of 3 changes failed/)
-    assert.match(problem, /2 applied/)
+    assert.match(problem, /1 of 3 changes applied \(Undo takes back what was applied\), 1 not sent/)
     assert.match(problem, /Bravo: Entity is locked/)
-    // Read back: a and c took it, b did not, so the layer is mixed and the first object's value is shown
+    // Read back: a took it, b and c did not, so the layer is mixed and the first object's value is shown
     assert.deepEqual(w.multi.view.value?.layer, { value: 4, mixed: true })
     assert.equal(w.groups?.depth, 0)
     // The next edit starts clean
@@ -519,7 +560,50 @@ describe("MultiInspectorState: partial failure and read-only", () => {
     w.refuse.set("b", { message: "read-only host: SetEntityProperties is not allowed", code: "readOnly" })
     await w.multi.setProperties({ layer: 2 })
     assert.equal(w.errors.length, 1)
-    assert.match(w.multi.editProblem.value ?? "", /2 of 2 changes failed \(0 applied/)
+    assert.match(w.multi.editProblem.value ?? "", /0 of 2 changes applied, 1 not sent/)
+    assert.equal(w.groups?.depth, 0)
+  })
+
+  test("a refusal of the last object: everything before it applied, none left unsent", async () => {
+    const w = world({ a: {}, b: {}, c: { name: "Charlie" } })
+    await w.multi.select(["a", "b", "c"])
+    w.refuse.set("c", { message: "nope" })
+    await w.multi.setTransformAxis("position", "x", 9)
+    assert.equal(w.calls.filter(([n]) => n === "setLocalTransform").length, 3)
+    assert.match(w.multi.editProblem.value ?? "", /2 of 3 changes applied .*, 0 not sent\. Charlie: nope/)
+    assert.equal(w.groups?.depth, 0)
+  })
+
+  test("an edit that fails after the selection moved on reports nothing on the new selection; its group still ends", async () => {
+    const w = world({ a: {}, b: { name: "Bravo" }, c: {}, d: {} })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("b", { message: "locked" })
+    const edit = w.multi.setProperties({ tag: "Enemy" })
+    // The selection changes while the edit is on its way
+    const moved = w.multi.select(["c", "d"])
+    await Promise.all([edit, moved])
+    await w.multi.settled
+    assert.equal(w.multi.editProblem.value, null)
+    assert.deepEqual(w.multi.ids.value, ["c", "d"])
+    // The edit went to the objects it was made on, and no further than the refusal
+    const sent = w.calls.filter(([n]) => n === "setEntityProperties").map(([, a]) => a[0])
+    assert.deepEqual(sent, ["a", "b"])
+    assert.equal(w.groups?.depth, 0)
+    // What is shown is the new selection, read from the host
+    assert.deepEqual(
+      w.multi.objects.value?.map((o) => o.header.id),
+      ["c", "d"]
+    )
+  })
+
+  test("the group ends even when the host's answer is a thrown non-host error (a dropped connection)", async () => {
+    const w = world({ a: {}, b: {} })
+    await w.multi.select(["a", "b"])
+    w.engineFail("setLocalTransform", new Error("connection lost"))
+    await w.multi.setTransformAxis("scale", "y", 2)
+    assert.deepEqual(w.names(), ["beginEditGroup", "setLocalTransform", "endEditGroup"])
+    assert.equal(w.groups?.depth, 0)
+    assert.match(w.multi.editProblem.value ?? "", /connection lost/)
   })
 
   test("read-only: no command is sent and the edit is refused", async () => {
@@ -529,7 +613,74 @@ describe("MultiInspectorState: partial failure and read-only", () => {
     assert.throws(() => w.multi.setProperties({ layer: 9 }), /read-only/)
     assert.throws(() => w.multi.setTransformAxis("position", "x", 9), /read-only/)
     assert.throws(() => w.multi.setField(w.component("Light"), lightSchema.fields[0], 9), /read-only/)
+    assert.throws(() => w.multi.addComponent("Light"), /read-only/)
+    await assert.rejects(w.multi.removeComponent(w.component("Light")), /read-only/)
     assert.deepEqual(w.names(), [])
+  })
+})
+
+describe("MultiInspectorState: Add Component and Remove for every object", () => {
+  test("Add Component adds the type to every object as ONE group", async () => {
+    const w = world({ a: {}, b: {}, c: {} })
+    await w.multi.select(["a", "b", "c"])
+    await w.multi.addComponent("Rigidbody")
+    assert.deepEqual(w.names(), ["beginEditGroup", "addComponent", "addComponent", "addComponent", "endEditGroup"])
+    assert.deepEqual(w.calls.find(([n]) => n === "beginEditGroup")?.[1], ["Edit 3 objects"])
+    assert.deepEqual(
+      w.calls.filter(([n]) => n === "addComponent").map(([, a]) => a),
+      [
+        ["a", "Rigidbody"],
+        ["b", "Rigidbody"],
+        ["c", "Rigidbody"],
+      ]
+    )
+    // Read back: every object has it now, so it is shared
+    assert.ok(w.multi.view.value?.components.some((c) => c.type === "Rigidbody"))
+  })
+
+  test("a singleton type that any selected object has can't be added to all", async () => {
+    const w = world({ a: {}, b: { light: null } })
+    w.host.types.value = [{ ...lightSchema, singleton: true }, types[1]]
+    await w.multi.select(["a", "b"])
+    assert.ok(w.multi.presentTypes.value.has("Light"))
+    assert.throws(() => w.multi.addComponent("Light"), /only one Light/)
+    assert.deepEqual(w.names(), [])
+  })
+
+  test("Remove asks once, then removes the shared component from every object as ONE group", async () => {
+    const w = world({ a: {}, b: {} })
+    await w.multi.select(["a", "b"])
+    assert.equal(await w.multi.removeComponent(w.component("Light")), true)
+    assert.deepEqual(w.asked, ["Remove Light from 2 objects?"])
+    assert.deepEqual(w.names(), ["beginEditGroup", "removeComponent", "removeComponent", "endEditGroup"])
+    assert.deepEqual(
+      w.calls.filter(([n]) => n === "removeComponent").map(([, a]) => a),
+      [
+        ["a", "a-light"],
+        ["b", "b-light"],
+      ]
+    )
+    assert.equal(w.multi.view.value?.components.length, 0)
+  })
+
+  test("Remove declined sends nothing", async () => {
+    const w = world({ a: {}, b: {} })
+    w.answer = false
+    await w.multi.select(["a", "b"])
+    assert.equal(await w.multi.removeComponent(w.component("Light")), false)
+    assert.deepEqual(w.names(), [])
+  })
+
+  test("Remove that is refused on one object stops there and the group ends", async () => {
+    const w = world({ a: { name: "Alpha" }, b: {} })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("a", { message: "in use" })
+    await w.multi.removeComponent(w.component("Light"))
+    assert.deepEqual(w.names(), ["beginEditGroup", "removeComponent", "endEditGroup"])
+    assert.match(w.multi.editProblem.value ?? "", /0 of 2 changes applied, 1 not sent\. Alpha: in use/)
+    assert.equal(w.groups?.depth, 0)
+    // Nothing was removed: the light is still shared
+    assert.ok(w.multi.view.value?.components.some((c) => c.type === "Light"))
   })
 })
 

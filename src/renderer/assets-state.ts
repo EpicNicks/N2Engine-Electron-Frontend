@@ -22,6 +22,7 @@ import {
   sameImportSettings,
   withLineEnding,
 } from "./asset-edit"
+import { blockOf, checkImportSettings, firstImportError, importSchemaFor, parseFieldText, withField } from "./assets-import-schema"
 import {
   AssetFilter,
   AssetListing,
@@ -90,7 +91,25 @@ export interface AssetDetail {
   saving: boolean
   /** The host's settings changed while these were being edited */
   outdated: boolean
+  /** The typed form's number fields as typed, by key, while they are being edited (a value is also in settings once valid) */
+  fields: Readonly<Record<string, string>>
 }
+
+/** Whether the import settings differ from the host's, or a form field holds text not yet in them */
+export const settingsEdited = (detail: AssetDetail): boolean =>
+  detail.settings !== detail.baseline || hasInvalidDraft(detail)
+
+/** A draft that is not valid yet; a valid one is already in the settings, so "1.0" for a 1 is not an edit (compared by value) */
+function hasInvalidDraft(detail: AssetDetail): boolean {
+  const schema = importSchemaFor(detail.info?.type)
+  return Object.entries(detail.fields).some(([key, text]) => {
+    const field = schema?.fields.find((f) => f.key === key)
+    return !field || !parseFieldText(field, text).ok
+  })
+}
+
+/** How the import settings are edited: the typed form of the asset's type, or the JSON text */
+export type SettingsView = "form" | "json"
 
 const messageOf = (e: unknown): string => errorTextOf(e)
 
@@ -107,6 +126,8 @@ export class AssetsState {
   /** The selected row's path: a file, a folder or a model's part (path#key) */
   readonly selected = signal<string | null>(null)
   readonly detail = signal<AssetDetail | null>(null)
+  /** The import settings editor's view, for the types that have a form (the others are always JSON) */
+  readonly settingsView = signal<SettingsView>("form")
 
   readonly rows = computed<AssetRow[]>(() => {
     const listing = this.listing.value
@@ -294,6 +315,7 @@ export class AssetsState {
         error: messageOf(e),
         saving: false,
         outdated: kept?.outdated ?? false,
+        fields: kept?.fields ?? {},
       }
       return
     }
@@ -302,25 +324,69 @@ export class AssetsState {
     const kept = this.detail.value?.path === path ? this.detail.value : null
     // An answer that began before Apply must not replace what is being sent (applySettings reads again afterwards)
     if (kept?.saving) return
-    if (kept && kept.settings !== kept.baseline) {
+    if (kept && settingsEdited(kept)) {
       // Edited: keep the text, say when the host's moved on
       const changed = !sameImportSettings(kept.baseline, baseline)
       this.detail.value = { ...kept, info, baseline, outdated: kept.outdated || changed, error: kept.error }
     } else {
-      this.detail.value = { path, info, settings: baseline, baseline, error: null, saving: false, outdated: false }
+      this.detail.value = { path, info, settings: baseline, baseline, error: null, saving: false, outdated: false, fields: {} }
     }
   }
 
   /** The import settings text was edited */
   editSettings(settings: string): void {
     const detail = this.detail.value
-    if (detail) this.detail.value = { ...detail, settings, error: null }
+    if (detail) this.detail.value = { ...detail, settings, error: null, fields: {} }
+  }
+
+  /**
+   * A field of the typed form was edited: text for a number or text field, the option for a choice ("" is the engine's
+   * default, which removes the key). A valid value goes into the settings text at once; a number being typed that
+   * isn't valid yet stays in the field (and stops Apply) without touching the settings.
+   */
+  editSettingField(key: string, text: string): void {
+    const detail = this.detail.value
+    const schema = importSchemaFor(detail?.info?.type)
+    const field = schema?.fields.find((f) => f.key === key)
+    if (!detail || !schema || !field) return
+    const current = parseImportSettings(detail.settings)
+    // Not JSON, or a block that is not an object: only the JSON view can fix it (a field must not overwrite it)
+    if (!current.ok || blockOf(schema, current.value) === null) return
+    const typed = field.kind === "number" || field.kind === "integer"
+    const fields = { ...detail.fields }
+    let value: unknown
+    if (typed) {
+      fields[key] = text
+      const parsed = parseFieldText(field, text)
+      if (!parsed.ok) {
+        this.detail.value = { ...detail, fields, error: null }
+        return
+      }
+      value = parsed.value
+    } else if (text === "") {
+      value = undefined
+    } else {
+      value = field.kind === "bool" ? text === "true" : text
+    }
+    const next = withField(schema, current.value, key, value)
+    const settings = sameImportSettings(JSON.stringify(next), detail.baseline) ? detail.baseline : JSON.stringify(next, null, 2)
+    // A typed field whose value is in the settings is no longer a draft once it reads back the same
+    if (typed && (value === undefined ? text.trim() === "" : JSON.stringify(value) === text.trim())) delete fields[key]
+    this.detail.value = { ...detail, settings, fields, error: null }
+  }
+
+  /** Switches the import settings editor between the typed form and the JSON text */
+  setSettingsView(view: SettingsView): void {
+    this.settingsView.value = view
+    // A number draft that is not valid is not in the settings: dropped, so Apply matches what is shown (valid ones are in the settings)
+    const detail = this.detail.value
+    if (detail && Object.keys(detail.fields).length > 0) this.detail.value = { ...detail, fields: {}, error: null }
   }
 
   /** Back to the host's settings */
   revertSettings(): void {
     const detail = this.detail.value
-    if (detail) this.detail.value = { ...detail, settings: detail.baseline, error: null, outdated: false }
+    if (detail) this.detail.value = { ...detail, settings: detail.baseline, error: null, outdated: false, fields: {} }
   }
 
   /** Sends the import settings text; false (with the reason in the detail) when it isn't valid or the host refuses it */
@@ -337,6 +403,15 @@ export class AssetsState {
       this.detail.value = { ...detail, error: checked.error }
       return false
     }
+    // A type with a form: what its loader would ignore is not sent (the host would take it and the engine warn)
+    const schema = importSchemaFor(detail.info?.type)
+    if (schema) {
+      const invalid = firstImportError(checkImportSettings(schema, checked.value), detail.fields, schema)
+      if (invalid !== null) {
+        this.detail.value = { ...detail, error: invalid }
+        return false
+      }
+    }
     const { path } = detail
     const sent = detail.settings
     this.detail.value = { ...detail, saving: true, error: null }
@@ -352,7 +427,8 @@ export class AssetsState {
     const now = this.detail.value
     // What was sent is what the host has now (the host's own text of it follows from the read)
     if (now && now.path === path) {
-      this.detail.value = { ...now, saving: false, baseline: sent, settings: now.settings === sent ? sent : now.settings, outdated: false }
+      const same = now.settings === sent
+      this.detail.value = { ...now, saving: false, baseline: sent, settings: same ? sent : now.settings, outdated: false, fields: same ? {} : now.fields }
     }
     await this.readDetail(path)
     return true

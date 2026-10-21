@@ -319,7 +319,7 @@ describe("the inspector with several objects selected", () => {
       return real(id, p, r, s)
     }
     await typeInto(t.user, "Scale x", "3")
-    await waitFor(() => assert.match(document.body.textContent ?? "", /1 of 2 changes failed \(1 applied/))
+    await waitFor(() => assert.match(document.body.textContent ?? "", /1 of 2 changes applied .*0 not sent/))
     assert.match(document.body.textContent ?? "", /B is locked/)
     assert.equal(t.sent("endEditGroup").length, 1)
   })

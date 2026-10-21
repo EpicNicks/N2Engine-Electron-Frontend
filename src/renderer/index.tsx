@@ -14,6 +14,7 @@ import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
+import { applyMarquee, marqueeCandidatesOf } from "./viewport-marquee"
 import { createPickBackend, hostHasPicking } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
 import { PlayController } from "./play-controller"
@@ -115,6 +116,12 @@ const viewport = new ViewportController({
   selectionIds: () => [...hierarchy.selection.peek().ids],
   // A click in the viewport selects like a click on the hierarchy's row (Ctrl toggles, Shift extends)
   select: (id, modifiers) => hierarchy.pick(id, modifiers),
+  // A marquee over the view: the hierarchy's active objects as the host last listed them, and the selection they change
+  marqueeCandidates: () => {
+    const response = hierarchy.response.peek()
+    return response ? { revision: response.revision, ids: marqueeCandidatesOf(hierarchy.tree.peek()) } : null
+  },
+  selectMany: (ids, op) => applyMarquee(hierarchy, ids, op),
 })
 // Play mode: the game runs in a second host process; while it does, the scene is read-only and the viewport, the audio
 // and the console are the game's
