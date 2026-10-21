@@ -75,48 +75,73 @@ export const MaxRegexInput = 4096
  */
 export const HighlightStepsPerChar = 64
 /**
- * The matcher is linear in a line, but a pass over a full console (thousands of lines of 4096 characters, a pattern
- * of hundreds of steps) is not small, so the steps one pass may spend are capped as well; the same number is the cap
- * for the highlighting of the rows between two passes. About 40 million steps take about a second and are a literal pattern over roughly ten million characters of lines. A test pass
- * that runs out disables the regular expression for the pattern (see TextMatcher.slow); highlighting that runs out
- * just stops marking matches.
+ * The matcher is linear in a line, but thousands of lines of 4096 characters with a pattern of hundreds of steps add
+ * up, and the log keeps arriving, so all of a matcher's work (testing the lines, highlighting the rows) draws on one
+ * bucket of steps. The bucket holds at most MaxUpdateSteps, so that is the most one update can spend however many
+ * passes it makes, and it refills at RegexStepsPerSecond, so that is the most the filter spends on average while lines
+ * stream in. Testing that runs the bucket dry turns the regular expression off for the pattern (TextMatcher.slow);
+ * highlighting that runs it dry only stops marking. The numbers are justified in the README.
  */
-export const MaxPassSteps = 40_000_000
+export const MaxUpdateSteps = 20_000_000
+/** The bucket's refill rate in steps per second (see MaxUpdateSteps) */
+export const RegexStepsPerSecond = 4_000_000
 /** The highlights remembered per matcher (a render asks again for every row; it is cleared when it is this full) */
 const MaxRangeCache = 6000
+
+/** Which of a list of lines pass the text filter: one result shared by the list and both kinds of count */
+export interface TextResults {
+  /** Whether the entry passes (asked only for the entries the results were made from) */
+  passes(entry: ConsoleEntry): boolean
+  /** The regular expression ran the bucket dry and is off for this pattern: every line passes */
+  slow: boolean
+}
 
 export interface TextMatcher {
   /** Whether the line passes (everything passes when there is no text, when the regex is not valid, or when it is slow) */
   test(message: string): boolean
+  /**
+   * Tests the lines once for the list and the counts together. A line this matcher has tested is remembered, so only
+   * new lines cost steps; if the bucket runs dry part way the matcher turns slow and every line passes.
+   */
+  testEntries(entries: readonly ConsoleEntry[]): TextResults
   /** [start, end) ranges of the matches in the message, in order, for highlighting; none without text */
   ranges(message: string): Array<[number, number]>
-  /** Starts a pass over the lines: the step budgets are full again (filterEntries and the counts do it) */
-  beginPass(): void
   /** Why the regular expression isn't valid (shown inline); null when it is, or when regex is off */
   error: string | null
-  /** The regular expression used up a pass's step budget and is off for this pattern: nothing is filtered (editing the pattern tries again) */
+  /** The regular expression ran the bucket dry and is off for this pattern (editing the pattern tries again) */
   readonly slow: boolean
+  /** The matcher steps spent so far (the bucket bounds it; for tests) */
+  readonly spent: number
   /** The filter does something */
   active: boolean
 }
 
+/** A clock in milliseconds (performance.now by default; tests pass their own) */
+export type Clock = () => number
+
+const allPass: TextResults = { passes: () => true, slow: false }
+const slowResults: TextResults = { passes: () => true, slow: true }
+
 const passAll: TextMatcher = {
   test: () => true,
+  testEntries: () => allPass,
   ranges: () => [],
-  beginPass: () => {},
   error: null,
   slow: false,
+  spent: 0,
   active: false,
 }
 
-export function compileMatcher(filter: TextFilter): TextMatcher {
+export function compileMatcher(filter: TextFilter, clock: Clock = () => performance.now()): TextMatcher {
   const { search, matchCase, regex } = filter
   if (search === "") return passAll
   if (!regex) {
     const fold = (text: string) => (matchCase ? text : text.toLowerCase())
     const needle = fold(search)
+    const test = (message: string) => fold(message).includes(needle)
     return {
-      test: (message) => fold(message).includes(needle),
+      test,
+      testEntries: () => ({ passes: (entry) => test(entry.message), slow: false }),
       ranges(message) {
         const hay = fold(message)
         const out: Array<[number, number]> = []
@@ -125,9 +150,9 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
         }
         return out
       },
-      beginPass: () => {},
       error: null,
       slow: false,
+      spent: 0,
       active: true,
     }
   }
@@ -145,42 +170,66 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
   }
   const limited = (message: string) => (message.length > MaxRegexInput ? message.slice(0, MaxRegexInput) : message)
   let slow = false
-  let testLeft = MaxPassSteps
-  let rangesLeft = MaxPassSteps
+  let spent = 0
+  // The bucket: full when the matcher is made, refilled for the time since it was last drawn on, never over full
+  let left = MaxUpdateSteps
+  let filled = clock()
+  const refill = () => {
+    const now = clock()
+    if (now > filled) left = Math.min(MaxUpdateSteps, left + ((now - filled) * RegexStepsPerSecond) / 1000)
+    filled = now
+  }
   let cache = new Map<string, Array<[number, number]>>()
-  // One run of the matcher with at most `left` steps; dry when it ran out
-  const run = (text: string, from: number, firstOnly: boolean, left: number) => {
-    const budget = { left }
+  const tested = new WeakMap<ConsoleEntry, boolean>()
+  // One run of the matcher with at most `allowed` steps, taken from the bucket; dry when it ran out
+  const run = (text: string, from: number, firstOnly: boolean, allowed: number) => {
+    const cap = Math.max(0, Math.floor(allowed))
+    const budget = { left: cap }
     const m = exec(program, text, from, firstOnly, budget)
-    return { m, left: budget.left, dry: budget.left < 0 }
+    const used = cap - Math.max(budget.left, 0)
+    spent += used
+    left -= used
+    return { m, used, dry: budget.left < 0 }
+  }
+  // Tests one line; null when the bucket ran dry (the matcher is slow from then on)
+  const testOne = (message: string): boolean | null => {
+    const r = run(limited(message), 0, true, left)
+    if (!r.dry) return r.m !== null
+    slow = true
+    cache = new Map()
+    return null
   }
   return {
     test(message) {
       if (slow) return true
-      const r = run(limited(message), 0, true, testLeft)
-      if (r.dry) {
-        slow = true
-        return true
+      refill()
+      return testOne(message) ?? true
+    },
+    testEntries(entries) {
+      if (slow) return slowResults
+      refill()
+      for (const entry of entries) {
+        if (tested.has(entry)) continue
+        const passes = testOne(entry.message)
+        if (passes === null) return slowResults
+        tested.set(entry, passes)
       }
-      testLeft = r.left
-      return r.m !== null
+      return { passes: (entry) => tested.get(entry) ?? true, slow: false }
     },
     ranges(message) {
       if (slow) return []
       const hit = cache.get(message)
       if (hit) return hit
+      refill()
       const text = limited(message)
       const out: Array<[number, number]> = []
-      let line = Infinity // the first match is limited by the pass only, the rest by the line too
-      let final = true // false when the pass's budget cut the line short: it is asked again next time
+      let line = Infinity // the first match is limited by the bucket only, the rest by the line too
+      let final = true // false when the bucket cut the line short: it is asked again on a later render
       for (let from = 0; from <= text.length; ) {
-        const allowed = Math.max(0, Math.min(rangesLeft, line))
-        const r = run(text, from, false, allowed)
-        const spent = allowed - Math.max(r.left, 0)
-        rangesLeft -= spent
-        line = line === Infinity ? HighlightStepsPerChar * (text.length + 1) - spent : line - spent
+        const r = run(text, from, false, Math.min(left, line))
+        line = line === Infinity ? HighlightStepsPerChar * (text.length + 1) - r.used : line - r.used
         if (r.dry) {
-          final = rangesLeft > 0
+          final = left > 0
           break
         }
         const m = r.m
@@ -197,13 +246,12 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
       }
       return out
     },
-    beginPass() {
-      testLeft = MaxPassSteps
-      rangesLeft = MaxPassSteps
-    },
     error: null,
     get slow() {
       return slow
+    },
+    get spent() {
+      return spent
     },
     active: true,
   }
@@ -230,33 +278,23 @@ export function highlightPieces(
 /** The filters that pick lines (the levels are applied separately) */
 export interface LineFilter {
   hiddenSources: ReadonlySet<string>
-  matcher: TextMatcher
+  /** The text filter's results for the lines (TextMatcher.testEntries), shared by the list and the counts */
+  text: TextResults
 }
 
 /** Whether the line passes the source and text filters (not the levels) */
 export function passesLine(registry: ConsoleSourceRegistry, entry: ConsoleEntry, filter: LineFilter): boolean {
-  return !filter.hiddenSources.has(sourceOf(registry, entry)) && filter.matcher.test(entry.message)
+  return !filter.hiddenSources.has(sourceOf(registry, entry)) && filter.text.passes(entry)
 }
 
-/** The lines with their levels shown, passing the source and text filters; one pass */
+/** The lines with their levels shown, passing the source and text filters */
 export function filterEntries(
   registry: ConsoleSourceRegistry,
   entries: readonly ConsoleEntry[],
   shown: Readonly<Record<LogLevel, boolean>>,
   filter: LineFilter
 ): ConsoleEntry[] {
-  return pass(filter.matcher, () => entries.filter((entry) => shown[entry.level] && passesLine(registry, entry, filter)))
-}
-
-/**
- * Runs a pass over the lines with the matcher's budget full. When the regular expression runs dry part way it turns
- * itself off, so the lines before that point were filtered and the rest were not: the pass is made again, whole,
- * with the matcher passing everything.
- */
-export function pass<T>(matcher: TextMatcher, run: () => T): T {
-  matcher.beginPass()
-  const result = run()
-  return matcher.slow ? run() : result
+  return entries.filter((entry) => shown[entry.level] && passesLine(registry, entry, filter))
 }
 
 /**
@@ -268,11 +306,25 @@ export function countLevels(
   entries: readonly ConsoleEntry[],
   filter: LineFilter
 ): Record<LogLevel, number> {
-  return pass(filter.matcher, () => {
-    const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
-    for (const entry of entries) if (passesLine(registry, entry, filter)) counts[entry.level]++
-    return counts
-  })
+  const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
+  for (const entry of entries) if (passesLine(registry, entry, filter)) counts[entry.level]++
+  return counts
+}
+
+/** Lines per source among those passing the level and text filters (a source switched off still counts) */
+export function countSources(
+  registry: ConsoleSourceRegistry,
+  entries: readonly ConsoleEntry[],
+  shown: Readonly<Record<LogLevel, boolean>>,
+  text: TextResults
+): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const entry of entries) {
+    if (!shown[entry.level] || !text.passes(entry)) continue
+    const id = sourceOf(registry, entry)
+    counts[id] = (counts[id] ?? 0) + 1
+  }
+  return counts
 }
 
 /** One row of the list: a line, and how many identical lines in a row it stands for */

@@ -14,11 +14,12 @@ import {
   collapseRepeats,
   compileMatcher,
   consoleSources,
+  Clock,
+  TextResults,
   countLevels,
+  countSources,
   filterEntries,
-  pass,
   plainRows,
-  sourceOf,
 } from "./console-filter"
 import type { ConsoleFilterPrefValue } from "./console-filter-prefs"
 
@@ -76,6 +77,8 @@ export interface ConsoleStoreOptions extends EventPumpOptions {
   now?: () => number
   /** The registry of sources (consoleSources by default) */
   sources?: ConsoleSourceRegistry
+  /** A clock in milliseconds for the regex filter's step budget (performance.now by default) */
+  clock?: Clock
 }
 
 export class ConsoleStore {
@@ -94,11 +97,21 @@ export class ConsoleStore {
   readonly collapse = signal(false)
   /** The text filter, compiled once per change of the text or its toggles */
   readonly matcher = computed(() =>
-    compileMatcher({ search: this.search.value, matchCase: this.matchCase.value, regex: this.regex.value })
+    compileMatcher(
+      { search: this.search.value, matchCase: this.matchCase.value, regex: this.regex.value },
+      this.clock
+    )
   )
+  /**
+   * The text filter's results for the lines: one pass per change of the lines or the matcher, shared by the list and
+   * both kinds of count, so they always agree (a regular expression that runs out of steps is off for all of them)
+   */
+  readonly textResults = computed<TextResults>(() => this.matcher.value.testEntries(this.entries.value))
+  /** The regular expression is too slow for the lines and is off (shown inline) */
+  readonly regexSlow = computed(() => this.textResults.value.slow)
   private readonly lineFilter = computed<LineFilter>(() => ({
     hiddenSources: this.hiddenSources.value,
-    matcher: this.matcher.value,
+    text: this.textResults.value,
   }))
   /** The lines shown: the levels switched on, the sources switched on, matching the text */
   readonly visible = computed(() =>
@@ -111,19 +124,9 @@ export class ConsoleStore {
   /** Lines per level among those passing the source and text filters (a level switched off still counts) */
   readonly counts = computed(() => countLevels(this.sources, this.entries.value, this.lineFilter.value))
   /** Lines per source among those passing the level and text filters (a source switched off still counts) */
-  readonly sourceCounts = computed(() => {
-    const shown = this.shown.value
-    const matcher = this.matcher.value
-    return pass(matcher, () => {
-      const counts: Record<string, number> = {}
-      for (const entry of this.entries.value) {
-        if (!shown[entry.level] || !matcher.test(entry.message)) continue
-        const id = sourceOf(this.sources, entry)
-        counts[id] = (counts[id] ?? 0) + 1
-      }
-      return counts
-    })
-  })
+  readonly sourceCounts = computed(() =>
+    countSources(this.sources, this.entries.value, this.shown.value, this.textResults.value)
+  )
   /** The filters as a value, for the preferences */
   readonly filterState = computed<ConsoleFilterPrefValue>(() => ({
     levels: { ...this.shown.value },
@@ -140,13 +143,15 @@ export class ConsoleStore {
   private readonly pump: EventPump<EditorEvent>
   private readonly maxEntries: number
   private readonly now: () => number
+  private readonly clock: Clock
   private nextId = 1
   /** The host launch the pump's cursor belongs to */
   private launch: number | null = null
 
   constructor(poll: PollFunction<EditorEvent>, options: ConsoleStoreOptions = {}) {
-    const { onEvents, onMissedEvents, maxEntries, now, sources, ...pumpOptions } = options
+    const { onEvents, onMissedEvents, maxEntries, now, sources, clock, ...pumpOptions } = options
     this.sources = sources ?? consoleSources
+    this.clock = clock ?? (() => performance.now())
     this.maxEntries = maxEntries ?? DefaultMaxEntries
     this.now = now ?? Date.now
     this.pump = new EventPump(
