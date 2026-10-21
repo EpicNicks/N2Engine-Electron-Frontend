@@ -117,6 +117,12 @@ export function ConsolePanel() {
           Not a valid pattern, so nothing is filtered: {matcher.error}
         </div>
       )}
+      {matcher.slow && (
+        <div class="console-regex-error" role="alert">
+          This pattern is too slow on the lines in the console, so the regular expression is off and nothing is filtered.
+          Simplify the pattern (or edit it to try again).
+        </div>
+      )}
       <div
         class="console-list"
         ref={list}

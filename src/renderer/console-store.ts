@@ -16,6 +16,7 @@ import {
   consoleSources,
   countLevels,
   filterEntries,
+  pass,
   plainRows,
   sourceOf,
 } from "./console-filter"
@@ -111,15 +112,17 @@ export class ConsoleStore {
   readonly counts = computed(() => countLevels(this.sources, this.entries.value, this.lineFilter.value))
   /** Lines per source among those passing the level and text filters (a source switched off still counts) */
   readonly sourceCounts = computed(() => {
-    const counts: Record<string, number> = {}
     const shown = this.shown.value
     const matcher = this.matcher.value
-    for (const entry of this.entries.value) {
-      if (!shown[entry.level] || !matcher.test(entry.message)) continue
-      const id = sourceOf(this.sources, entry)
-      counts[id] = (counts[id] ?? 0) + 1
-    }
-    return counts
+    return pass(matcher, () => {
+      const counts: Record<string, number> = {}
+      for (const entry of this.entries.value) {
+        if (!shown[entry.level] || !matcher.test(entry.message)) continue
+        const id = sourceOf(this.sources, entry)
+        counts[id] = (counts[id] ?? 0) + 1
+      }
+      return counts
+    })
   })
   /** The filters as a value, for the preferences */
   readonly filterState = computed<ConsoleFilterPrefValue>(() => ({

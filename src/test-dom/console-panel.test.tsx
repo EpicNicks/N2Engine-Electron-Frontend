@@ -85,6 +85,20 @@ describe("the console filters", () => {
     assert.equal(screen.queryByRole("alert"), null)
   })
 
+  test("a pattern that is too slow for the lines turns the regex off with an inline message; editing it tries again", { timeout: 20000 }, async () => {
+    renderConsole(Array.from({ length: 200 }, (_, i) => line("info", "a".repeat(4096) + (i % 2 === 0 ? "" : "!"))))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: ".*" }))
+    await user.click(filter())
+    await user.paste("[a-z]{1,60}[0-9]{1,60}q")
+    assert.equal(messages().length, 200, "nothing is filtered")
+    assert.match(screen.getByRole("alert").textContent ?? "", /too slow/)
+    await user.clear(filter())
+    await user.paste("zzz")
+    assert.equal(screen.queryByRole("alert"), null)
+    assert.equal(messages().length, 0)
+  })
+
   test("a pattern the filter cannot run safely says so inline and filters nothing; a nested repeat just works", { timeout: 20000 }, async () => {
     renderConsole([line("info", "aaa"), line("info", "b")])
     const user = userEvent.setup()

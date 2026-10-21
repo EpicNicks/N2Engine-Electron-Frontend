@@ -69,23 +69,45 @@ export const MaxPatternLength = 200
 export const MaxRegexInput = 4096
 /**
  * Highlighting runs the matcher once per match, and each run can look past the end of its match (a higher-priority
- * thread may still be alive), so finding every match of a line is not linear. The steps for one line's highlighting
- * are capped at this many per character of the line; past it the matches found so far are the highlight.
+ * thread may still be alive), so finding every match of a line is not linear. After the first match, the steps for
+ * one line's highlighting are capped at this many per character of the line; past it the matches found so far are the
+ * highlight.
  */
 export const HighlightStepsPerChar = 64
+/**
+ * The matcher is linear in a line, but a pass over a full console (thousands of lines of 4096 characters, a pattern
+ * of hundreds of steps) is not small, so the steps one pass may spend are capped as well; the same number is the cap
+ * for the highlighting of the rows between two passes. About 40 million steps take about a second and are a literal pattern over roughly ten million characters of lines. A test pass
+ * that runs out disables the regular expression for the pattern (see TextMatcher.slow); highlighting that runs out
+ * just stops marking matches.
+ */
+export const MaxPassSteps = 40_000_000
+/** The highlights remembered per matcher (a render asks again for every row; it is cleared when it is this full) */
+const MaxRangeCache = 6000
 
 export interface TextMatcher {
-  /** Whether the line passes (everything passes when there is no text, or when the regex is not valid) */
+  /** Whether the line passes (everything passes when there is no text, when the regex is not valid, or when it is slow) */
   test(message: string): boolean
   /** [start, end) ranges of the matches in the message, in order, for highlighting; none without text */
   ranges(message: string): Array<[number, number]>
+  /** Starts a pass over the lines: the step budgets are full again (filterEntries and the counts do it) */
+  beginPass(): void
   /** Why the regular expression isn't valid (shown inline); null when it is, or when regex is off */
   error: string | null
+  /** The regular expression used up a pass's step budget and is off for this pattern: nothing is filtered (editing the pattern tries again) */
+  readonly slow: boolean
   /** The filter does something */
   active: boolean
 }
 
-const passAll: TextMatcher = { test: () => true, ranges: () => [], error: null, active: false }
+const passAll: TextMatcher = {
+  test: () => true,
+  ranges: () => [],
+  beginPass: () => {},
+  error: null,
+  slow: false,
+  active: false,
+}
 
 export function compileMatcher(filter: TextFilter): TextMatcher {
   const { search, matchCase, regex } = filter
@@ -103,7 +125,9 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
         }
         return out
       },
+      beginPass: () => {},
       error: null,
+      slow: false,
       active: true,
     }
   }
@@ -120,14 +144,46 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
     return { ...passAll, error: reason }
   }
   const limited = (message: string) => (message.length > MaxRegexInput ? message.slice(0, MaxRegexInput) : message)
+  let slow = false
+  let testLeft = MaxPassSteps
+  let rangesLeft = MaxPassSteps
+  let cache = new Map<string, Array<[number, number]>>()
+  // One run of the matcher with at most `left` steps; dry when it ran out
+  const run = (text: string, from: number, firstOnly: boolean, left: number) => {
+    const budget = { left }
+    const m = exec(program, text, from, firstOnly, budget)
+    return { m, left: budget.left, dry: budget.left < 0 }
+  }
   return {
-    test: (message) => exec(program, limited(message), 0, true) !== null,
+    test(message) {
+      if (slow) return true
+      const r = run(limited(message), 0, true, testLeft)
+      if (r.dry) {
+        slow = true
+        return true
+      }
+      testLeft = r.left
+      return r.m !== null
+    },
     ranges(message) {
+      if (slow) return []
+      const hit = cache.get(message)
+      if (hit) return hit
       const text = limited(message)
       const out: Array<[number, number]> = []
-      const budget = { left: HighlightStepsPerChar * (text.length + 1) }
+      let line = Infinity // the first match is limited by the pass only, the rest by the line too
+      let final = true // false when the pass's budget cut the line short: it is asked again next time
       for (let from = 0; from <= text.length; ) {
-        const m = exec(program, text, from, false, budget)
+        const allowed = Math.max(0, Math.min(rangesLeft, line))
+        const r = run(text, from, false, allowed)
+        const spent = allowed - Math.max(r.left, 0)
+        rangesLeft -= spent
+        line = line === Infinity ? HighlightStepsPerChar * (text.length + 1) - spent : line - spent
+        if (r.dry) {
+          final = rangesLeft > 0
+          break
+        }
+        const m = r.m
         if (m === null) break
         if (m[1] === m[0]) from = m[0] + 1 // an empty match is not highlighted and must not loop
         else {
@@ -135,9 +191,20 @@ export function compileMatcher(filter: TextFilter): TextMatcher {
           from = m[1]
         }
       }
+      if (final) {
+        if (cache.size >= MaxRangeCache) cache = new Map()
+        cache.set(message, out)
+      }
       return out
     },
+    beginPass() {
+      testLeft = MaxPassSteps
+      rangesLeft = MaxPassSteps
+    },
     error: null,
+    get slow() {
+      return slow
+    },
     active: true,
   }
 }
@@ -178,7 +245,18 @@ export function filterEntries(
   shown: Readonly<Record<LogLevel, boolean>>,
   filter: LineFilter
 ): ConsoleEntry[] {
-  return entries.filter((entry) => shown[entry.level] && passesLine(registry, entry, filter))
+  return pass(filter.matcher, () => entries.filter((entry) => shown[entry.level] && passesLine(registry, entry, filter)))
+}
+
+/**
+ * Runs a pass over the lines with the matcher's budget full. When the regular expression runs dry part way it turns
+ * itself off, so the lines before that point were filtered and the rest were not: the pass is made again, whole,
+ * with the matcher passing everything.
+ */
+export function pass<T>(matcher: TextMatcher, run: () => T): T {
+  matcher.beginPass()
+  const result = run()
+  return matcher.slow ? run() : result
 }
 
 /**
@@ -190,9 +268,11 @@ export function countLevels(
   entries: readonly ConsoleEntry[],
   filter: LineFilter
 ): Record<LogLevel, number> {
-  const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
-  for (const entry of entries) if (passesLine(registry, entry, filter)) counts[entry.level]++
-  return counts
+  return pass(filter.matcher, () => {
+    const counts: Record<LogLevel, number> = { info: 0, warn: 0, error: 0 }
+    for (const entry of entries) if (passesLine(registry, entry, filter)) counts[entry.level]++
+    return counts
+  })
 }
 
 /** One row of the list: a line, and how many identical lines in a row it stands for */

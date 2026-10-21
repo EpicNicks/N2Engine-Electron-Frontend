@@ -396,14 +396,23 @@ function inRanges(ranges: Ranges, ch: number): boolean {
   return false
 }
 
-function classMatches(inst: Inst, ch: number, ignoreCase: boolean): boolean {
+/** The lower case form of a character that RegExp treats as the same letter (-1 when it has none, or it is another letter) */
+function lowerOf(ch: number): number {
+  if (ch < 128) return ch >= 65 && ch <= 90 ? ch + 32 : -1
+  const low = String.fromCharCode(ch).toLowerCase()
+  if (low.length !== 1) return -1
+  const l = low.charCodeAt(0)
+  return l !== ch && canon(l) === canon(ch) ? l : -1
+}
+
+function classMatches(inst: Inst, ch: number, ignoreCase: boolean, low: number): boolean {
   const ranges = inst.ranges as Ranges
   let found = inRanges(ranges, ch)
   if (!found && ignoreCase) {
     const up = canon(ch)
     found = up !== ch && inRanges(ranges, up)
-    // Only ASCII upper case folds down here (RegExp does not fold other characters, such as the Kelvin sign, to k)
-    if (!found && ch >= 65 && ch <= 90) found = inRanges(ranges, ch + 32)
+    // The lower case form counts only when RegExp folds it to the same letter (it does not fold the Kelvin sign to k)
+    if (!found && low >= 0) found = inRanges(ranges, low)
   }
   return found !== inst.negate
 }
@@ -424,7 +433,8 @@ interface ThreadList {
  * when `firstOnly`, which is enough to know that there is one); null when there is none. At most
  * (text length x program size) steps, however the pattern is built. A caller that runs it again and again (highlighting
  * every match of a line) passes a shared `budget` of steps: when it is spent the call gives up and returns null with
- * `budget.left` below zero, so the total work for the line is bounded, not just each call.
+ * `budget.left` below zero, so the total work for the line is bounded, not just each call. A step is a live thread
+ * taken through a character or an instruction reached without one (the work that costs the time).
  */
 export function exec(
   program: Program,
@@ -447,6 +457,7 @@ export function exec(
   const add = (l: ThreadList, pc: number, start: number, pos: number): void => {
     if (mark[pc] === gen) return
     mark[pc] = gen
+    if (budget) budget.left--
     const inst = insts[pc]
     if (inst.op === OpJmp) add(l, inst.x, start, pos)
     else if (inst.op === OpSplit) {
@@ -475,6 +486,7 @@ export function exec(
     if (best === null) add(clist, 0, pos, pos)
     if (clist.n === 0 && best !== null) break
     const ch = pos < n ? text.charCodeAt(pos) : -1
+    const low = ignoreCase && ch >= 0 ? lowerOf(ch) : -1
     gen++
     nlist.n = 0
     if (budget) {
@@ -494,7 +506,7 @@ export function exec(
       let ok: boolean
       if (inst.op === OpChar) ok = ignoreCase ? canon(ch) === inst.x : ch === inst.x
       else if (inst.op === OpAny) ok = !isLineTerminator(ch)
-      else ok = classMatches(inst, ch, ignoreCase)
+      else ok = classMatches(inst, ch, ignoreCase, low)
       if (ok) add(nlist, pc + 1, start, pos + 1)
     }
     const swap = clist
