@@ -1,6 +1,6 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import type { ComponentSchema, EntityDataResponse, FieldSchema } from "../protocol/protocol.generated"
+import type { ComponentSchema, EntityDataResponse, FieldSchema, LocalTransform, Quat, Vec3 } from "../protocol/protocol.generated"
 import { ipcError } from "../shared/api"
 import type { AssetEntry, JsonObject } from "../shared/api"
 import { signal } from "@preact/signals-core"
@@ -8,6 +8,7 @@ import { EmptyHistoryStatus, HistoryStatus } from "../protocol/edit-history"
 import { EditController } from "../renderer/edit-controller"
 import { EditGroups } from "../renderer/edit-groups"
 import { EntityKey, InspectorState } from "../renderer/inspector-state"
+import { eulerToQuat, quatsEquivalent } from "../renderer/euler"
 import { fieldPatch } from "../renderer/inspector-fields"
 
 const field = (name: string, kind: string, extra: Partial<FieldSchema> = {}): FieldSchema => ({
@@ -56,10 +57,15 @@ function deferred<T>() {
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 /** One object, with a light and a Lua component */
-function entityData(id: string, overrides: Partial<Record<string, JsonObject>> = {}): EntityDataResponse {
+function entityData(
+  id: string,
+  overrides: Partial<Record<string, JsonObject>> = {},
+  transform?: LocalTransform
+): EntityDataResponse {
   return {
     entity: {
       header: { id, parentId: "", index: 0, name: "Lamp", active: true, activeInHierarchy: true, layer: 0, tag: "" },
+      transform,
       components: [
         { type: "Light", uuid: "light", values: overrides.light ?? { isActive: true, intensity: 1, range: 10 } },
         { type: "LuaComponent", uuid: "lua", values: overrides.lua ?? { scriptUUID: S1, scriptData: { speed: 1 } } },
@@ -83,19 +89,35 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
   const errors: Array<[string, unknown]> = []
   const timers: Array<{ id: number; callback: () => void; ms: number }> = []
   let nextTimer = 1
-  const state: { connected: boolean; stored: Record<string, JsonObject>; autoReply: boolean; failSet: string | null; failCode?: string } = {
+  const state: {
+    connected: boolean
+    stored: Record<string, JsonObject>
+    autoReply: boolean
+    failSet: string | null
+    failCode?: string
+    /** The local transform GetEntity answers with; none: an object with no transform */
+    transform?: LocalTransform
+    failTransform: string | null
+  } = {
     connected: true,
     stored: {},
     autoReply: true,
     failSet: null,
+    failTransform: null,
   }
   const engine = {
     isConnected: () => state.connected,
     getEntity: async (id: string) => {
       calls.push(["getEntity", [id]])
       if (id === "gone") throw new Error("Entity not found: gone")
-      const data = entityData(id, state.stored)
+      const data = entityData(id, state.stored, state.transform)
       return data
+    },
+    setLocalTransform: async (entityId: string, position: Vec3, rotation: Quat, scale: Vec3) => {
+      calls.push(["setLocalTransform", [entityId, position, rotation, scale]])
+      if (state.failTransform) throw ipcError({ error: state.failTransform, code: state.failCode })
+      // The host stores what it was sent
+      state.transform = { position, rotation, scale }
     },
     getComponentTypes: async () => {
       calls.push(["getComponentTypes", []])
@@ -983,5 +1005,144 @@ describe("InspectorState and Undo", () => {
     assert.equal(groups?.depth, 1)
     assert.equal(names(calls).filter((n) => n === "endEditGroup").length, 1)
     await groups!.end(other)
+  })
+})
+
+describe("InspectorState: the local transform", () => {
+  const near = (a: number, b: number, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps, `${a} is not ${b}`)
+  const one = { x: 1, y: 1, z: 1 }
+  const at = (rotation: Vec3 = { x: 0, y: 0, z: 0 }): LocalTransform => ({
+    position: { x: 1, y: 2, z: 3 },
+    rotation: eulerToQuat(rotation),
+    scale: one,
+  })
+  const sends = (calls: Array<[string, unknown[]]>) => calls.filter(([name]) => name === "setLocalTransform")
+
+  test("selecting reads the LOCAL transform (GetEntity) and shows the rotation as Euler degrees", async () => {
+    const t = setup()
+    t.state.transform = at({ x: 10, y: 20, z: 30 })
+    await t.inspector.select("e1")
+    assert.deepEqual(t.inspector.transform.value?.position, { x: 1, y: 2, z: 3 })
+    const euler = t.inspector.euler.value!
+    near(euler.x, 10)
+    near(euler.y, 20)
+    near(euler.z, 30)
+    // No legacy world-Euler command is used
+    assert.equal(t.calls.filter(([name]) => /EntityTransform/.test(name)).length, 0)
+  })
+
+  test("an object with no transform shows none", async () => {
+    const t = setup()
+    await t.inspector.select("e1")
+    assert.equal(t.inspector.transform.value, null)
+    assert.equal(t.inspector.euler.value, null)
+    assert.equal(t.inspector.header.value?.name, "Lamp")
+    await t.inspector.setTransform({ position: { x: 5, y: 0, z: 0 } }) // nothing to edit
+    assert.equal(sends(t.calls).length, 0)
+  })
+
+  test("a move sends one SetLocalTransform with the stored rotation and scale untouched, and shows it at once", async () => {
+    const t = setup()
+    t.state.transform = at({ x: 10, y: 20, z: 30 })
+    await t.inspector.select("e1")
+    const stored = t.inspector.transform.value!
+    const sending = t.inspector.setTransform({ position: { x: 9, y: 2, z: 3 } })
+    assert.equal(t.inspector.transform.value?.position.x, 9) // shown before the host answers
+    await sending
+    const sent = sends(t.calls)
+    assert.equal(sent.length, 1)
+    assert.deepEqual(sent[0][1], ["e1", { x: 9, y: 2, z: 3 }, stored.rotation, one])
+  })
+
+  test("a rotation edit sends the quaternion of the Euler angles and the typed triple stays shown after the host's answer", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    await t.inspector.setTransform({ rotation: { x: 180, y: 0, z: 0 } })
+    const sent = sends(t.calls)
+    assert.equal(sent.length, 1)
+    const q = sent[0][1][2] as Quat
+    assert.ok(quatsEquivalent(q, eulerToQuat({ x: 180, y: 0, z: 0 })))
+    // The host answers with the quaternion; 180 does not turn into -180
+    await t.inspector.refresh()
+    assert.deepEqual(t.inspector.euler.value, { x: 180, y: 0, z: 0 })
+    // Typing another axis keeps it too
+    await t.inspector.setTransform({ rotation: { x: 180, y: 30, z: 0 } })
+    await t.inspector.refresh()
+    assert.deepEqual(t.inspector.euler.value, { x: 180, y: 30, z: 0 })
+  })
+
+  test("Euler angles that mean the stored rotation are shown but not sent (360 is no change)", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    await t.inspector.setTransform({ rotation: { x: 0, y: 0, z: 360 } })
+    assert.equal(sends(t.calls).length, 0)
+    assert.deepEqual(t.inspector.euler.value, { x: 0, y: 0, z: 360 })
+    // And a move afterwards leaves the shown triple and the quaternion alone
+    await t.inspector.setTransform({ position: { x: 0, y: 0, z: 0 } })
+    assert.deepEqual(t.inspector.euler.value, { x: 0, y: 0, z: 360 })
+    assert.deepEqual(sends(t.calls)[0][1][2], t.state.transform!.rotation)
+  })
+
+  test("a rotation changed by someone else (the gizmo, an undo) is shown as the canonical angles", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    await t.inspector.setTransform({ rotation: { x: 540, y: 0, z: 0 } })
+    assert.deepEqual(t.inspector.euler.value, { x: 540, y: 0, z: 0 })
+    // The host's rotation moves on (the scene change event names the object)
+    t.state.transform = at({ x: 0, y: 0, z: 45 })
+    await t.inspector.applyChange({ full: false, entityIds: ["e1"] })
+    near(t.inspector.euler.value!.z, 45)
+    near(t.inspector.euler.value!.x, 0)
+  })
+
+  test("a refusal puts the transform and the angles back and says why; a denial also goes to onError", async () => {
+    const t = setup()
+    t.state.transform = at({ x: 10, y: 0, z: 0 })
+    await t.inspector.select("e1")
+    const before = t.inspector.euler.value
+    t.state.failTransform = "No such entity"
+    await t.inspector.setTransform({ rotation: { x: 50, y: 0, z: 0 } })
+    assert.deepEqual(t.inspector.euler.value, before)
+    assert.equal(t.inspector.errors.value.get(EntityKey), "No such entity")
+    assert.equal(t.errors.length, 0)
+    t.state.failTransform = "read-only host: SetLocalTransform is not allowed"
+    t.state.failCode = "readOnly"
+    await t.inspector.setTransform({ position: { x: 0, y: 0, z: 0 } })
+    assert.equal(t.errors.length, 1)
+  })
+
+  test("a read of the object that was in flight during an edit doesn't undo it", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    const answer = deferred<void>()
+    t.engine.setLocalTransform = async () => answer.promise
+    const sending = t.inspector.setTransform({ position: { x: 7, y: 2, z: 3 } })
+    await t.inspector.refresh() // the host still has the old position
+    assert.equal(t.inspector.transform.value?.position.x, 7)
+    answer.resolve()
+    await sending
+  })
+
+  test("the inspector is read-only while playing: no command is sent", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    t.inspector.setReadOnly("a play session is running")
+    await assert.rejects(t.inspector.setTransform({ position: { x: 0, y: 0, z: 0 } }), /read-only/)
+    assert.equal(sends(t.calls).length, 0)
+  })
+
+  test("selecting another object drops the first one's transform", async () => {
+    const t = setup()
+    t.state.transform = at()
+    await t.inspector.select("e1")
+    assert.ok(t.inspector.transform.value)
+    await t.inspector.select(null)
+    assert.equal(t.inspector.transform.value, null)
+    assert.equal(t.inspector.euler.value, null)
   })
 })

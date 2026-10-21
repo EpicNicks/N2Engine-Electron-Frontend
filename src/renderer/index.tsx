@@ -77,7 +77,7 @@ const store = new EditorStore({
 })
 // Edit groups make a drag, or an action on several objects, one undo step (a failure to end one is shown)
 const groups = new EditGroups(window.engine, (what, e) => store.reportError(what, e))
-const scene = new SceneState(window.engine)
+const scene = new SceneState()
 // The assets panel: the host's listing, import settings and text files (a save's reload errors are read from the log)
 const assets = new AssetsState(
   window.engine,
@@ -89,7 +89,7 @@ const assets = new AssetsState(
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
   // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
-  onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to read the transform", e)),
+  onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to select the object", e)),
   groups,
 })
 // The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected, click to select and
