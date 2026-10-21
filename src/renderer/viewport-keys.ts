@@ -1,6 +1,7 @@
 // The viewport's keys: the fly keys (held while the right button is down: W A S D Q E and the arrows, Shift for faster),
 // and the viewport's shortcuts, which are keymap actions (keymap.ts, scope "viewport": F frames the selection, Escape
-// cancels the move in progress, W E R and Q choose the gizmo's tool: move, rotate, scale, none). Framework-free, so it is tested without a canvas; viewport-panel.tsx feeds it.
+// cancels the move in progress, W E R and Q choose the gizmo's tool: move, rotate, scale, none; X toggles world and local
+// space, Z pivot and center). Framework-free, so it is tested without a canvas; viewport-panel.tsx feeds it.
 //
 // Priority: the view's own keydown listener asks keyDown() first, and when it took a fly key it prevents the default.
 // The keymap's dispatcher (at the document, after the view's listener) leaves a key that was prevented alone, so while
@@ -16,6 +17,16 @@ export const ModeActions: Readonly<Record<GizmoMode, string>> = {
   rotate: "gizmo.rotate",
   scale: "gizmo.scale",
   none: "gizmo.none",
+}
+
+/** The keymap actions of the space and pivot toggles */
+export const SpaceAction = "gizmo.space"
+export const PivotAction = "gizmo.pivot"
+
+/** A name with the first chord of an action after it, for a tooltip: "Move tool (W)"; just the name when the action is unbound */
+export function chordHint(keymap: Keymap, name: string, actionId: string): string {
+  const first = keymap.formatted(actionId)[0]
+  return first ? `${name} (${first})` : name
 }
 
 /** The viewport's tool as its label shows it: "Tool: Rotate (E)", with the first chord of its action (none when unbound) */
@@ -36,6 +47,10 @@ export interface ViewportKeyHost {
   live(): boolean
   /** Chooses the gizmo's tool; false when it can't be changed now (a drag is in progress). Without it the tool keys are not registered. */
   setMode?(mode: GizmoMode): boolean
+  /** Toggles world and local space; false when it can't be changed now (a drag is in progress). Without it the key is not registered. */
+  toggleSpace?(): boolean
+  /** Toggles pivot and center; false as toggleSpace. Without it the key is not registered. */
+  togglePivot?(): boolean
 }
 
 export interface KeyEventLike {
@@ -102,6 +117,24 @@ export class ViewportKeyboard {
           )
         )
       }
+    }
+    const toggles: Array<[string, (() => boolean) | undefined]> = [
+      [SpaceAction, this.host.toggleSpace?.bind(this.host)],
+      [PivotAction, this.host.togglePivot?.bind(this.host)],
+    ]
+    for (const [action, toggle] of toggles) {
+      if (!toggle) continue
+      off.push(
+        keymap.handle(
+          action,
+          () => {
+            // The game's keys while it is live; not while a drag is in progress (the key is left alone)
+            if (this.host.live()) return false
+            return toggle()
+          },
+          { within: view }
+        )
+      )
     }
     return () => off.forEach((unregister) => unregister())
   }
