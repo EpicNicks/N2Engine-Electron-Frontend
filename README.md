@@ -202,6 +202,17 @@ The **Inspector** panel (`src/renderer/inspector-panel.tsx`) shows the selected 
 - **Read-only.** `InspectorState.setReadOnly(reason)` makes every editor disabled and every change refused (the rule for a play session, whose host the inspector shows but doesn't change: engine docs, "The inspector is read-only while playing"). Nothing sets it yet, since there is no play mode. Undo and redo are disabled while it is set (the host refuses them outside edit mode).
 - **Undo and redo** are the next section.
 
+## Project settings
+
+Roadmap phase FE9 (decision U6). A closable panel, **Project Settings** (a tab beside the inspector, from the Window menu), over `GetProjectInfo`, `SetProjectSettings` and `SetStartupScene`. Left a list of sections, right a form for the selected one.
+
+- **Sections.** General (name, id, engine version, startup scene picker over the scene list), Physics, Rendering, Math, Determinism, Layers (32 names; the collision matrix is not exposed by the host yet, so a read-only note), Input (`actionMaps` as a validated JSON editor) and Raw JSON (the whole `settings` object, with a confirm before Apply). Fields come from typed tables in `project-settings-schema.ts` (label, type, range, default, help), with the engine's ranges checked before anything is sent.
+- **Applying.** Edits are held per section. **Apply** sends only the changed keys as an RFC 7386 merge patch (`null` for a cleared value); the answer replaces the form. **Revert** drops the unsent edits. After an Apply, **Restore previous values** puts the old values back as a new patch: settings are not in the host's undo history, and the panel says so. A host refusal or warning is shown under the section and the edits are kept.
+- **Restart badges.** `physics.gpu`, `physics.deterministic`, `physics.backend`, `math.simdTier` and `determinism.luaSeed` are read only at `Application::Init`: they carry an "applies after restart" badge and a note after Apply.
+- **Roles.** The whole `determinism` block is admin-only on a host with tokens: the section is read-only with the reason for an editor or viewer, no UI path (the Raw JSON section included) sends it for a non-admin, and a `forbidden` answer from the host is shown. A viewer or a read-only host sees every section disabled. The `luaSeed` field carries the engine's warning that a constant hash seed makes hash flooding possible.
+- **Adding a section** (Network from B11, Editor Extensions from E-X4): one `settingsSections.register({id, title, order, component, logic?, requires?})` call (`project-settings-registry.ts` documents the contract); the panel's code does not change. With `logic.build` the panel adds Apply, Revert, the host error and the restart note under the component.
+- **Not verified in a real Electron window or against a live host yet:** the look of the panel, and a round trip (apply a gravity, change a restart-only field and restart).
+
 ## Undo, redo, edit groups and autosave
 
 Protocol 1.6.0 (engine #78, PR #95). The history is the host's, not the editor's: it records every command that changes the scene, so the editor only asks it to undo and redo, and shows what it says. The commands are `Undo`, `Redo`, `BeginEditGroup`, `EndEditGroup`, `GetHistory`, `GetAutosave`, `RestoreAutosave` and `DiscardAutosave`; their answers (`EditResult`, `History`, `Autosave`) are validated before use (`src/protocol/edit-history.ts`), and the `historyChanged` event is parsed with the other state events.

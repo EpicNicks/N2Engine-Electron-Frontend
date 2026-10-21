@@ -6,6 +6,7 @@ import { ConsolePanel } from "../console-panel"
 import { HierarchyPanel } from "../hierarchy-panel"
 import { HistoryPanel } from "../history-panel"
 import { InspectorPanel } from "../inspector-panel"
+import { ProjectSettingsPanel } from "../project-settings-panel"
 import { EnginePanel } from "../panels"
 import { Viewport } from "../viewport-panel"
 import { PanelRegistry } from "./panel-registry"
@@ -76,6 +77,18 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     defaultGroup: 1,
     closable: true,
     singleton: true,
+  })
+  // The project settings are a tab beside the inspector: a form per section, applied to project.n2proj by the host
+  registry.register({
+    id: "projectSettings",
+    title: "Project Settings",
+    icon: "🛠",
+    component: ProjectSettingsPanel as PanelComponent,
+    defaultRegion: "right",
+    defaultGroup: 1,
+    closable: true,
+    singleton: true,
+    unmountWhenHidden: true,
   })
   registry.register({
     id: "engine",
