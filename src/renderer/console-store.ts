@@ -6,7 +6,7 @@
 // a new log too: the cursor goes back to (0, 0) for it, so its events come from its start, startup lines included.
 import { batch, computed, signal } from "@preact/signals-core"
 import type { EditorEvent } from "../protocol/protocol.generated"
-import { EventPump, EventPumpOptions, PollFunction, StartCursor } from "../protocol/event-pump"
+import { EventPump, EventPumpOptions, PollFunction, StartCursor, Timers } from "../protocol/event-pump"
 import {
   ConsoleRow,
   ConsoleSourceRegistry,
@@ -14,10 +14,13 @@ import {
   collapseRepeats,
   compileMatcher,
   consoleSources,
+  Clock,
+  TextFilter,
+  TextResults,
   countLevels,
+  countSources,
   filterEntries,
   plainRows,
-  sourceOf,
 } from "./console-filter"
 import type { ConsoleFilterPrefValue } from "./console-filter-prefs"
 
@@ -75,7 +78,20 @@ export interface ConsoleStoreOptions extends EventPumpOptions {
   now?: () => number
   /** The registry of sources (consoleSources by default) */
   sources?: ConsoleSourceRegistry
+  /** A clock in milliseconds for the regex filter's step budget (performance.now by default) */
+  clock?: Clock
+  /**
+   * How long the text filter waits after the last change of the text or its toggles before it is applied (the editor
+   * uses FilterDebounceMs; 0, the default, applies every change at once). Uses `timers`.
+   */
+  filterDelayMs?: number
 }
+
+/**
+ * The editor's wait before a changed text filter is applied: every change compiles a new matcher with full step
+ * buckets, so typing a pattern into a full console of long lines would otherwise cost an update per keystroke
+ */
+export const FilterDebounceMs = 200
 
 export class ConsoleStore {
   readonly entries = signal<readonly ConsoleEntry[]>([])
@@ -91,13 +107,26 @@ export class ConsoleStore {
   readonly regex = signal(false)
   /** Consecutive identical lines are one row with a count */
   readonly collapse = signal(false)
-  /** The text filter, compiled once per change of the text or its toggles */
-  readonly matcher = computed(() =>
-    compileMatcher({ search: this.search.value, matchCase: this.matchCase.value, regex: this.regex.value })
-  )
+  /** The text filter as typed */
+  private readonly typedFilter = computed<TextFilter>(() => ({
+    search: this.search.value,
+    matchCase: this.matchCase.value,
+    regex: this.regex.value,
+  }))
+  /** The text filter applied, filterDelayMs after the last change of the typed one (null: no delay, it is the typed one) */
+  private readonly appliedFilter = signal<TextFilter | null>(null)
+  /** The text filter, compiled once per applied change of the text or its toggles */
+  readonly matcher = computed(() => compileMatcher(this.appliedFilter.value ?? this.typedFilter.value, this.clock))
+  /**
+   * The text filter's results for the lines: one pass per change of the lines or the matcher, shared by the list and
+   * both kinds of count, so they always agree (a regular expression that runs out of steps is off for all of them)
+   */
+  readonly textResults = computed<TextResults>(() => this.matcher.value.testEntries(this.entries.value))
+  /** The regular expression is too slow for the lines and is off (shown inline) */
+  readonly regexSlow = computed(() => this.textResults.value.slow)
   private readonly lineFilter = computed<LineFilter>(() => ({
     hiddenSources: this.hiddenSources.value,
-    matcher: this.matcher.value,
+    text: this.textResults.value,
   }))
   /** The lines shown: the levels switched on, the sources switched on, matching the text */
   readonly visible = computed(() =>
@@ -110,17 +139,9 @@ export class ConsoleStore {
   /** Lines per level among those passing the source and text filters (a level switched off still counts) */
   readonly counts = computed(() => countLevels(this.sources, this.entries.value, this.lineFilter.value))
   /** Lines per source among those passing the level and text filters (a source switched off still counts) */
-  readonly sourceCounts = computed(() => {
-    const counts: Record<string, number> = {}
-    const shown = this.shown.value
-    const matcher = this.matcher.value
-    for (const entry of this.entries.value) {
-      if (!shown[entry.level] || !matcher.test(entry.message)) continue
-      const id = sourceOf(this.sources, entry)
-      counts[id] = (counts[id] ?? 0) + 1
-    }
-    return counts
-  })
+  readonly sourceCounts = computed(() =>
+    countSources(this.sources, this.entries.value, this.shown.value, this.textResults.value)
+  )
   /** The filters as a value, for the preferences */
   readonly filterState = computed<ConsoleFilterPrefValue>(() => ({
     levels: { ...this.shown.value },
@@ -137,13 +158,35 @@ export class ConsoleStore {
   private readonly pump: EventPump<EditorEvent>
   private readonly maxEntries: number
   private readonly now: () => number
+  private readonly clock: Clock
+  private readonly filterTimers: Timers
+  private filterTimer: unknown = null
   private nextId = 1
   /** The host launch the pump's cursor belongs to */
   private launch: number | null = null
 
   constructor(poll: PollFunction<EditorEvent>, options: ConsoleStoreOptions = {}) {
-    const { onEvents, onMissedEvents, maxEntries, now, sources, ...pumpOptions } = options
+    const { onEvents, onMissedEvents, maxEntries, now, sources, clock, filterDelayMs, ...pumpOptions } = options
     this.sources = sources ?? consoleSources
+    this.clock = clock ?? (() => performance.now())
+    this.filterTimers = pumpOptions.timers ?? {
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    }
+    if (filterDelayMs !== undefined && filterDelayMs > 0) {
+      this.appliedFilter.value = this.typedFilter.peek()
+      // Every change restarts the wait; clearing the text applies at once (that costs nothing)
+      this.typedFilter.subscribe((filter) => {
+        if (filter === this.appliedFilter.peek()) return
+        this.cancelFilterTimer()
+        if (filter.search === "") this.appliedFilter.value = filter
+        else
+          this.filterTimer = this.filterTimers.setTimeout(() => {
+            this.filterTimer = null
+            this.appliedFilter.value = this.typedFilter.peek()
+          }, filterDelayMs)
+      })
+    }
     this.maxEntries = maxEntries ?? DefaultMaxEntries
     this.now = now ?? Date.now
     this.pump = new EventPump(
@@ -239,6 +282,18 @@ export class ConsoleStore {
       this.regex.value = state.regex
       this.collapse.value = state.collapse
     })
+    this.flushFilter()
+  }
+
+  /** Applies the typed text filter now, without waiting for the delay (filterDelayMs) */
+  flushFilter(): void {
+    this.cancelFilterTimer()
+    if (this.appliedFilter.peek() !== null) this.appliedFilter.value = this.typedFilter.peek()
+  }
+
+  private cancelFilterTimer(): void {
+    if (this.filterTimer !== null) this.filterTimers.clearTimeout(this.filterTimer)
+    this.filterTimer = null
   }
 
   private receive(events: EditorEvent[]): void {
