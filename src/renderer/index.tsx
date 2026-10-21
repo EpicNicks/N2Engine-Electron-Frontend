@@ -203,6 +203,8 @@ const app: AppState = {
       // An edit's refusal that arrives after the selection moved on: nobody is looking at the component any more
       onError: (what, e) => store.reportError(what, e),
       groups,
+      // A refusal in the middle of an edit of several objects takes the edit back, as the Undo menu would
+      undo: () => editController.undo(),
     }
   ),
   audio: new AudioController(window.engine),

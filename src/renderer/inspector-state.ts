@@ -30,8 +30,7 @@ type Engine = Pick<
   | "getLuaFields"
   | "setEntityProperties"
   | "setLocalTransform"
-> &
-  Partial<Pick<EngineApi, "undo">>
+>
 /** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
 type Project = { listAssets(): Promise<AssetEntry[]> }
 
@@ -68,6 +67,8 @@ export interface InspectorOptions {
    * as many steps as the host cuts it into (it merges edits of the same field made within 500 ms).
    */
   groups?: Pick<EditGroups, "begin" | "end">
+  /** Undo as the Undo menu does it (EditController.undo): takes back an edit of several objects that stopped at a refusal */
+  undo?(): Promise<void>
   /** Whether res:// paths compare without regard to case (Windows and macOS file systems), for a dropped file */
   caseInsensitivePaths?: boolean
   /** Timers, replaceable in tests */

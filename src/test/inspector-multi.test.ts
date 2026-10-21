@@ -161,17 +161,6 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean; undo?: 
       find(id).components.push({ type: typeName, uuid: componentId, values: { isActive: true } })
       return { componentId, values: { isActive: true } }
     },
-    ...(options.undo
-      ? {
-          undo: async () => {
-            calls.push(["undo", []])
-            if (options.undo === "fails") throw new Error("nothing to undo")
-            // The test host's step is the edits of the group: put back what they changed
-            for (const [id, before] of undone) Object.assign(find(id).header, before)
-            return {} as never
-          },
-        }
-      : {}),
     removeComponent: async (id: string, componentId: string) => {
       calls.push(["removeComponent", [id, componentId]])
       gate(id)
@@ -188,6 +177,18 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean; undo?: 
     : undefined
   const multi = new MultiInspectorState(host, engine, {
     groups,
+    // The page's Undo (EditController): settles the edits first, so it must not wait for the edit that asked for it
+    ...(options.undo
+      ? {
+          undo: async () => {
+            await multi.settled
+            calls.push(["undo", []])
+            if (options.undo === "fails") throw new Error("nothing to undo")
+            // The test host's step is the edits of the group: put back what they changed
+            for (const [id, before] of undone) Object.assign(find(id).header, before)
+          },
+        }
+      : {}),
     onError: (what, e) => errors.push([what, e]),
     confirm: async (message: string) => {
       asked.push(message)
@@ -660,6 +661,17 @@ describe("MultiInspectorState: a refusal rolls back", () => {
     await w.multi.setProperties({ layer: 4 })
     assert.ok(!w.names().includes("undo"))
     assert.match(w.multi.editProblem.value ?? "", /1 of 2 changes applied \(Undo takes back what was applied\)/)
+  })
+
+  test("an edit queued behind a refused one is not undone by it (Undo would take back the wrong step)", async () => {
+    const w = world({ a: {}, b: { name: "Bravo" } }, { groups: true, undo: true })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("b", { message: "locked" })
+    const first = w.multi.setProperties({ layer: 4 })
+    const second = w.multi.setProperties({ layer: 5 })
+    await Promise.all([first, second])
+    // The first stopped with the second queued: it undid nothing; the second (also refused, last in line) undid its own
+    assert.equal(w.names().filter((name) => name === "undo").length, 1)
   })
 
   test("a rollback that fails is said, and the edits stay", async () => {
