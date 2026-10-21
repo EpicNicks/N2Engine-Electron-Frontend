@@ -142,6 +142,22 @@ describe("subscriptions, 2025-11-25 (resources/subscribe)", () => {
     await h.close()
   })
 
+  test("--disable-tools turns the matching resources off: not listed, not readable, not watchable", async () => {
+    const disabled = new Set(["n2_get_console", "n2_read_text_asset", "n2_status"])
+    const h = await startHarness({ watch: fast, bridge: { policy: { readOnly: false, allowIrreversible: false, maxWrites: 2000, writeTools: null, disabledTools: disabled, keepJournal: false } } })
+    const { resources } = await h.client.listResources()
+    assert.deepEqual(resources.map((r) => r.uri).sort(), ["n2://component-types", "n2://project", "n2://scene/hierarchy"])
+    const { resourceTemplates } = await h.client.listResourceTemplates()
+    assert.deepEqual(resourceTemplates.map((r) => r.uriTemplate), ["n2://entity/{uuid}"])
+    for (const uri of ["n2://console", "n2://asset/scripts/Player.lua", "n2://scene", "n2://history"]) {
+      await assert.rejects(h.client.readResource({ uri }), Error, uri)
+      await assert.rejects(h.client.subscribeResource({ uri }), /not a resource/, uri)
+    }
+    assert.equal(h.watch.watched().size, 0)
+    assert.equal(h.host.received.length, 0, "the host was never asked")
+    await h.close()
+  })
+
   test("bounds: unknown URIs and more than the limit are refused", async () => {
     const h = await startHarness({ watch: fast })
     await assert.rejects(h.client.subscribeResource({ uri: "n2://nothing" }), /not a resource/)

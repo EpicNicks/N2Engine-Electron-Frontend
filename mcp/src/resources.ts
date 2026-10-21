@@ -17,6 +17,7 @@ import type { EditorEvent } from "../../src/protocol/protocol.generated"
 import type { Bridge } from "./bridge"
 import { BridgeError, errorText, mapError } from "./errors"
 import * as limits from "./limits"
+import type { Policy } from "./policy"
 import { renderOutput } from "./server"
 import { DataNotice, ReadTools, idText, type ToolOutput } from "./tools"
 
@@ -54,6 +55,33 @@ export function parseResourceUri(uri: string): { kind: "fixed" } | { kind: "enti
     return { kind: "asset", path: `res://${path}` }
   }
   return null
+}
+
+/** The read tool whose data a resource serves: --disable-tools for that tool turns the resource off too */
+const FixedResourceTool: Record<string, string> = {
+  [ResourceUri.project]: "n2_get_project_info",
+  [ResourceUri.scene]: "n2_status",
+  [ResourceUri.hierarchy]: "n2_get_hierarchy",
+  [ResourceUri.console]: "n2_get_console",
+  [ResourceUri.history]: "n2_status",
+  [ResourceUri.componentTypes]: "n2_get_component_types",
+}
+const EntityTool = "n2_get_entity"
+const AssetTool = "n2_read_text_asset"
+
+/** The read tool a resource URI stands for, or null when the URI is not one of this server's */
+export function resourceTool(uri: string): string | null {
+  const parsed = parseResourceUri(uri)
+  if (parsed === null) return null
+  if (parsed.kind === "entity") return EntityTool
+  if (parsed.kind === "asset") return AssetTool
+  return FixedResourceTool[uri] ?? null
+}
+
+/** Whether a URI is a resource this server serves under the operator's policy (its read tool is not disabled) */
+export function resourceAllowed(policy: Policy, uri: string): boolean {
+  const name = resourceTool(uri)
+  return name !== null && !policy.disabledTools.has(name)
 }
 
 /** Something the server sends a resources/updated for (a connected McpServer) */
@@ -106,7 +134,7 @@ export class ResourceWatch {
 
   /** resources/subscribe: an unknown URI and one past the limit are refused */
   subscribe(uri: string): void {
-    if (parseResourceUri(uri) === null) throw new BridgeError("invalid_argument", "That is not a resource of this server.", "Use a URI from resources/list or resources/templates/list.")
+    if (!resourceAllowed(this.bridge.policy, uri)) throw new BridgeError("invalid_argument", "That is not a resource of this server.", "Use a URI from resources/list or resources/templates/list.")
     if (!this.watched().has(uri) && this.watched().size >= limits.MaxWatchedUris) {
       throw new BridgeError("budget_exceeded", `At most ${limits.MaxWatchedUris} resources can be watched at once.`, "Unsubscribe from one first.")
     }
@@ -128,7 +156,7 @@ export class ResourceWatch {
     const kept: string[] = []
     const room = new Set(this.watched())
     for (const uri of Array.isArray(uris) ? uris : []) {
-      if (typeof uri !== "string" || parseResourceUri(uri) === null || kept.includes(uri)) continue
+      if (typeof uri !== "string" || !resourceAllowed(this.bridge.policy, uri) || kept.includes(uri)) continue
       if (!room.has(uri)) {
         if (room.size >= limits.MaxWatchedUris) {
           this.bridge.log(`a subscriptions/listen stream asked for more than ${limits.MaxWatchedUris} resources; the rest are not watched`)
@@ -445,7 +473,10 @@ export function registerResources(server: McpServer, bridge: Bridge, watch: Reso
     { name: "history", uri: ResourceUri.history, title: "Undo history", description: "The undo history: steps done and undone and the last 50 labels. Updated when a step is recorded, undone or redone.", read: historyResource },
     { name: "component-types", uri: ResourceUri.componentTypes, title: "Component types", description: "The component types the host can create, as n2_get_component_types returns them. They never change while a host runs.", read: (ctx) => readTool("n2_get_component_types").handler(ctx, {} as never, {}), ttlMs: 60000 },
   ]
+  // A resource whose read tool the operator disabled (--disable-tools) is not served: the flag narrows both
+  const allowed = (uri: string): boolean => resourceAllowed(bridge.policy, uri)
   for (const r of fixed) {
+    if (!allowed(r.uri)) continue
     server.registerResource(
       r.name,
       r.uri,
@@ -453,7 +484,7 @@ export function registerResources(server: McpServer, bridge: Bridge, watch: Reso
       async () => readResource(bridge, r.uri, r.read)
     )
   }
-  server.registerResource(
+  if (!bridge.policy.disabledTools.has(EntityTool)) server.registerResource(
     "entity",
     new ResourceTemplate(EntityTemplate, { list: undefined }),
     { title: "Entity", description: "One entity as n2_get_entity returns it, by UUID. Updated when a scene change touches it (or the whole scene changed)." + Notice, mimeType: "text/plain", cacheHint: { ttlMs: 0, cacheScope: "private" } },
@@ -463,7 +494,7 @@ export function registerResources(server: McpServer, bridge: Bridge, watch: Reso
       return readResource(bridge, uri.toString(), (ctx) => readTool("n2_get_entity").handler(ctx, { entityId: parsed.id } as never, {}))
     }
   )
-  server.registerResource(
+  if (!bridge.policy.disabledTools.has(AssetTool)) server.registerResource(
     "asset",
     new ResourceTemplate(AssetTemplate, { list: undefined }),
     { title: "Text asset", description: "A text asset's first 32 KB as n2_read_text_asset returns it: n2://asset/scripts/Player.lua is res://scripts/Player.lua. Updated when the host reports the file changed." + Notice, mimeType: "text/plain", cacheHint: { ttlMs: 0, cacheScope: "private" } },

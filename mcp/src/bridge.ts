@@ -4,7 +4,9 @@
 //
 // Failure handling is deliberately small: a call that finds no session opens one (and when the host is busy, waits
 // busyWaitMs and tries once more); a call that the host doesn't answer within callTimeoutMs drops the session (a late
-// answer would desync the request queue) and fails with `timeout`. Nothing reconnects in the background, and nothing
+// answer would desync the request queue) and fails with `timeout`. The timed-out handler's context.signal is aborted
+// (a play handler stops between steps and releases its input), and the next call waits for it to finish, at most one
+// more callTimeoutMs, so two handlers never drive the game at once. Nothing reconnects in the background, and nothing
 // loops.
 import type { EngineClient } from "../../src/protocol/engine-client"
 import { HostBusyError } from "../../src/protocol/engine-client"
@@ -63,6 +65,8 @@ export interface HostContext {
   consent: "elicited" | "operator" | null
   /** The bridge's game (the --launch backend only), else null */
   play: PlayController | null
+  /** Aborted when the bridge gives up on this call (callTimeoutMs): a long handler stops at its next check */
+  signal: AbortSignal
 }
 
 export interface SessionState {
@@ -125,16 +129,25 @@ export class Bridge {
 
   /** Runs fn with the session, alone: after every earlier call has finished */
   run<T>(fn: (context: HostContext) => Promise<T>, command?: string): Promise<T> {
+    // A timed-out handler may still be running: the queue moves on only when it has finished (bounded)
+    let abandoned: Promise<unknown> = Promise.resolve()
+    const onAbandon = (p: Promise<unknown>): void => {
+      abandoned = p
+    }
     const result = this.tail.then(
-      () => this.execute(fn, command),
-      () => this.execute(fn, command)
+      () => this.execute(fn, command, onAbandon),
+      () => this.execute(fn, command, onAbandon)
     )
-    this.tail = result.catch(() => undefined)
+    this.tail = result.then(
+      () => abandoned,
+      () => abandoned
+    )
     return result
   }
 
-  private async execute<T>(fn: (context: HostContext) => Promise<T>, command?: string): Promise<T> {
+  private async execute<T>(fn: (context: HostContext) => Promise<T>, command: string | undefined, onAbandon: (settled: Promise<unknown>) => void): Promise<T> {
     const link = await this.ensureLink()
+    const abort = new AbortController()
     const context: HostContext = {
       client: link.client,
       info: link.info,
@@ -151,11 +164,15 @@ export class Bridge {
       allowAdmin: this.allowAdmin,
       consent: null,
       play: this.play,
+      signal: abort.signal,
     }
     const timeoutMs = this.options.callTimeoutMs ?? DefaultCallTimeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
+    let work: Promise<T> | null = null
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        abort.abort()
+        if (work !== null) onAbandon(settledWithin(work, timeoutMs))
         this.dropLink(link)
         reject(
           new BridgeError(
@@ -167,7 +184,8 @@ export class Bridge {
       }, timeoutMs)
     })
     try {
-      return await Promise.race([fn(context), timeout])
+      work = fn(context)
+      return await Promise.race([work, timeout])
     } catch (e) {
       throw mapError(e, { role: safeRole(link.info.role), command }, this.scrubber)
     } finally {
@@ -276,4 +294,22 @@ export class Bridge {
     this.options.connector.dispose()
     this.sessions.dispose()
   }
+}
+
+/** Resolves when p settles or after ms, whichever is first (the timer does not keep the process alive) */
+function settledWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+    p.then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      () => {
+        clearTimeout(timer)
+        resolve()
+      }
+    )
+  })
 }

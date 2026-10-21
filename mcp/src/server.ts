@@ -180,7 +180,10 @@ export async function callTool(bridge: Bridge, def: ToolDef, args: unknown, opti
           }
         }
       }
-      return def.handler(context, args as never, env?.hooks ?? {})
+      // The handler stops when the client cancels or when the bridge gives up on the call (its timeout)
+      const hooks = env?.hooks ?? {}
+      const signal = hooks.signal ? AbortSignal.any([hooks.signal, context.signal]) : context.signal
+      return def.handler(context, args as never, { ...hooks, signal })
     }, def.name)
     if (isAsk(out)) return out
     return successResult(out, bridge)

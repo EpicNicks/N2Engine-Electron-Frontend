@@ -396,6 +396,48 @@ describe("n2_play_script", () => {
     await h.close()
   })
 
+  test("a script stopped by a failed expectLog releases every key and button it held", async () => {
+    const h = await startPlayHarness()
+    await started(h)
+    const r = await h.call("n2_play_script", {
+      ops: [{ input: { events: [{ type: "key", key: "W", down: true }] } }, { expectLog: { contains: "never logged" } }, { input: { events: [{ type: "key", key: "W", down: false }] } }],
+    })
+    assert.ok(!r.isError, textOf(r))
+    assert.equal(r.structuredContent.data.completed, false)
+    assert.deepEqual(h.state.inputs[h.state.inputs.length - 1], [{ type: "releaseAll" }])
+    await h.close()
+  })
+
+  test("a script the bridge times out is aborted: it stops stepping, releases the input, and the next call runs after it", async () => {
+    const h = await startPlayHarness({ bridge: { callTimeoutMs: 400 } })
+    await started(h)
+    h.game.on("Step", (r) => {
+      // A slow game: each chunk takes a while (the fake host answers synchronously)
+      const end = Date.now() + 40
+      while (Date.now() < end) {
+        // busy
+      }
+      if (!h.state.paused) throw new Refusal("Step needs a paused game")
+      h.state.steps.push(r.frames)
+      h.state.frame += r.frames
+    })
+    const r = await h.call("n2_play_script", {
+      ops: [{ input: { events: [{ type: "key", key: "W", down: true }] } }, ...Array.from({ length: 5 }, () => ({ step: { frames: 600 } }))],
+    })
+    assert.equal(code(r), "timeout")
+    // The next call waits for the timed-out script to end, so the two never drive the game at once
+    const next = await h.call("n2_play_control", { action: "step", frames: 1 })
+    assert.ok(!next.isError, textOf(next))
+    const release = h.state.inputs.findIndex((batch) => JSON.stringify(batch) === JSON.stringify([{ type: "releaseAll" }]))
+    assert.ok(release > 0, "the script released the input")
+    assert.ok(h.state.steps.length < 30, `the script stopped early (${h.state.steps.length} chunks ran)`)
+    assert.equal(h.state.steps[h.state.steps.length - 1], 1, "the next call's step came after the script's last one")
+    const after = h.state.steps.length
+    await wait(150)
+    assert.equal(h.state.steps.length, after, "nothing steps in the background")
+    await h.close()
+  })
+
   test("budgets: frames and pictures per script are checked before the game is touched, and per session across calls", async () => {
     const h = await startPlayHarness()
     await started(h)

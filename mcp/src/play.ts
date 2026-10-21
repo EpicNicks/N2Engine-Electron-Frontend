@@ -762,7 +762,8 @@ const playScript = tool({
       await releaseAll(c)
       throw e
     }
-    if (ended) await releaseAll(c)
+    // Ended early (the game ended, or a failed expectLog stopped it): nothing is left held down
+    if (ended || results.length < total) await releaseAll(c)
     const v = c.view()
     const log = seen.slice(-limits.ConsoleResourceLines)
     const failed = results.filter((r) => !r.ok).length
