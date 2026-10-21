@@ -8,6 +8,7 @@ import {
   RestartFieldIds,
   applyMergePatch,
   buildFieldsPatch,
+  touchesPath,
   buildInputPatch,
   buildLayersPatch,
   buildRawPatch,
@@ -228,5 +229,36 @@ describe("input and raw JSON", () => {
   test("raw: an editor may change the other blocks", () => {
     const built = buildRawPatch(settings, { json: JSON.stringify({ ...settings, window: { width: 1 } }) }, false)
     assert.deepEqual(built.patch, { window: { width: 1 } })
+  })
+})
+
+describe("review fixes", () => {
+  test("clearing all of gravity removes the block", () => {
+    const settings = { physics: { gravity: { x: 0, y: -9.81, z: 0 } } }
+    const built = buildFieldsPatch(PhysicsFields, settings, {
+      "physics.gravity.x": "",
+      "physics.gravity.y": "",
+      "physics.gravity.z": "",
+    })
+    assert.deepEqual(built.errors, {})
+    assert.deepEqual(built.patch, { physics: { gravity: null } })
+  })
+
+  test("a Raw draft is diffed against the text it started from, not the current settings", () => {
+    const base = { window: { width: 1 }, physics: { fixedTimestep: 0.02 } }
+    const current = { window: { width: 1 }, physics: { fixedTimestep: 0.05 } }
+    const draft = { window: { width: 2 }, physics: { fixedTimestep: 0.02 } }
+    const built = buildRawPatch(current, { json: JSON.stringify(draft), "json.base": JSON.stringify(base) }, true)
+    assert.deepEqual(built.patch, { window: { width: 2 } })
+  })
+
+  test("removing an Init-time key or its block in Raw counts as a restart", () => {
+    const settings = { determinism: { luaSeed: 1 }, physics: { gpu: "Auto" } }
+    const built = buildRawPatch(settings, { json: JSON.stringify({ physics: {} }) }, true)
+    assert.deepEqual(built.patch, { determinism: null, physics: { gpu: null } })
+    assert.ok(built.restart.includes("determinism.luaSeed"))
+    assert.ok(built.restart.includes("physics.gpu"))
+    assert.equal(touchesPath({ a: null }, ["a", "b"]), true)
+    assert.equal(touchesPath({ a: { c: 1 } }, ["a", "b"]), false)
   })
 })

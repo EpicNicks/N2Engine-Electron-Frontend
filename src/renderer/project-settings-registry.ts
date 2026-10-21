@@ -38,8 +38,13 @@ export interface SectionLogic {
    * it the section has no such button.
    */
   textOf?(ctx: Pick<SectionBuildContext, "settings" | "info">, key: string): string
-  /** When set, Apply asks this first (the Raw section: it writes blocks the editor knows nothing about) */
-  confirm?: { message: string; okLabel: string }
+  /** When set, Apply asks this first (the Raw section: it writes blocks the editor knows nothing about); the message may show the patch */
+  confirm?: { message: string | ((built: BuiltSection) => string); okLabel: string }
+  /**
+   * Edit keys that hold a whole-block draft: the first edit also records the text it started from (under
+   * `${key}.base`, see JsonBaseKey) so Apply sends only what the user changed, not a revert of later changes
+   */
+  snapshotKeys?: readonly string[]
 }
 
 /** What requires() sees */

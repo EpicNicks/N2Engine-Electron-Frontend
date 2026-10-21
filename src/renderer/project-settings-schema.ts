@@ -321,6 +321,12 @@ export function buildFieldsPatch(fields: readonly FieldSpec[], settings: unknown
   for (const group of groupsChanged) {
     const members = fields.filter((f) => f.group === group)
     const values: Json[] = []
+    // Every member empty: the group is cleared (the host takes the whole gravity away, back to its default)
+    const texts = members.map((m) => (m.id in edits ? edits[m.id] : textOfValue(m, readPath(settings, m.path))))
+    if (texts.every((t) => t.trim() === "")) {
+      setPath(patch, members[0].path.slice(0, -1), null)
+      continue
+    }
     for (const member of members) {
       const text = member.id in edits ? edits[member.id] : textOfValue(member, readPath(settings, member.path))
       const parsed = parseField(member, text)
@@ -451,11 +457,24 @@ export function jsonText(value: Json | undefined): string {
 }
 
 export const JsonKey = "json"
+/** The settings text the draft was typed against: the patch is the draft's change from it, not from what the host has now */
+export const JsonBaseKey = "json.base"
+
+/** The block the draft started from: its base text when the draft has one, else what the host has now */
+function baseOf(edits: Edits, current: Json | undefined, parse: (text: string) => Json | undefined): Json | undefined {
+  const text = edits[JsonBaseKey]
+  if (text === undefined) return current
+  try {
+    return parse(text)
+  } catch {
+    return current
+  }
+}
 
 export function buildInputPatch(settings: unknown, edits: Edits): BuiltSection {
   if (!(JsonKey in edits)) return NothingBuilt
   const text = edits[JsonKey].trim()
-  const current = readPath(settings, ["input"])
+  const current = baseOf(edits, readPath(settings, ["input"]), (t) => (t.trim() === "" ? undefined : (JSON.parse(t) as Json)))
   let after: Json | undefined
   if (text !== "") {
     try {
@@ -488,7 +507,8 @@ export function buildRawPatch(settings: unknown, edits: Edits, isAdmin: boolean)
   if (!isPlainObject(after)) {
     return { patch: null, errors: { [JsonKey]: "The settings must be a JSON object" }, changed: [JsonKey], restart: [] }
   }
-  const diff = mergePatchDiff(isPlainObject(settings) ? settings : {}, after)
+  const base = baseOf(edits, isPlainObject(settings) ? settings : {}, (t) => JSON.parse(t) as Json)
+  const diff = mergePatchDiff(isPlainObject(base) ? base : {}, after)
   if (diff === undefined) return NothingBuilt
   if (!isPlainObject(diff)) {
     return { patch: null, errors: { [JsonKey]: "The settings must be a JSON object" }, changed: [JsonKey], restart: [] }
@@ -498,9 +518,20 @@ export function buildRawPatch(settings: unknown, edits: Edits, isAdmin: boolean)
   }
   const restart = RestartFieldIds.filter((id) => {
     const spec = fieldById(id)
-    return spec !== undefined && readPath(diff, spec.path) !== undefined
+    return spec !== undefined && touchesPath(diff, spec.path)
   })
   return { patch: diff, errors: {}, changed: [JsonKey], restart }
+}
+
+/** Whether a patch names the path, a removal (null) of it or of a block above it included */
+export function touchesPath(patch: Json | undefined, path: readonly string[]): boolean {
+  let at: Json | undefined = patch
+  for (const key of path) {
+    if (!isPlainObject(at) || !(key in at)) return false
+    at = at[key]
+    if (at === null) return true
+  }
+  return true
 }
 
 // ==================== The project settings of a host's answer ====================

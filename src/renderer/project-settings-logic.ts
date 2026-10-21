@@ -57,14 +57,16 @@ export const LayersLogic: SectionLogic = {
 export const InputLogic: SectionLogic = {
   build: ({ settings, edits }) => buildInputPatch(settings, edits),
   textOf: ({ settings }) => jsonText(readPath(settings, ["input"])),
+  snapshotKeys: [JsonKey],
 }
 
 export const RawLogic: SectionLogic = {
   build: ({ settings, edits, isAdmin }) => buildRawPatch(settings, edits, isAdmin),
   textOf: ({ settings }) => jsonText(settings),
+  snapshotKeys: [JsonKey],
   confirm: {
-    message:
-      "Write the raw settings to project.n2proj?\n\nThe host checks the blocks it knows and refuses the whole change if one is wrong; blocks it does not know are kept exactly as written here. Settings are not part of the undo history.",
+    message: (built) =>
+      `Write the raw settings to project.n2proj?\n\nThis merge patch is sent:\n${JSON.stringify(built.patch, null, 2)}\n\nThe host checks the blocks it knows and refuses the whole change if one is wrong; blocks it does not know are kept exactly as written here. Settings are not part of the undo history.`,
     okLabel: "Write settings",
   },
 }

@@ -266,3 +266,15 @@ describe("ProjectSettingsModel", () => {
     )
   })
 })
+
+describe("whole-block drafts", () => {
+  test("a Raw draft typed before another Apply does not undo it", async () => {
+    const { h, stop } = await started({ role: "admin" })
+    h.model.setEdit("raw", "json", JSON.stringify({ ...h.settings(), window: { width: 5 } }))
+    h.model.setEdit("physics", "physics.fixedTimestep", "0.01")
+    assert.equal(await h.model.apply("physics"), true)
+    assert.equal(await h.model.apply("raw"), true)
+    assert.deepEqual(h.patches[h.patches.length - 1], { window: { width: 5 } })
+    stop()
+  })
+})

@@ -194,7 +194,14 @@ export class ProjectSettingsModel {
   // ---- editing
 
   setEdit(id: string, key: string, text: string): void {
-    this.edits.value = { ...this.edits.value, [id]: { ...(this.edits.value[id] ?? {}), [key]: text } }
+    const section = this.edits.value[id] ?? {}
+    const next: Record<string, string> = { ...section, [key]: text }
+    // A whole-block draft remembers what it started from, so a later change (here or by someone else) is not undone by it
+    const baseKey = `${key}.base`
+    if (!(key in section) && !(baseKey in section) && this.registry.get(id)?.logic?.snapshotKeys?.includes(key)) {
+      next[baseKey] = this.textOf(id, key)
+    }
+    this.edits.value = { ...this.edits.value, [id]: next }
   }
 
   /** Drops a section's edits and its last error */
@@ -232,7 +239,10 @@ export class ProjectSettingsModel {
       this.errors.value = { ...this.errors.value, [id]: "The determinism block can only be changed by an admin; nothing was sent" }
       return false
     }
-    if (def.logic.confirm && !(await this.deps.confirm(def.logic.confirm.message, def.logic.confirm.okLabel))) return false
+    if (def.logic.confirm) {
+      const { message, okLabel } = def.logic.confirm
+      if (!(await this.deps.confirm(typeof message === "function" ? message(built) : message, okLabel))) return false
+    }
     this.clearError(id)
     this.applying.value = id
     // What "restore" will put back: the texts before this Apply, for the keys it changes

@@ -88,7 +88,6 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     defaultGroup: 1,
     closable: true,
     singleton: true,
-    unmountWhenHidden: true,
   })
   registry.register({
     id: "engine",
