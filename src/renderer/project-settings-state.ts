@@ -45,6 +45,8 @@ export interface ProjectSettingsDeps {
 export interface PreviousValues {
   keys: string[]
   texts: Record<string, string>
+  /** Whole-block keys: the text right after that Apply, the base a restore diffs from (so later changes are not reverted) */
+  after?: Record<string, string>
 }
 
 export const NotInTheHistoryNote =
@@ -215,7 +217,9 @@ export class ProjectSettingsModel {
   restorePrevious(id: string): void {
     const previous = this.previous.value[id]
     if (!previous) return
-    this.edits.value = { ...this.edits.value, [id]: { ...previous.texts } }
+    const next: Record<string, string> = { ...previous.texts }
+    for (const [key, text] of Object.entries(previous.after ?? {})) next[`${key}.base`] = text
+    this.edits.value = { ...this.edits.value, [id]: next }
     this.clearError(id)
   }
 
@@ -258,7 +262,15 @@ export class ProjectSettingsModel {
       }
       const { [id]: _done, ...edits } = this.edits.value
       this.edits.value = edits
-      if (def.logic.textOf) this.previous.value = { ...this.previous.value, [id]: before }
+      if (def.logic.textOf) {
+        const afterCtx = this.contextFor(id)
+        const snaps = def.logic.snapshotKeys ?? []
+        if (afterCtx && snaps.length > 0) {
+          before.after = {}
+          for (const key of snaps) if (built.changed.includes(key)) before.after[key] = def.logic.textOf(afterCtx, key)
+        }
+        this.previous.value = { ...this.previous.value, [id]: before }
+      }
       if (built.restart.length > 0) {
         const pending = new Set([...(this.restartPending.value[id] ?? []), ...built.restart])
         this.restartPending.value = { ...this.restartPending.value, [id]: [...pending] }

@@ -277,4 +277,18 @@ describe("whole-block drafts", () => {
     assert.deepEqual(h.patches[h.patches.length - 1], { window: { width: 5 } })
     stop()
   })
+
+  test("restoring a Raw apply does not undo what changed after it", async () => {
+    const { h, stop } = await started({ role: "admin" })
+    h.model.setEdit("raw", "json", JSON.stringify({ ...h.settings(), window: { width: 5 } }))
+    assert.equal(await h.model.apply("raw"), true)
+    h.model.setEdit("physics", "physics.fixedTimestep", "0.01")
+    assert.equal(await h.model.apply("physics"), true)
+    h.model.restorePrevious("raw")
+    assert.equal(await h.model.apply("raw"), true)
+    const last = h.patches[h.patches.length - 1] as Record<string, unknown>
+    assert.equal("physics" in last, false)
+    assert.ok("window" in last)
+    stop()
+  })
 })
