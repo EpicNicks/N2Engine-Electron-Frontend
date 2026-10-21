@@ -48,3 +48,27 @@ export const DefaultCallTimeoutMs = 60000
 /** How long a call waits before its one retry when the host is busy */
 export const DefaultBusyWaitMs = 3000
 export const MaxBusyWaitMs = 10000
+
+// ===== write budgets (design M1, 4.5) =====
+
+/** Host write commands per agent session (an implicit or begun one) */
+export const MaxWritesPerSession = 2000
+/** Ops in one n2_apply_batch */
+export const MaxBatchOps = 500
+/** A text asset written through n2_write_text_asset or n2_create_script: bytes of UTF-8 */
+export const WriteTextMaxBytes = 100 * 1024
+/** Text asset writes per session */
+export const MaxTextWritesPerSession = 200
+/** A file this large or larger is not overwritten (its previous content must be kept as a backup): bytes */
+export const BackupMaxFileBytes = 512 * 1024
+/** All backups of one session together: bytes */
+export const BackupMaxSessionBytes = 16 * 1024 * 1024
+/** Sessions the bridge keeps at once, and how long one may sit idle before it is dropped */
+export const MaxSessions = 16
+export const SessionIdleMs = 24 * 60 * 60 * 1000
+/** Journal entries kept per session (the oldest are summarised away past this) */
+export const MaxJournalEntries = 4000
+/** How many own steps n2_undo / n2_redo / the batch tools may move in one call */
+export const MaxUndoSteps = 20
+/** Edit group labels are cut to this many bytes by the host */
+export const EditLabelBytes = 100

@@ -12,7 +12,9 @@ import type { ComponentSchema, ProjectInfoResponse, ServerInfoResponse } from ".
 import { BridgeAdvice, BridgeError, mapError, safeRole } from "./errors"
 import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs, RateLimitPerMinute } from "./limits"
 import { RateLimiter } from "./ratelimit"
+import { DefaultPolicy, type HostAccess, type Policy } from "./policy"
 import type { Scrubber } from "./scrub"
+import { SessionManager } from "./session"
 import type { HostConnector, HostLink } from "./host"
 
 export interface BridgeOptions {
@@ -20,6 +22,10 @@ export interface BridgeOptions {
   scrubber: Scrubber
   /** Serve a host that gave this connection the admin role (default: refuse, design M5) */
   allowAdmin?: boolean
+  /** The operator's write policy (flags); default: writes allowed, irreversible operations need the client's confirmation */
+  policy?: Policy
+  /** The agent sessions (journal, backups); default: new ones */
+  sessions?: SessionManager
   busyWaitMs?: number
   callTimeoutMs?: number
   rateLimitPerMinute?: number
@@ -43,6 +49,12 @@ export interface HostContext {
   componentTypes(): Promise<ComponentSchema[]>
   /** What the tools remember for the length of this session with the host */
   session: SessionState
+  /** The operator's write policy and the agent sessions (these outlive a connection to the host) */
+  policy: Policy
+  sessions: SessionManager
+  allowAdmin: boolean
+  /** Set by the server when an irreversible operation was allowed, for the journal */
+  consent: "elicited" | "operator" | null
 }
 
 export interface SessionState {
@@ -57,15 +69,37 @@ export class Bridge {
   private readonly limiter: RateLimiter
   readonly scrubber: Scrubber
   private readonly sleep: (ms: number) => Promise<void>
+  readonly policy: Policy
+  readonly sessions: SessionManager
+  /** What the last host connection reported (null before the first one): the write tools' listing depends on it */
+  private access: HostAccess | null = null
+  private readonly connectListeners = new Set<(access: HostAccess) => void>()
 
   constructor(private readonly options: BridgeOptions) {
     this.scrubber = options.scrubber
+    this.policy = options.policy ?? DefaultPolicy
+    this.sessions = options.sessions ?? new SessionManager({ maxWrites: this.policy.maxWrites })
     this.limiter = new RateLimiter(options.rateLimitPerMinute ?? RateLimitPerMinute, 60000, options.now)
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
 
   get backend(): string {
     return this.options.connector.kind
+  }
+
+  get allowAdmin(): boolean {
+    return this.options.allowAdmin === true
+  }
+
+  /** The role and read-only flag the host last reported, or null before the first connection */
+  get hostAccess(): HostAccess | null {
+    return this.access
+  }
+
+  /** Calls fn with the access each time a host connection opens (the server lists the write tools from it); returns the remover */
+  onConnect(fn: (access: HostAccess) => void): () => void {
+    this.connectListeners.add(fn)
+    return () => this.connectListeners.delete(fn)
   }
 
   /** Seconds to wait when the rate limit is reached (the call is not let through), else 0 */
@@ -101,6 +135,10 @@ export class Bridge {
         return link.types
       },
       session: link.session,
+      policy: this.policy,
+      sessions: this.sessions,
+      allowAdmin: this.allowAdmin,
+      consent: null,
     }
     const timeoutMs = this.options.callTimeoutMs ?? DefaultCallTimeoutMs
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -189,6 +227,14 @@ export class Bridge {
       if (this.link === link) this.link = null
     })
     this.link = link
+    this.access = { role: safeRole(opened.info.role), readOnly: opened.info.readOnly }
+    for (const listener of this.connectListeners) {
+      try {
+        listener(this.access)
+      } catch {
+        // a listener must not break the connection
+      }
+    }
     this.log(`connected to the ${this.options.connector.kind} host (protocol ${opened.info.protocolVersion}, role ${opened.info.role}${opened.info.readOnly ? ", read-only" : ""})`)
     return link
   }
@@ -215,5 +261,6 @@ export class Bridge {
       // closing is best effort
     }
     this.options.connector.dispose()
+    this.sessions.dispose()
   }
 }
