@@ -5,10 +5,13 @@ import { useEffect, useRef } from "preact/hooks"
 import { effect, untracked } from "@preact/signals-core"
 import { keymap } from "./keymap"
 import { useApp } from "./ui"
-import { HandleId, GizmoLayout, PlaneAxes } from "./viewport-gizmo"
+import { GizmoLayout, PlaneAxes } from "./viewport-gizmo"
+import type { AnyHandle } from "./viewport-controller"
+import { RotateLayout } from "./viewport-rotate"
+import { ScaleLayout } from "./viewport-scale"
 import { followViewportSelection } from "./viewport-selection"
 import { pointerActionFor, wheelPixels, PointerAction } from "./viewport-input"
-import { ViewportKeyboard } from "./viewport-keys"
+import { ViewportKeyboard, toolLabel } from "./viewport-keys"
 import { InputForwarder, scrollLines } from "./play-input"
 import { ViewportRenderer, editTarget, gameTarget } from "./viewport-renderer"
 import { framePixelOf } from "./viewport-size"
@@ -24,7 +27,7 @@ interface Gesture {
   lastY: number
 }
 
-function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: HandleId | null, ratio: number): void {
+function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: AnyHandle | null, ratio: number): void {
   ctx.lineCap = "round"
   // The plane squares first (the axes are drawn over them), each in the colour of the axis it is perpendicular to; they
   // fade as the plane turns edge-on, and the one under the pointer is brighter
@@ -69,6 +72,63 @@ function drawGizmo(ctx: CanvasRenderingContext2D, layout: GizmoLayout, active: H
   ctx.fill()
 }
 
+/** The rotate gizmo: a ring per axis; the half that faces the camera is strong (and the one that can be grabbed), the other faint */
+function drawRotate(ctx: CanvasRenderingContext2D, layout: RotateLayout, active: AnyHandle | null, ratio: number): void {
+  ctx.lineCap = "round"
+  for (const ring of layout.rings) {
+    const lit = ring.axis === active
+    ctx.strokeStyle = lit ? AxisHighlight[ring.axis] : AxisColors[ring.axis]
+    for (const front of [false, true]) {
+      ctx.globalAlpha = front ? 1 : 0.25
+      ctx.lineWidth = (front ? (lit ? 4 : 3) : 1.5) * ratio
+      ctx.beginPath()
+      for (const segment of ring.segments) {
+        if (segment.front !== front) continue
+        ctx.moveTo(segment.from.x, segment.from.y)
+        ctx.lineTo(segment.to.x, segment.to.y)
+      }
+      ctx.stroke()
+    }
+  }
+  ctx.globalAlpha = 1
+  ctx.fillStyle = "#ffffff"
+  ctx.beginPath()
+  ctx.arc(layout.origin.x, layout.origin.y, 3 * ratio, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+/** The scale gizmo: an axis line with a cube at its end along each of the object's own axes, and a square at the centre for all three */
+function drawScale(ctx: CanvasRenderingContext2D, layout: ScaleLayout, active: AnyHandle | null, ratio: number): void {
+  ctx.lineCap = "round"
+  const cube = 5 * ratio
+  for (const handle of layout.handles) {
+    const lit = handle.axis === active || active === "uniform"
+    const color = lit ? AxisHighlight[handle.axis] : AxisColors[handle.axis]
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
+    ctx.lineWidth = (lit ? 4 : 3) * ratio
+    ctx.beginPath()
+    ctx.moveTo(handle.from.x, handle.from.y)
+    ctx.lineTo(handle.to.x, handle.to.y)
+    ctx.stroke()
+    ctx.fillRect(handle.to.x - cube, handle.to.y - cube, cube * 2, cube * 2)
+  }
+  const half = 7 * ratio
+  ctx.fillStyle = active === "uniform" ? "#ffffff" : "#c8c8c8"
+  ctx.fillRect(layout.origin.x - half, layout.origin.y - half, half * 2, half * 2)
+}
+
+/** What a drag has made so far ("X +37.5 deg"), beside the gizmo */
+function drawReadout(ctx: CanvasRenderingContext2D, text: string, at: { x: number; y: number }, ratio: number): void {
+  ctx.font = `${12 * ratio}px sans-serif`
+  ctx.textBaseline = "bottom"
+  ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+  const width = ctx.measureText(text).width
+  ctx.fillRect(at.x + 12 * ratio, at.y - 30 * ratio, width + 8 * ratio, 18 * ratio)
+  ctx.fillStyle = "#ffffff"
+  ctx.fillText(text, at.x + 16 * ratio, at.y - 14 * ratio)
+}
+
 export function Viewport() {
   const { store, scene, hierarchy, viewport, play } = useApp()
   const container = useRef<HTMLDivElement>(null)
@@ -85,6 +145,7 @@ export function Viewport() {
       endGesture: () => endGesture(),
       frameSelected: () => viewport.frameSelected().catch(reportFailure("Failed to frame the selection")),
       live: () => play.live.peek(),
+      setMode: (mode) => viewport.setMode(mode),
     })
     let gesture: Gesture | null = null
     let flyFrame: number | null = null
@@ -154,8 +215,27 @@ export function Viewport() {
           }
           ctx.stroke()
         }
-        const layout = viewport.layout()
-        if (layout) drawGizmo(ctx, layout, viewport.hoverHandle.peek(), ratio)
+        const hover = viewport.hoverHandle.peek()
+        const mode = viewport.mode.peek()
+        let origin: { x: number; y: number } | null = null
+        if (mode === "translate") {
+          const layout = viewport.layout()
+          if (layout) drawGizmo(ctx, layout, hover, ratio)
+        } else if (mode === "rotate") {
+          const layout = viewport.rotateLayout()
+          if (layout) {
+            drawRotate(ctx, layout, hover, ratio)
+            origin = layout.origin
+          }
+        } else if (mode === "scale") {
+          const layout = viewport.scaleLayout()
+          if (layout) {
+            drawScale(ctx, layout, hover, ratio)
+            origin = layout.origin
+          }
+        }
+        const readout = origin ? viewport.dragReadout() : null
+        if (origin && readout) drawReadout(ctx, readout, origin, ratio)
       })
     }
 
@@ -385,6 +465,7 @@ export function Viewport() {
       // The overlay follows the gizmo, the selection and the camera
       effect(() => {
         viewport.overlayVersion.value
+        viewport.mode.value
         viewport.target.value
         viewport.selectionBounds.value // the selection's boxes
         store.canEdit.value // the gizmo is for editing only
@@ -447,11 +528,20 @@ export function Viewport() {
             Frame
           </button>
           <span
+            class="viewport-help viewport-mode"
+            title={
+              "The tool: W move, E rotate, R scale, Q select only (the keys fly the camera while the right button is held). " +
+              "Drag a gizmo handle to change the selected objects (Ctrl: snap, Esc: cancel)."
+            }
+          >
+            {toolLabel(keymap, viewport.mode.value)}
+          </span>
+          <span
             class="viewport-help"
             title={
               "Alt+left drag: orbit. Middle drag: pan. Wheel: zoom. Hold right button: look, with W A S D Q E to fly " +
-              "(Shift: faster). F: frame the selection. Click: select (Ctrl or Shift: add or remove; empty space clears). Drag a gizmo arrow or square to move " +
-              "the selected objects (Ctrl: snap, Esc: cancel)."
+              "(Shift: faster). F: frame the selection. W E R Q: move, rotate, scale, select only. Click: select (Ctrl or Shift: add or remove; empty space clears). " +
+              "Drag a gizmo handle to change the selected objects (Ctrl: snap, Esc: cancel)."
             }
           >
             Alt+drag orbit · MMB pan · wheel zoom · RMB+WASD fly · click select · F frame
