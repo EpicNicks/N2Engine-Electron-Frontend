@@ -386,9 +386,9 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
   const { value, mixed } = fieldMixed(field, component.entries)
   const disabled = inspector.readOnly.value
   // What a slider or a colour picker sends while it is dragged waits for a pause: one edit group, not one per tick
-  const waiting = useRef<{ value: unknown; axis?: string } | null>(null)
+  const waiting = useRef<{ value: unknown; axis?: string | readonly string[] } | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const apply = (next: unknown, axis?: string) =>
+  const apply = (next: unknown, axis?: string | readonly string[]) =>
     run(`Failed to edit ${field.displayName}`, () => inspector.multi.setField(component, field, next, axis))
   // The latest render's apply: a pause or an unmount sends to the objects as they are now
   const latest = useRef(apply)
@@ -400,9 +400,15 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
     waiting.current = null
     if (held) latest.current(held.value, held.axis)
   }
-  // Leaving the panel sends what is waiting
-  useEffect(() => flush, [])
-  const commit = (next: unknown, immediate: boolean, axis?: string) => {
+  // Leaving the panel sends what is waiting, and so do Undo and Save (the state asks before it settles)
+  useEffect(() => {
+    const unregister = inspector.multi.onPending(flush)
+    return () => {
+      unregister()
+      flush()
+    }
+  }, [])
+  const commit = (next: unknown, immediate: boolean, axis?: string | readonly string[]) => {
     const checked = checkValue(field, next)
     if (!checked.ok) return setError(checked.error)
     setError(null)

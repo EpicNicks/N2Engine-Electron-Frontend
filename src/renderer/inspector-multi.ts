@@ -99,11 +99,17 @@ const mixedOf = <T>(values: T[], same: (a: T, b: T) => boolean = (a, b) => a ===
 
 const sameNumber = (a: number, b: number): boolean => Math.abs(a - b) <= MixedTolerance
 
-function axesOfVec(vectors: Vec3[]): MultiAxes {
+/** Angles (degrees) that differ by a whole turn are the same: float noise at the +-180 wrap is not "mixed" */
+const sameAngle = (a: number, b: number): boolean => {
+  const d = Math.abs(a - b) % 360
+  return Math.min(d, 360 - d) <= MixedTolerance
+}
+
+function axesOfVec(vectors: Vec3[], same: (a: number, b: number) => boolean = sameNumber): MultiAxes {
   return {
-    x: mixedOf(vectors.map((v) => v.x), sameNumber),
-    y: mixedOf(vectors.map((v) => v.y), sameNumber),
-    z: mixedOf(vectors.map((v) => v.z), sameNumber),
+    x: mixedOf(vectors.map((v) => v.x), same),
+    y: mixedOf(vectors.map((v) => v.y), same),
+    z: mixedOf(vectors.map((v) => v.z), same),
   }
 }
 
@@ -136,7 +142,7 @@ export function buildMultiView(objects: readonly EntityDetails[]): MultiView {
     const all = transforms as NonNullable<(typeof transforms)[number]>[]
     transform = {
       position: axesOfVec(all.map((t) => t.position)),
-      rotation: axesOfVec(all.map((t) => quatToEuler(t.rotation))),
+      rotation: axesOfVec(all.map((t) => quatToEuler(t.rotation)), sameAngle),
       scale: axesOfVec(all.map((t) => t.scale)),
     }
   }
@@ -243,6 +249,19 @@ export class MultiInspectorState {
     private readonly engine: Engine,
     private readonly options: Options
   ) {}
+
+  private readonly pendingSenders = new Set<() => void>()
+
+  /** Registers what sends a debounced edit that is waiting (the panel's timer); returns how to remove it */
+  onPending(send: () => void): () => void {
+    this.pendingSenders.add(send)
+    return () => void this.pendingSenders.delete(send)
+  }
+
+  /** Sends the debounced edits that are waiting now, so Undo and Save don't pass them */
+  sendPending(): void {
+    for (const send of [...this.pendingSenders]) send()
+  }
 
   /** Resolves when the edits made so far have been sent and read back */
   get settled(): Promise<void> {
@@ -408,14 +427,20 @@ export class MultiInspectorState {
    * A field of a shared component, set on every selected object (a checked value: see checkValue). axis: only that axis
    * of a vector (or colour) value was edited, so each object keeps its own other axes.
    */
-  setField(component: MultiComponent, field: FieldSchema, value: unknown, axis?: string): Promise<void> {
+  setField(
+    component: MultiComponent,
+    field: FieldSchema,
+    value: unknown,
+    axis?: string | readonly string[]
+  ): Promise<void> {
     this.requireEditable()
     const jobs: Job[] = []
     for (const entry of component.entries) {
       let own = value
       if (axis !== undefined && isObject(value)) {
         const stored = displayValue(field, entry.values)
-        own = { ...(isObject(stored) ? stored : {}), [axis]: value[axis] }
+        own = { ...(isObject(stored) ? stored : {}) }
+        for (const key of typeof axis === "string" ? [axis] : axis) (own as JsonObject)[key] = value[key]
       }
       // Only what differs, and in the order the host wants (inspector-fields' planRequests)
       for (const request of planRequests(entry.values, fieldPatch(field, own)).requests) {

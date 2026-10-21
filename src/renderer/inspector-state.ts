@@ -533,7 +533,8 @@ export class InspectorState {
     }
     // An answer can leave more pending (edits made while it was on its way): send() drains those too
     while (this.sending.size > 0) await Promise.all([...this.sending.values()])
-    // Edits of several objects at once are not debounced, but Undo and Save wait for them too
+    // A multi-edit drag still in the panel's pause is sent now; Undo and Save wait for it and for the running ones
+    this.multi.sendPending()
     await this.multi.settled
   }
 
@@ -768,7 +769,6 @@ export class InspectorState {
       } else {
         this.options.onError?.("Failed to set the transform", e)
       }
-      return
     } finally {
       if (generation === this.transformGen) this.transformInflight--
     }

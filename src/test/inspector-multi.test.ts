@@ -186,6 +186,14 @@ describe("buildMultiView", () => {
     assert.ok(Math.abs(r.y.value - 30) < 1e-6)
   })
 
+  test("angles a whole turn apart (float noise at the +-180 wrap) are not mixed", () => {
+    const view = buildMultiView([
+      detailsOf("a", { transform: transformOf(0, eulerToQuat({ x: 180, y: 0, z: 0 })) }),
+      detailsOf("b", { transform: transformOf(0, { x: 1, y: 0, z: 0, w: 1e-7 }) }),
+    ])
+    assert.equal(view.transform!.rotation.x.mixed, false)
+  })
+
   test("an object with no transform leaves the transform out", () => {
     const view = buildMultiView([detailsOf("a"), detailsOf("b", { transform: null })])
     assert.equal(view.transform, null)
@@ -369,6 +377,36 @@ describe("MultiInspectorState: editing", () => {
     const sent = w.calls.filter(([n]) => n === "setLocalTransform").map(([, a]) => a)
     assert.deepEqual(sent[0], ["a", { x: 7, y: 2, z: 3 }, q, { x: 2, y: 2, z: 2 }])
     assert.deepEqual(sent[1], ["b", { x: 7, y: 5, z: 6 }, identity, { x: 1, y: 1, z: 1 }])
+  })
+
+  test("a field edit with several axes keeps each object's other axes", async () => {
+    const w = world({
+      a: { light: { isActive: true, intensity: 1, tint: { x: 1, y: 1, z: 0.2 }, mode: "Point", label: "a" } },
+      b: { light: { isActive: true, intensity: 1, tint: { x: 0, y: 0, z: 0.9 }, mode: "Point", label: "a" } },
+    })
+    await w.multi.select(["a", "b"])
+    const tint = lightSchema.fields.find((f) => f.name === "tint")!
+    await w.multi.setField(w.component("Light"), tint, { x: 0.5, y: 0.5, z: 0.2 }, ["x", "y"])
+    const sent = w.calls.filter(([n]) => n === "setComponentFields").map(([, a]) => (a[2] as JsonObject).tint)
+    assert.deepEqual(sent, [{ x: 0.5, y: 0.5, z: 0.2 }, { x: 0.5, y: 0.5, z: 0.9 }])
+  })
+
+  test("sendPending sends what the panel's pause is holding, and Undo/Save's settled then waits for it", async () => {
+    const w = world({ a: {}, b: {} })
+    await w.multi.select(["a", "b"])
+    let sent = false
+    const off = w.multi.onPending(() => {
+      sent = true
+      void w.multi.setProperties({ tag: "t" })
+    })
+    w.multi.sendPending()
+    assert.equal(sent, true)
+    await w.multi.settled
+    assert.equal(w.multi.view.value?.tag.value, "t")
+    off()
+    sent = false
+    w.multi.sendPending()
+    assert.equal(sent, false)
   })
 
   test("a rotation axis changes only that Euler angle of each object", async () => {

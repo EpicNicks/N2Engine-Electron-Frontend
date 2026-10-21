@@ -40,7 +40,7 @@ export interface EditorProps {
    * Sets the value: immediate sends it now, else it waits for the debounce delay (a drag of a slider). axis: a vector
    * editor says which axis was edited, so several objects that differ in the others keep theirs (value is the whole vector).
    */
-  commit(value: unknown, immediate: boolean, axis?: string): void
+  commit(value: unknown, immediate: boolean, axis?: string | readonly string[]): void
   /** Says why what was typed isn't a value; the row shows it */
   invalid(message: string): void
   /** Several objects are edited and their values differ: the editor shows "—", not a value (inspector-multi.ts) */
@@ -359,7 +359,7 @@ function VectorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxe
   )
 }
 
-function ColorEditor({ field, value, disabled, commit, invalid, mixed }: EditorProps) {
+function ColorEditor({ field, value, disabled, commit, invalid, mixed, mixedAxes }: EditorProps) {
   const { keys, hasAlpha } = colorChannels(field)
   const current = isObject(value) ? value : {}
   const alphaKey = keys[keys.length - 1]
@@ -377,7 +377,8 @@ function ColorEditor({ field, value, disabled, commit, invalid, mixed }: EditorP
         disabled={disabled}
         onInput={(e) => {
           const next = hexToColor(field, (e.currentTarget as HTMLInputElement).value, value)
-          if (next.ok) commit(next.value, false)
+          // Only the colour channels were picked: each object keeps its own alpha
+          if (next.ok) commit(next.value, false, keys.slice(0, 3))
         }}
       />
       {hasAlpha && (
@@ -385,6 +386,7 @@ function ColorEditor({ field, value, disabled, commit, invalid, mixed }: EditorP
           field={{ ...field, min: 0, max: 1 }}
           label="alpha"
           value={typeof current[alphaKey] === "number" ? (current[alphaKey] as number) : 1}
+          mixed={mixed && (mixedAxes === undefined || mixedAxes.includes(alphaKey))}
           disabled={disabled}
           onValue={(n) => commit({ ...current, [alphaKey]: n }, true, alphaKey)}
           onInvalid={invalid}
