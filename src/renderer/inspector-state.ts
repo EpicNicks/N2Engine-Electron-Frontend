@@ -30,7 +30,8 @@ type Engine = Pick<
   | "getLuaFields"
   | "setEntityProperties"
   | "setLocalTransform"
->
+> &
+  Partial<Pick<EngineApi, "undo">>
 /** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
 type Project = { listAssets(): Promise<AssetEntry[]> }
 

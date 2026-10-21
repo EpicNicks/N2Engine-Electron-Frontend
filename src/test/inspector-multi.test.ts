@@ -98,7 +98,7 @@ function detailsOf(id: string, spec: Spec = {}): EntityDetails {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
-function world(specs: Record<string, Spec>, options: { groups?: boolean } = { groups: true }) {
+function world(specs: Record<string, Spec>, options: { groups?: boolean; undo?: boolean | "fails" } = { groups: true }) {
   const objects = new Map(Object.entries(specs).map(([id, spec]) => [id, detailsOf(id, spec)]))
   const calls: Array<[string, unknown[]]> = []
   const refuse = new Map<string, { message: string; code?: string }>()
@@ -114,6 +114,7 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
     if (error) throw error
   }
   const asked: string[] = []
+  const undone = new Map<string, Record<string, unknown>>()
   const state = { answer: true }
   const find = (id: string) => {
     const object = objects.get(id)
@@ -134,6 +135,7 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
     setEntityProperties: async (id: string, properties: JsonObject) => {
       calls.push(["setEntityProperties", [id, properties]])
       gate(id)
+      undone.set(id, { ...find(id).header })
       Object.assign(find(id).header, properties)
     },
     setComponentFields: async (id: string, componentId: string, values: JsonObject) => {
@@ -159,6 +161,17 @@ function world(specs: Record<string, Spec>, options: { groups?: boolean } = { gr
       find(id).components.push({ type: typeName, uuid: componentId, values: { isActive: true } })
       return { componentId, values: { isActive: true } }
     },
+    ...(options.undo
+      ? {
+          undo: async () => {
+            calls.push(["undo", []])
+            if (options.undo === "fails") throw new Error("nothing to undo")
+            // The test host's step is the edits of the group: put back what they changed
+            for (const [id, before] of undone) Object.assign(find(id).header, before)
+            return {} as never
+          },
+        }
+      : {}),
     removeComponent: async (id: string, componentId: string) => {
       calls.push(["removeComponent", [id, componentId]])
       gate(id)
@@ -619,6 +632,47 @@ describe("MultiInspectorState: partial failure and read-only", () => {
   })
 })
 
+describe("MultiInspectorState: a refusal rolls back", () => {
+  test("the group is ended, then undone: earlier objects are back as they were", async () => {
+    const w = world({ a: { layer: 0 }, b: { name: "Bravo", layer: 0 }, c: { layer: 0 } }, { groups: true, undo: true })
+    await w.multi.select(["a", "b", "c"])
+    w.refuse.set("b", { message: "Entity is locked" })
+    await w.multi.setProperties({ layer: 4 })
+    assert.deepEqual(w.names(), ["beginEditGroup", "setEntityProperties", "setEntityProperties", "endEditGroup", "undo"])
+    assert.match(w.multi.editProblem.value ?? "", /rolled back: 1 applied changes were undone, 1 not sent. Bravo: Entity is locked/)
+    assert.equal(w.multi.view.value?.layer.mixed, false)
+    assert.equal(w.multi.view.value?.layer.value, 0)
+  })
+
+  test("a refusal of the first object undoes nothing (nothing was applied)", async () => {
+    const w = world({ a: { name: "Alpha" }, b: {} }, { groups: true, undo: true })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("a", { message: "no" })
+    await w.multi.setProperties({ layer: 4 })
+    assert.ok(!w.names().includes("undo"))
+    assert.match(w.multi.editProblem.value ?? "", /0 of 2 changes applied, 1 not sent/)
+  })
+
+  test("without an edit group there is no step to undo: the edits stay and the message says so", async () => {
+    const w = world({ a: {}, b: { name: "Bravo" } }, { groups: false, undo: true })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("b", { message: "locked" })
+    await w.multi.setProperties({ layer: 4 })
+    assert.ok(!w.names().includes("undo"))
+    assert.match(w.multi.editProblem.value ?? "", /1 of 2 changes applied \(Undo takes back what was applied\)/)
+  })
+
+  test("a rollback that fails is said, and the edits stay", async () => {
+    const w = world({ a: {}, b: { name: "Bravo" } }, { groups: true, undo: "fails" })
+    await w.multi.select(["a", "b"])
+    w.refuse.set("b", { message: "locked" })
+    await w.multi.setProperties({ layer: 4 })
+    const problem = w.multi.editProblem.value ?? ""
+    assert.match(problem, /1 of 2 changes applied \(Undo takes back what was applied\)/)
+    assert.match(problem, /rolling back failed: nothing to undo/)
+  })
+})
+
 describe("MultiInspectorState: Add Component and Remove for every object", () => {
   test("Add Component adds the type to every object as ONE group", async () => {
     const w = world({ a: {}, b: {}, c: {} })
@@ -661,6 +715,22 @@ describe("MultiInspectorState: Add Component and Remove for every object", () =>
       ]
     )
     assert.equal(w.multi.view.value?.components.length, 0)
+  })
+
+  test("Remove aborts when the selection changed while the dialog was open", async () => {
+    const w = world({ a: {}, b: {}, c: {}, d: {} })
+    await w.multi.select(["a", "b"])
+    const stale = w.component("Light")
+    let answer: (value: boolean) => void = () => {}
+    const confirm = (w.multi as unknown as { options: { confirm: () => Promise<boolean> } }).options
+    confirm.confirm = () => new Promise<boolean>((resolve) => (answer = resolve))
+    const removing = w.multi.removeComponent(stale)
+    await w.multi.select(["c", "d"])
+    answer(true)
+    assert.equal(await removing, false)
+    assert.deepEqual(w.names(), [])
+    // c and d keep their lights
+    assert.ok(w.multi.view.value?.components.some((c) => c.type === "Light"))
   })
 
   test("Remove declined sends nothing", async () => {
