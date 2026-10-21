@@ -1,6 +1,7 @@
 import type { EntityDataResponse, Quat, Vec3 } from "../protocol/protocol.generated"
 import { PickBackend, ViewportController, ViewportDeps } from "../renderer/viewport-controller"
 import { IdentityQuat, mat4Compose, vec3 } from "../renderer/viewport-math"
+import type { MarqueeOp } from "../renderer/viewport-marquee"
 
 // A viewport controller over fakes, for the tests of the gizmo's tools (the Node tests and the DOM ones): the host has
 // the entities given, and the edit groups and the transforms sent are logged.
@@ -30,13 +31,24 @@ export function entityData(id: string, e: Entity): EntityDataResponse {
 }
 
 /** A controller over fakes: the host has the entities given, the edit groups and the transforms are logged */
-export function rig(options: { entities?: Record<string, Entity>; selection?: string[]; canEdit?: boolean; picking?: PickBackend } = {}) {
+export function rig(
+  options: {
+    entities?: Record<string, Entity>
+    selection?: string[]
+    canEdit?: boolean
+    picking?: PickBackend
+    /** The marquee's candidates (and the scene revision they were listed at; change it to make the cache old); none: no marquee */
+    marquee?: { ids: string[]; revision: number }
+  } = {}
+) {
   const entities = options.entities ?? { a: { position: vec3(1, 2, 3) } }
   const selection = options.selection ?? ["a"]
   const log: string[] = []
   const sets: Array<{ id: string; position: Vec3; rotation: Quat; scale: Vec3 }> = []
   const errors: string[] = []
   const selected: Array<string | null> = []
+  /** What each marquee selected, and how */
+  const marquees: Array<{ ids: string[]; op: MarqueeOp }> = []
   let frames = 0
   let canEdit = options.canEdit ?? true
   const deps: ViewportDeps = {
@@ -78,6 +90,11 @@ export function rig(options: { entities?: Record<string, Entity>; selection?: st
     selectionIds: () => selection,
     select: (id) => selected.push(id),
   }
+  if (options.marquee) {
+    const marquee = options.marquee
+    deps.marqueeCandidates = () => ({ revision: marquee.revision, ids: marquee.ids })
+    deps.selectMany = (ids, op) => void marquees.push({ ids: [...ids], op })
+  }
   const controller = new ViewportController(deps)
   controller.onFrameNeeded(() => frames++)
   controller.setSize({ width: 800, height: 600 })
@@ -87,6 +104,7 @@ export function rig(options: { entities?: Record<string, Entity>; selection?: st
     sets,
     errors,
     selected,
+    marquees,
     frames: () => frames,
     setCanEdit: (value: boolean) => (canEdit = value),
     /** Connects and reads the targets; the gizmo is then where the primary object is */
