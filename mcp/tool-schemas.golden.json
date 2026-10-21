@@ -215,6 +215,29 @@
                   }
                 ]
               },
+              "policy": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowIrreversible": {
+                    "description": "The operator allowed irreversible operations without asking the person (--allow-irreversible). When false they need the person's confirmation.",
+                    "type": "boolean"
+                  },
+                  "maxWrites": {
+                    "description": "Host write commands one agent session may make.",
+                    "type": "number"
+                  },
+                  "writeTools": {
+                    "description": "The write tools are available: the token may change the project, the host is not read-only and the operator did not turn them off.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "writeTools",
+                  "allowIrreversible",
+                  "maxWrites"
+                ],
+                "type": "object"
+              },
               "project": {
                 "anyOf": [
                   {
@@ -287,6 +310,7 @@
             },
             "required": [
               "bridge",
+              "policy",
               "host",
               "project",
               "scene",

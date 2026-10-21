@@ -12,6 +12,7 @@ import type { HostContext } from "./bridge"
 import { BridgeAdvice, BridgeError, safeRole } from "./errors"
 import { componentToJsonSchema } from "./jsonschema"
 import * as limits from "./limits"
+import { writesAllowed } from "./policy"
 import { encodePng, fitSize } from "./png"
 import { Budget, envelopeJson } from "./scrub"
 import { BridgeName, BridgeVersion, SupportedSpecRevisions } from "./version"
@@ -156,6 +157,11 @@ const statusData = z.object({
     backend: z.string().describe("launch (a host of the bridge's own) or connect (an existing host)."),
     specRevisions: z.array(z.string()),
   }),
+  policy: z.object({
+    writeTools: z.boolean().describe("The write tools are available: the token may change the project, the host is not read-only and the operator did not turn them off."),
+    allowIrreversible: z.boolean().describe("The operator allowed irreversible operations without asking the person (--allow-irreversible). When false they need the person's confirmation."),
+    maxWrites: z.number().describe("Host write commands one agent session may make."),
+  }),
   host: z.object({
     protocolVersion: z.string(),
     engineVersion: z.string(),
@@ -194,6 +200,11 @@ const status = tool({
     const history = await attempt(unavailable, "history", () => ctx.client.getHistory())
     const data = {
       bridge: { name: BridgeName, version: BridgeVersion, backend: ctx.backend, specRevisions: [...SupportedSpecRevisions] },
+      policy: {
+        writeTools: !ctx.policy.readOnly && writesAllowed({ role: safeRole(ctx.info.role), readOnly: ctx.info.readOnly }, ctx.allowAdmin),
+        allowIrreversible: ctx.policy.allowIrreversible,
+        maxWrites: ctx.policy.maxWrites,
+      },
       host: {
         protocolVersion: s.name(ctx.info.protocolVersion),
         engineVersion: s.name(ctx.info.engineVersion),

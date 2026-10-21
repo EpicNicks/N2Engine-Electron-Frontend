@@ -315,7 +315,7 @@ Roadmap phase F1 (issue #6's UI roadmap, decisions U1 and U2). The editor's pane
 
 ## MCP (n2-mcp)
 
-`n2-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code, Claude Desktop, any MCP client) **inspect** an N2Engine project through an editor host: the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots. This first version has **read tools only**.
+`n2-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server that lets an AI agent (Claude Code, Claude Desktop, any MCP client) **inspect and change** an N2Engine project through an editor host: the scene hierarchy, entities and their components, component schemas, assets, text assets, the console and screenshots (read tools), and entity edits, scene and text asset writes, project settings, undo and agent sessions (write tools, below). There are no play tools yet.
 
 It is a separate Node program in `mcp/` (single-file bundle `dist/n2-mcp.mjs`, plain Node 22 or later, no Electron). It reuses this repo's protocol client (`src/protocol/`) and host launcher (`src/main/host-launcher.ts`), and talks to the host as an ordinary editor protocol client with its **own token**, so the host's roles, read-only mode, single-session rule and audit lines apply to the agent exactly as to a person. The design is the engine's MCP proposal (decisions M1-M12).
 
@@ -333,14 +333,14 @@ node dist/n2-mcp.mjs --connect <host:port> --fingerprint <sha256> (--token-env <
 
 - **`--launch`** starts a host of the bridge's own for the project (`N2EditorHost --project <dir> --port 0 --tokens-file <temp file> --exit-on-stdin-eof`, found with `--host-path` or the `N2ENGINE_HOST` variable the editor also uses). Its one user, `n2-mcp`, has the **editor** role and a fresh random 256-bit token: the bridge writes only the token's SHA-256 to a 0600 file in a new temp folder, never puts the token in the arguments or the child's environment, and removes the file and ends the host when it exits (stdio closed, a signal, or the process ending; the host also ends by itself when the bridge's pipe to it closes). It needs a host built with TLS support (the tokens file uses SHA-256). The host is started on the first tool call, not at startup.
 - **`--connect`** reaches a running host over **TLS with a pinned certificate fingerprint**. `--fingerprint` is required (64 hex digits, colons allowed): there is no trust on first use, because nobody is at the prompt. Get it from the host's ready line (`N2EditorHost ready port=... tls=1 fingerprint=...`) or from the editor's remote connection dialog. Plaintext is refused. The token is read from the environment variable named by `--token-env` (and removed from the environment) or from `--token-file` (on POSIX refused when group or others can read it). **A token is never accepted as a command line argument**, and is never logged.
-- Other options: `--user <name>` (the token's user in the host's tokens file), `--allow-admin`, `--busy-wait <ms>` (default 3000, at most 10000), `--call-timeout <ms>` (default 60000), `--ready-timeout <ms>`.
+- Other options: `--user <name>` (the token's user in the host's tokens file), `--allow-admin`, the write policy flags (below), `--busy-wait <ms>` (default 3000, at most 10000), `--call-timeout <ms>` (default 60000), `--ready-timeout <ms>`.
 - The bridge says Hello with `errorCodes`, so the host's refusals arrive with codes. The host's role decides what works; the bridge adds nothing to it.
 
-A session with the host is opened on the first tool call (a client that only lists tools never holds the host's single session), is checked once, and is used by one tool call at a time. When the host is busy (another editor or agent holds it) the bridge waits `--busy-wait` and tries **once** more, then answers with a `busy` error; it never retries in a loop. A dropped or idle-closed session is reopened by the next call. A call the host doesn't answer within `--call-timeout` drops the session and fails with `timeout`.
+A session with the host is opened on the first tool call, or on the first `tools/list` (the bridge asks the host who the token is, so that the write tools are listed or hidden correctly; with `--read-only` a client that only lists tools never holds the host's single session), is checked once, and is used by one tool call at a time. When the host is busy (another editor or agent holds it) the bridge waits `--busy-wait` and tries **once** more, then answers with a `busy` error; it never retries in a loop. A dropped or idle-closed session is reopened by the next call. A call the host doesn't answer within `--call-timeout` drops the session and fails with `timeout`.
 
 ### Tools
 
-All eleven are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false`, have `additionalProperties: false` input schemas and an `outputSchema`, and answer with structured content plus a text block. The exact list, descriptions and schemas are pinned in `mcp/tool-schemas.golden.json` (a test fails when they change without it).
+The eleven read tools are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false`, have `additionalProperties: false` input schemas and an `outputSchema`, and answer with structured content plus a text block. The exact list, descriptions and schemas are pinned in `mcp/tool-schemas.golden.json` (a test fails when they change without it).
 
 | Tool | What it does |
 |---|---|
@@ -358,11 +358,79 @@ All eleven are `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: 
 
 Every result has the same shape: `{source, untrusted, truncated, nextCursor?, notes?, data}`, and its text block is a one-line summary followed by the same JSON in an `<n2-data source="..." untrusted>` envelope.
 
+### Write tools
+
+Write tools are **listed only when the host lets this token change the project**: an `editor` role (or an `admin` the operator allowed with `--allow-admin`) on a host that is not `--read-only`, and not hidden by the flags below. A viewer token or a read-only host gets the 11 read tools only. The bridge asks the host once, on the first `tools/list` (or on a write call that comes first), and sends `tools/list_changed` if the answer changes later. A host that can't be reached at that moment lists the read tools only (fail closed). The host still enforces its role gate on every command; hiding the tools is courtesy, not security.
+
+**One undo step per call.** Every edit tool runs its host commands inside one edit group labelled `AI: <tool> #<n>` (it shows in the editor's Edit menu), opened and closed inside the call and never held between calls. If a command fails, the group is closed and, when the host already made a step for it, that step is undone at once, so a failed call leaves nothing; the error says whether nothing was applied, the step was undone, or (the connection dropped) the outcome is unknown. Every answer carries the host's edit result: `label`, `revision`, `savedRevision`, `dirty`, `canUndo`, `canRedo`, and the session's write counter.
+
+| Tool | What it does |
+|---|---|
+| `n2_create_entity` | An entity with name, parent and place, a preset (Empty, Cube, Sphere, Quad, Light, DirectionalLight, PointLight, SpotLight), local transform (position, quaternion rotation, scale), tag, layer, active, and components with initial field values: one step. |
+| `n2_destroy_entity` | Deletes an entity and its children (undoable). |
+| `n2_set_transform` | Part or all of the local transform; the parts left out keep their values. |
+| `n2_set_parent` | Reparents (`parentId` null for the root), `siblingIndex`, `keepWorldTransform`. |
+| `n2_set_properties` | Name (this is the rename), active, tag, layer. |
+| `n2_add_component`, `n2_remove_component`, `n2_set_component_fields` | Components by type name from `n2_get_component_types`; field values keyed by name as `n2_describe_component` shapes them. Type and field names are checked in the bridge first (with "did you mean"); the host checks the values all or nothing and its clamped values are echoed. |
+| `n2_duplicate_entity` | A copy with children and components. |
+| `n2_apply_batch` | Up to 500 ops of the kinds above as **one step, all or nothing**. Ops can use `$<n>.entityId` / `$<n>.componentId` of an earlier op. The first failure closes the group and undoes it, and the error says `Op <n> (<kind>) failed` and that nothing was applied. A bad reference or an unknown component is refused before the host is touched. |
+| `n2_undo`, `n2_redo` | Move the agent's **own** steps only (the labels must match the host's history exactly): if a person edited after the agent, or the history was cleared, they refuse with `session_conflict` and change nothing. |
+| `n2_create_scene`, `n2_open_scene`, `n2_save_scene` | `NewScene`, `OpenScene`, `SaveSceneToFile`. Opening or creating clears the host's undo history. |
+| `n2_write_text_asset`, `n2_create_script` | Create or overwrite a text file under `assets/` (at most 100 KB, 200 files per session); `n2_create_script` makes a Lua script from the template (never overwrites). Not undoable by the host: an overwrite keeps the previous text as a **backup** in the session. |
+| `n2_set_project_settings` | A JSON merge patch of the project settings (16 KB, 8 levels deep). A patch naming the `determinism` block is refused unless the bridge runs with an admin token the operator allowed. |
+| `n2_begin_session`, `n2_session_summary`, `n2_end_session`, `n2_session_revert` | Agent sessions, below. |
+
+Every tool except `n2_begin_session` takes an optional `sessionId`; without one the call is journaled in the implicit session. Annotations: `readOnlyHint: false` (true for `n2_session_summary`) and `openWorldHint: false`; `destructiveHint: true` for destroy, remove component, batch, undo, the scene, text asset and project settings tools, and session end and revert; `idempotentHint: true` for the `set_*` tools, save and write. They are hints only: clients treat them as untrusted, and the safety below does not rely on them.
+
+#### Agent sessions
+
+`n2_begin_session({label})` answers an opaque `sessionId` (a UUID) that later calls pass. Sessions expire after 24 hours without use or when the bridge exits (16 at once). A session holds:
+
+- a **journal**: per write, the tool, a scrubbed one-line summary, the undo step's label, the entity ids touched, the file written with its hash, and how an irreversible operation was confirmed. It never holds a file's text;
+- the labels of its own steps that are still done or undone;
+- the write counter;
+- the **backups** of text files it overwrote: a 0600 file in a private temp folder (memory if that fails), deleted at exit unless `--keep-journal`.
+
+`n2_session_summary` says what changed (steps, entities created, destroyed and modified, files, whether the scene was saved after the last edit, settings, whether the history was cleared, whether the scene has unsaved changes right now) and shows the newest journal entries. `n2_end_session` answers the final summary and forgets the session.
+
+`n2_session_revert` undoes the session's steps in reverse, then restores the files it overwrote from the backups. It works **only while the host's newest undo steps are exactly the session's own, in order** (otherwise it refuses and changes nothing). It restores a file only if it still holds what the agent wrote, and leaves files the agent created in place (the host cannot delete files), listing them. Restoring files is irreversible and gated like the operations below; `restoreFiles: false` reverts the steps only.
+
+#### Irreversible operations: the person or the operator, never the model
+
+Saving the scene, opening or creating a scene **over unsaved changes**, project settings, **overwriting** an existing text file, and a revert that restores files cannot be undone by the editor. Each such call first looks at the host (is the scene dirty? does the file exist?) and, when it really is irreversible:
+
+1. with `--allow-irreversible` it runs (the operator's consent; the journal says `operator`);
+2. else if the client declared **elicitation** (form mode; both `{form:{}}` and the older `{}`), the bridge asks the person a yes/no question that names the exact operation, and runs it only on an accepted yes (`elicited` in the journal). A decline, a cancel, or a yes that says false is `confirmation_declined`. The answer is tied to the operation by a key made from the tool and the question's text, so an answer never covers a different operation;
+3. else it is refused with `irreversible_refused`, and the host is never asked.
+
+**No argument a model sends is consent**: there is no `confirm` flag, every input schema refuses unknown keys, and the answer comes from the client's own channel (`inputResponses` are lifted out of the request before the tool sees its arguments). Reversible forms need no question (a new file, a clean scene, edits). Elicitation is written once with the SDK's `inputRequired()`. On 2026-07-28 it is the multi-round-trip pattern (an `input_required` result, then a retry with `inputResponses`); on 2025-11-25 the SDK's shim sends a real `elicitation/create` to the client and re-enters the call.
+
+#### Write policy flags
+
+| Flag | Effect |
+|---|---|
+| `--read-only` | No write tool is listed or callable, whatever the host allows (and listing never connects). |
+| `--allow-irreversible` | The operator's consent for the irreversible operations above, for clients that can't ask. |
+| `--max-writes <n>` | Host write commands per agent session (default 2000). |
+| `--write-tools a,b` | List only these write tools. |
+| `--disable-tools a,b` | Never list these tools, read or write. |
+| `--keep-journal` | Keep the backups folder at exit. |
+
+```
+node dist/n2-mcp.mjs --launch . --renderer software --max-writes 500 --write-tools n2_create_entity,n2_set_transform,n2_undo
+node dist/n2-mcp.mjs --connect editor.example.net:9999 --fingerprint <sha256> --token-env N2_AGENT_TOKEN --read-only
+```
+
 ### Budgets and limits
 
 | What | Limit |
 |---|---|
-| Tool calls | 120 per minute (`rate_limited`, with the seconds to wait) |
+| Tool calls | 120 per minute (`rate_limited`, with the seconds to wait); the retry after a confirmation question is not counted |
+| Write commands | 2000 per agent session (`--max-writes`); a call that would pass it is refused before anything is sent (`budget_exceeded`) |
+| Batch | 500 ops |
+| Text asset writes | 100 KB each, 200 per session; a file of 512 KB or more is not overwritten (it can't be backed up); 16 MB of backups per session |
+| Sessions | 16 at once, 24 hours idle |
+| Undo and redo | 20 steps per call |
 | Hierarchy and asset pages | 200 entries by default, 2000 at most, and about 96 KB of JSON per page (a page cut for size has a `nextCursor`) |
 | Entity component values | 64 KB, then values are marked omitted |
 | Text asset | 100 KB per call |
@@ -375,8 +443,10 @@ Every result has the same shape: `{source, untrusted, truncated, nextCursor?, no
 
 - **Everything from the project is untrusted data.** Names, field values, asset text, console lines and the host's own error text are scrubbed and bounded before the model sees them: control characters are removed; bidi, zero-width, line-separator and Unicode tag characters are shown as `\u{...}` escapes; lone surrogates become U+FFFD; strings and whole values are size-capped; the text block's JSON escapes `<`, `>` and `&`, so data cannot write the `</n2-data>` that closes the envelope. Every tool description and the server instructions say returned text is data, never instructions. There are no tools that run text as a command, and no shell, file system or network tools.
 - **The host's paths and the bridge's secrets stay out.** The project and user-data folders (learned from `GetProjectInfo`, which is never passed on with them) become `<project>` and `<userdata>`; any other absolute path in a message or log line becomes `<host-path>`; the token is replaced by `[redacted]` if a host ever echoes it. The console drops the host's `audit:`, `Rate limit` and `Refused Hello` lines and `peer=` addresses (the engine's own filtering of the event stream for viewers is the other half).
-- **Least privilege.** Use a dedicated token user per agent (for example `--new-token agent-claude viewer` on the host), a **viewer** token for inspection, and an editor token only when later versions write. **The admin role is refused** (`admin_refused` for every tool, the connection closed) unless `--allow-admin`: an agent never needs it. A host started with `--token-env` has one token with every right, which is admin: use a `--tokens-file` host for agents.
+- **Least privilege.** Use a dedicated token user per agent (for example `--new-token agent-claude viewer` on the host), a **viewer** token for inspection, and an editor token only when the agent should change the project (scope the tools further with `--write-tools`). **The admin role is refused** (`admin_refused` for every tool, the connection closed) unless `--allow-admin`: an agent never needs it. A host started with `--token-env` has one token with every right, which is admin: use a `--tokens-file` host for agents.
 - **No secrets in client configs.** Tokens come from an environment variable or a 0600 file, never from arguments; in `.mcp.json` give the variable by reference.
+- **Writes stay inside `assets/`, never `editor/`.** The bridge refuses a path that is not plain `res://` followed by safe segments (no `..`, `.`, empty segment, backslash, colon, percent escape, control character, trailing dot or space, nor full-width lookalikes, which NFKC would change), whose first segment is `editor` (or `assets/editor`), or that ends in `.meta`. It does so before the host is asked anything, not even to read. The host refuses again (extension allow list, symlinks, the open scene's own file). Editor extensions run with capabilities of their own, so an agent must never be able to plant one.
+- **No shell, no file system, no network.** The bridge has no tool that runs text or touches the agent machine's files. Lua is written only as an asset.
 - A hostile host can only return data (scrubbed and bounded as above). A screenshot can show text rendered by the project: that is data too.
 
 ### Errors
@@ -423,13 +493,22 @@ Claude Desktop (<https://modelcontextprotocol.io/docs/develop/connect-local-serv
 
 The bridge uses `@modelcontextprotocol/server` **2.3.1** (pinned, bundled into `dist/n2-mcp.mjs`, with `zod` 4.6.7 for the schemas). It serves MCP over stdio with the SDK's `serveStdio`, which decides per connection how the client opens it: **2026-07-28** (the current revision: `server/discover`, the protocol version in every request's `_meta`) or the handshake-based **2025-11-25** (`initialize`) and the older ones the SDK still accepts. Both are tested against the SDK's own client (`mcp/test/conformance.test.ts`). A client on 2026-07-28 with version negotiation `auto` first starts a short-lived probe copy of the bridge for `server/discover`; because the host is only reached on the first tool call, that copy never starts a host or takes the host's session. The tool annotation names (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) are those of the SDK's tool schema, which serves both revisions.
 
+### Spec findings for the write tools
+
+Checked on 2026-10-20 against modelcontextprotocol.io and the pinned SDK 2.3.1.
+
+- **Annotations:** a tool's `annotations` has `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint` (the SDK's `ToolAnnotationsSchema`, used for both revisions). The 2026-07-28 tools page only says that annotations are untrusted hints unless the server is trusted, without listing the names.
+- **Elicitation, 2025-11-25:** the client declares `elicitation: {form:{}, url:{}}` (an empty `{}` means form only). The server sends `elicitation/create` with `mode: "form"` (optional), `message` and a flat `requestedSchema`. The answer's `action` is `accept` (with `content`), `decline` or `cancel`.
+- **Elicitation, 2026-07-28:** the server answers `tools/call` with `resultType: "input_required"` and `inputRequests` (embedded `elicitation/create` objects keyed by the server); the client retries with a new request id and `inputResponses`. Client capabilities travel in every request's `_meta` (`io.modelcontextprotocol/clientCapabilities`). The bridge reads them from `ctx.mcpReq.envelope` first, then from the `initialize` capabilities.
+- **A caveat:** the 2026-07-28 page says the tool list MUST NOT vary per connection or as a side effect of other requests, but MAY vary by the authorization presented. On stdio the token is process-wide configuration, so the list is constant for a given token. It can change once (read tools only until the host has been reached), which the bridge announces with `tools/list_changed`.
+
 ### Not there yet
 
-Write tools (create and edit entities, undo, text asset writes, save, project settings), play tools, the `--electron` backend (working beside an open editor), resources, subscriptions and prompts, the Streamable HTTP transport, the confirmation gate for irreversible operations, and the `yield` Hello flag. `n2_screenshot` does not restore the host's viewport size afterwards.
+Play tools, the `--electron` backend (working beside an open editor), resources, subscriptions and prompts, the Streamable HTTP transport, and the `yield` Hello flag. `n2_screenshot` does not restore the host's viewport size afterwards.
 
 ### Not verified
 
-A real Claude Code or Claude Desktop session driving a live host (the approval prompts, image rendering, whether output limits truncate); `--launch` against a real N2EditorHost (CI has no engine: the tests use a fake child process and a fake host speaking the real codecs, and the host's `--tokens-file` behaviour is read from the engine's source and docs); a real host's answers to a viewer (the tests use a stand-in that answers `forbidden`); the `.mcp.json` `${VAR}` expansion and the `claude mcp add` syntax, which were read from the docs and not run.
+The write tools against a real N2EditorHost: the tests use a fake host with its own edit-group, history and scene model written from the protocol docs, so real undo-step bookkeeping, `SetLocalTransform` and `SetProjectSettings` details and the host's file refusals may differ. The elicitation prompt in a real Claude Code or Claude Desktop (the tests use the SDK's own client in both eras). A real Claude Code or Claude Desktop session driving a live host (the approval prompts, image rendering, whether output limits truncate); `--launch` against a real N2EditorHost (CI has no engine: the tests use a fake child process and a fake host speaking the real codecs, and the host's `--tokens-file` behaviour is read from the engine's source and docs); a real host's answers to a viewer (the tests use a stand-in that answers `forbidden`); the `.mcp.json` `${VAR}` expansion and the `claude mcp add` syntax, which were read from the docs and not run.
 
 ## Preferences and keyboard shortcuts
 
@@ -527,7 +606,7 @@ The unit tests cover:
 - the stacks' ids (a layout saved by release F1 gets them) and, in the DOM tests, that closing and reopening a panel does not remount the other stacks;
 - the audio decoding, jitter buffer and drift correction.
 
-**MCP tests** (`mcp/test/*.test.ts`, bundled by `scripts/bundle-mcp.js --tests` to `dist/mcp-test` and run by `npm test` with `node --test`): the bridge driven by the SDK's own MCP client (both protocol eras) against a fake host (`mcp/test/fake-host.ts`, a real socket server speaking the generated codecs, plain or TLS): every tool, paging and budgets, the scrubbing of untrusted text, error mapping, the admin refusal, the rate limit, the golden tool list, the `--connect` and `--launch` backends (the latter with a fake child process), and the real bundle as a child process over stdio.
+**MCP tests** (`mcp/test/*.test.ts`, bundled by `scripts/bundle-mcp.js --tests` to `dist/mcp-test` and run by `npm test` with `node --test`): the bridge driven by the SDK's own MCP client (both protocol eras) against a fake host (`mcp/test/fake-host.ts`, a real socket server speaking the generated codecs, plain or TLS): every tool, paging and budgets, the scrubbing of untrusted text, error mapping, the admin refusal, the rate limit, the write tools against the fake host's editable world (`mcp/test/write-host.ts`: edit groups, history, scenes), the irreversible-operation gate in both protocol eras, the golden tool list, the `--connect` and `--launch` backends (the latter with a fake child process), and the real bundle as a child process over stdio.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs `npm ci`, the type check and `npm test` on every push to master and every pull request, and `npm test` again on Windows (where the engine runs, and where the launcher's pipes and kill differ). Another job checks out the engine at the commit pinned in `engine-ref.txt`, regenerates `src/protocol/protocol.generated.ts` and `src/protocol/test-vectors.json`, and fails if either differs from the committed file. When the engine's protocol changes, regenerate (below) and update `engine-ref.txt` to the engine commit you generated from, in the same PR.
 

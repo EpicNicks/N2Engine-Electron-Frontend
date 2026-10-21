@@ -35,6 +35,7 @@ export function checkAssetPath(raw: string): string {
     if (segment === "." || segment === "..") throw refused("it has a . or .. segment")
     if (/[. ]$/.test(segment)) throw refused("a segment ends with a dot or a space")
   }
+  if (/\.meta$/i.test(rest)) throw refused(".meta files belong to the editor and are not assets")
   const first = segments[0].toLowerCase()
   if (first === "editor" || (first === "assets" && (segments[1] ?? "").toLowerCase() === "editor")) {
     throw refused("the editor folder (editor extensions) is never writable")

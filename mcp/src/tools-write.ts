@@ -387,11 +387,7 @@ function checkText(text: string, tool: string): void {
   if (textBytes(text) > limits.WriteTextMaxBytes) throw invalidArgument(`${tool}: the text is ${textBytes(text)} bytes; the most is ${limits.WriteTextMaxBytes}.`)
 }
 
-function checkTextPath(path: string): string {
-  const checked = checkAssetPath(path)
-  if (/\.meta$/i.test(checked)) throw new BridgeError("path_refused", "The path is not allowed: .meta files are not text assets.", "Choose another path.")
-  return checked
-}
+const checkTextPath = checkAssetPath
 
 const writeFileData = z.object({
   path: z.string(),
