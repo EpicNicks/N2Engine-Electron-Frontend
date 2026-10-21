@@ -517,6 +517,7 @@ describe("Ctrl+S in the assets panel and the text editor", () => {
   test("in the import settings field Ctrl+S applies the edited settings; unedited, it does nothing; neither saves the scene", async () => {
     const t = await renderAssets()
     await act(() => t.assets.select("res://hero.png"))
+    act(() => t.assets.setSettingsView("json")) // a texture shows its typed form first
     const field = (await screen.findByLabelText("Import settings")) as HTMLTextAreaElement
     assert.equal(field.closest("[data-keymap-scope]")!.getAttribute("data-keymap-scope"), "assets")
     assert.equal(press(field, "s", { ctrlKey: true }), false)
@@ -524,6 +525,16 @@ describe("Ctrl+S in the assets panel and the text editor", () => {
     assert.deepEqual(t.imports, [], "nothing was edited")
     act(() => t.assets.editSettings('{"compress": true}'))
     assert.equal(press(field, "s", { ctrlKey: true }), false)
+    await waitFor(() => assert.deepEqual(t.imports, ["res://hero.png"]))
+    assert.equal(t.calls.length, 0)
+  })
+
+  test("in a field of the typed import settings form Ctrl+S applies the settings, not the scene", async () => {
+    const t = await renderAssets()
+    await act(() => t.assets.select("res://hero.png"))
+    const filter = (await screen.findByLabelText("Filter")) as HTMLSelectElement
+    act(() => t.assets.editSettingField("filter", "nearest"))
+    assert.equal(press(filter, "s", { ctrlKey: true }), false)
     await waitFor(() => assert.deepEqual(t.imports, ["res://hero.png"]))
     assert.equal(t.calls.length, 0)
   })
