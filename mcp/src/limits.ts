@@ -72,3 +72,42 @@ export const MaxJournalEntries = 4000
 export const MaxUndoSteps = 20
 /** Edit group labels are cut to this many bytes by the host */
 export const EditLabelBytes = 100
+
+// ===== play budgets (design 4.5, MCP3) =====
+
+/** Frames one n2_play_control step or one n2_play_script step op may run (the host takes up to 1000 per Step) */
+export const MaxStepFramesPerCall = 600
+/** A step runs as Step commands of at most this many frames, with progress and a cancellation check between them */
+export const StepChunkFrames = 100
+/** Game frames one agent session may step */
+export const MaxPlayFramesPerSession = 20000
+/** Play screenshots (n2_play_observe and n2_play_script) one agent session may take */
+export const MaxPlayScreenshotsPerSession = 50
+/** Input events in one n2_play_input call or one script input op */
+export const MaxInputEventsPerCall = 256
+/** Ops in one n2_play_script, its screenshots, its frames in all, and the long side of its pictures */
+export const MaxScriptOps = 50
+export const MaxScriptScreenshots = 4
+export const MaxScriptFrames = 3000
+export const ScriptScreenshotMaxSide = 1024
+/** All the PNGs of one result together: bytes */
+export const MaxResultPngBytes = 6 * 1024 * 1024
+/** Entities n2_play_observe reads from the game in one call */
+export const MaxObservedEntities = 8
+/** Log lines n2_play_observe returns, by default and at most */
+export const ObserveDefaultLines = 50
+export const ObserveMaxLines = 200
+
+// ===== resources and subscriptions (design 3.6, MCP3) =====
+
+/** Resource URIs watched at once (resources/subscribe and subscriptions/listen together); more are refused */
+export const MaxWatchedUris = 32
+/** subscriptions/listen streams one connection may hold open */
+export const MaxListenSubscriptions = 8
+/** How often the host's events are polled while something is watched, and after a failed poll */
+export const WatchPollMs = 500
+export const WatchRetryMs = 5000
+/** n2://console is announced at most this often (design: debounced 1 s) */
+export const ConsoleDebounceMs = 1000
+/** Lines n2://console holds */
+export const ConsoleResourceLines = 200

@@ -6,6 +6,7 @@ import { normaliseFingerprint } from "../../src/protocol/fingerprint"
 import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs, MaxWritesPerSession } from "./limits"
 import { ReadTools } from "./tools"
 import { WriteToolNames } from "./tools-write"
+import { PlayToolNames } from "./play"
 import { BridgeName, BridgeVersion } from "./version"
 
 export class CliError extends Error {
@@ -68,6 +69,7 @@ Usage:
 Backends:
   --launch <projectPath>   Start a host of this bridge's own for the project (loopback, a throwaway editor-role token).
                            The host is found with --host-path, else the ${HostPathEnv} environment variable.
+                           Only this backend has the play tools (n2_play_*): the game is a second host it starts.
   --connect <host:port>    Connect to a running host over TLS. --fingerprint (the certificate's SHA-256, 64 hex digits)
                            is required: there is no trust on first use. The token comes from the environment variable
                            named by --token-env, or from the file --token-file (on POSIX not readable by group or others).
@@ -83,7 +85,7 @@ Options:
                            It is the operator's consent: nothing an agent sends can stand in for it. Without it such an
                            operation needs the client's confirmation (elicitation), and is refused when the client has none.
   --max-writes <n>         Host write commands one agent session may make (default ${MaxWritesPerSession}).
-  --write-tools <a,b,...>  List only these write tools (names as n2_create_entity; the others are not listed).
+  --write-tools <a,b,...>  List only these write and play tools (names as n2_create_entity; the others are not listed).
   --disable-tools <a,b>    Never list these tools, read or write.
   --keep-journal           Keep the folder with the backups of overwritten files when the bridge exits (default: delete it).
   --busy-wait <ms>         How long to wait before one more try when the host is busy (default ${DefaultBusyWaitMs}, at most ${MaxBusyWaitMs}).
@@ -171,10 +173,10 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
         continue
       }
       case "--write-tools":
-        writeTools = parseToolList(takeValue(args, i++, arg), arg, [...WriteToolNames])
+        writeTools = parseToolList(takeValue(args, i++, arg), arg, [...WriteToolNames, ...PlayToolNames])
         continue
       case "--disable-tools":
-        disableTools = parseToolList(takeValue(args, i++, arg), arg, [...ReadTools.map((t) => t.name), ...WriteToolNames])
+        disableTools = parseToolList(takeValue(args, i++, arg), arg, [...ReadTools.map((t) => t.name), ...WriteToolNames, ...PlayToolNames])
         continue
       case "--launch":
         launch = takeValue(args, i++, arg)

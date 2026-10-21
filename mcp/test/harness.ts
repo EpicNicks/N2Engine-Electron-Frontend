@@ -2,12 +2,12 @@
 // connects to the fake host over a plain loopback socket here (the real --connect backend, with TLS and a pinned
 // fingerprint, is tested in connect-backend.test.ts).
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
-import { serveStdio } from "@modelcontextprotocol/server/stdio"
 import { Bridge, type BridgeOptions } from "../src/bridge"
 import { EngineClient } from "../../src/protocol/engine-client"
 import { LaunchUser, ClientName, type HostConnector } from "../src/host"
 import { Scrubber } from "../src/scrub"
-import { createServer } from "../src/server"
+import type { ResourceWatch } from "../src/resources"
+import { serveBridge, type ServeOptions } from "../src/server"
 import { FakeHost, type FakeHostOptions } from "./fake-host"
 
 export const TestToken = "test-token-0123456789abcdef-SECRET"
@@ -34,6 +34,8 @@ export interface Harness {
   bridge: Bridge
   scrubber: Scrubber
   client: Client
+  /** The connection's resource watch */
+  watch: ResourceWatch
   logs: string[]
   /** The questions the client was asked to show the person (elicitation), in order */
   asked: string[]
@@ -62,6 +64,8 @@ export interface HarnessOptions {
   answer?: { action: "accept" | "decline" | "cancel"; proceed?: boolean } | ((message: string) => { action: "accept" | "decline" | "cancel"; proceed?: boolean })
   /** A host that is already running (shared between harnesses) */
   existingHost?: FakeHost
+  /** The resource watch's timings */
+  watch?: ServeOptions["watch"]
 }
 
 const open: Harness[] = []
@@ -86,7 +90,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     ...options.bridge,
   })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
-  const served = serveStdio(() => createServer(bridge), { transport: serverSide })
+  const served = serveBridge(bridge, { transport: serverSide, watch: options.watch })
   const asked: string[] = []
   const client = new Client(
     { name: "test-client", version: "0" },
@@ -109,6 +113,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     bridge,
     scrubber,
     client,
+    watch: served.watch,
     logs,
     asked,
     async call(name, args = {}) {

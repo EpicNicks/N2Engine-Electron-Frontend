@@ -2,13 +2,12 @@
 // stderr, scrubbed (the access token and the host's paths never appear). The host is reached lazily, on the first
 // tool call, so a client that only probes the server (server/discover, tools/list) neither holds the host's one session
 // nor starts a host.
-import { serveStdio } from "@modelcontextprotocol/server/stdio"
 import { Bridge } from "./bridge"
 import { CliError, parseArgs, readToken, Usage, type Cli } from "./cli"
 import { connectConnector, launchConnector, type HostConnector } from "./host"
 import type { Policy } from "./policy"
 import { Scrubber } from "./scrub"
-import { createServer } from "./server"
+import { serveBridge } from "./server"
 import { SessionManager, createBackupStore } from "./session"
 import { BridgeName, BridgeVersion } from "./version"
 
@@ -79,8 +78,12 @@ function main(): void {
     busyWaitMs: cli.busyWaitMs,
     callTimeoutMs: cli.callTimeoutMs,
     log,
+    // The play tools: a game of the bridge's own, from the same host, project and renderer (--launch only, design M9)
+    ...(cli.mode === "launch"
+      ? { play: { hostPath: cli.hostPath, projectPath: cli.projectPath, renderer: cli.renderer, readyTimeoutMs: cli.readyTimeoutMs } }
+      : {}),
   })
-  const handle = serveStdio(() => createServer(bridge), { onerror: (e) => log(`transport error: ${e.message}`) })
+  const handle = serveBridge(bridge, { onerror: (e) => log(`transport error: ${e.message}`) })
   log(`${BridgeVersion} serving on stdio (${cli.mode})`)
 
   let closing = false
