@@ -10,6 +10,7 @@
 // - forgets them when the connection goes (the host ends a group its client left open when the connection closes and
 //   at the next Hello).
 // No DOM: it is given the page's engine API or a fake, so it is unit tested in Node.
+import { signal } from "@preact/signals-core"
 import type { EngineApi } from "../shared/api"
 
 type Engine = Pick<EngineApi, "isConnected" | "beginEditGroup" | "endEditGroup">
@@ -24,7 +25,16 @@ const NoGroupOpen = /no edit group is open/i
 
 export class EditGroups {
   /** The groups the host accepted and this client has not ended, innermost last */
-  private opened: GroupHandle[] = []
+  private openedHandles: GroupHandle[] = []
+  /** How many groups are open, as a signal: the history panel is disabled while one is */
+  readonly openCount = signal(0)
+  private get opened(): GroupHandle[] {
+    return this.openedHandles
+  }
+  private set opened(handles: GroupHandle[]) {
+    this.openedHandles = handles
+    this.openCount.value = handles.length
+  }
   private nextHandle = 1
   /** Counts connections that ended: an answer for an earlier one says nothing about the current host */
   private epoch = 0
@@ -76,7 +86,7 @@ export class EditGroups {
       // The connection ended while it was being answered: that host's group was closed with it
       if (epoch !== this.epoch) return null
       const handle = this.nextHandle++
-      this.opened.push(handle)
+      this.opened = [...this.opened, handle]
       return handle
     })
   }
