@@ -1,5 +1,5 @@
 // A fake page for the extensions state (extensions-state.ts): an engine that answers ListEditorExtensions, GetEditorUi,
-// ReloadEditorExtensions and InvokeMenuItem as the test says, signals for the connection and the selection, and every
+// ReloadEditorExtensions, InvokeMenuItem and InvokeInspectorAction as the test says, signals for the connection and the selection, and every
 // step of a run recorded in `log` in the order it happened. Shared by the Node tests and the DOM tests.
 import { signal, type Signal } from "@preact/signals-core"
 import type { FieldSchema } from "../protocol/protocol.generated"
@@ -9,6 +9,8 @@ import type {
   ExtensionsInfo,
   ExtensionsResult,
   ExtensionsUi,
+  InspectorButton,
+  InspectorSection,
   InvokeResult,
 } from "../protocol/extensions"
 import type { JsonObject, ServerInfo } from "../shared/api"
@@ -35,6 +37,16 @@ export function field(name: string, kind: string, over: Partial<FieldSchema> = {
   return { name, displayName: name, kind, typeName: kind === "Int" ? "int" : kind === "Float" ? "float" : kind, hidden: false, readOnly: false, ...over }
 }
 
+/** An inspector button as the host declares it */
+export function inspectorButton(id: string, label: string, over: Partial<InspectorButton> = {}): InspectorButton {
+  return { id, label, minRole: "editor", ...over }
+}
+
+/** An inspector section for a component type, with the host's defaults */
+export function inspectorSection(componentType: string, over: Partial<InspectorSection> = {}): InspectorSection {
+  return { componentType, extension: "Align Tools", label: componentType + " tools", fields: [], buttons: [], ...over }
+}
+
 export function summary(over: Partial<ExtensionSummary> = {}): ExtensionSummary {
   return {
     id: "AlignTools.lua",
@@ -57,7 +69,7 @@ export function invokeResult(over: Partial<InvokeResult["result"]> = {}): Invoke
 
 export function serverInfo(over: Partial<ServerInfo> = {}): ServerInfo {
   return {
-    protocolVersion: "1.15.0",
+    protocolVersion: "1.16.0",
     engineVersion: "1.0.0",
     capabilities: ["editorExtensions"],
     projectLoaded: true,
@@ -75,6 +87,11 @@ export interface FakeExtensions {
   /** What InvokeMenuItem answers (a function sees the call) */
   invokeAnswer: ExtensionsResult<InvokeResult> | ((call: InvokeCall) => ExtensionsResult<InvokeResult> | Promise<ExtensionsResult<InvokeResult>>)
   invokes: InvokeCall[]
+  /** What InvokeInspectorAction answers (a function sees the call) */
+  inspectorAnswer:
+    | ExtensionsResult<InvokeResult>
+    | ((call: InspectorCall) => ExtensionsResult<InvokeResult> | Promise<ExtensionsResult<InvokeResult>>)
+  inspectorInvokes: InspectorCall[]
   /** Calls to the engine, and every step of a run, in order */
   log: string[]
   connected: Signal<boolean>
@@ -98,6 +115,13 @@ export interface FakeExtensions {
   hooks: { onForm: (() => void) | null }
 }
 
+export interface InspectorCall {
+  componentId: string
+  actionId: string
+  params: JsonObject
+  uiRevision: number
+}
+
 export interface InvokeCall {
   itemId: string
   selection: string[]
@@ -109,6 +133,7 @@ export interface InvokeCall {
 export function fakeExtensions(
   over: {
     items?: ExtensionMenuItem[]
+    sections?: InspectorSection[]
     enabled?: boolean
     info?: ServerInfo | null
     role?: HostRole | null
@@ -127,12 +152,14 @@ export function fakeExtensions(
   const fake = {
     host: {
       info: { enabled: over.enabled ?? true, uiRevision: 4, extensions: over.extensions ?? [summary({ itemCount: items.length })] },
-      ui: { uiRevision: 4, menuItems: items },
+      ui: { uiRevision: 4, menuItems: items, inspectorSections: over.sections ?? [] } as ExtensionsUi,
       listError: null as string | null,
       reloadAnswer: null as ExtensionsResult<ExtensionsInfo> | null,
     },
     invokeAnswer: { status: "ok", value: invokeResult() } as FakeExtensions["invokeAnswer"],
     invokes: [] as InvokeCall[],
+    inspectorAnswer: { status: "ok", value: invokeResult() } as FakeExtensions["inspectorAnswer"],
+    inspectorInvokes: [] as InspectorCall[],
     log,
     connected,
     info,
@@ -173,6 +200,12 @@ export function fakeExtensions(
         const call = { itemId, selection, params, uiRevision }
         fake.invokes.push(call)
         return typeof fake.invokeAnswer === "function" ? await fake.invokeAnswer(call) : fake.invokeAnswer
+      },
+      invokeInspectorAction: async (componentId, actionId, params, uiRevision) => {
+        log.push("invokeInspector")
+        const call = { componentId, actionId, params, uiRevision }
+        fake.inspectorInvokes.push(call)
+        return typeof fake.inspectorAnswer === "function" ? await fake.inspectorAnswer(call) : fake.inspectorAnswer
       },
     },
     connected,

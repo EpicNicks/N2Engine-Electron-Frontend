@@ -97,6 +97,8 @@ async function render(
     scene: { selectedId: signal<string | null>(primary) },
     hierarchy: { selection, deleteSelected: async () => {} } as never,
     inspector,
+    // The panel asks the extensions for the sections of each component: there are none here
+    extensions: { sectionsFor: () => [] } as never,
   })
   return { ...fake, inspector, reported, errors, view, user: userEvent.setup() }
 }
@@ -234,6 +236,7 @@ describe("the inspector's transform row (one object)", () => {
       scene: { selectedId: signal<string | null>("e1") },
       hierarchy: { selection: signal<Selection>({ ids: new Set(["e1"]), anchor: "e1", primary: "e1" }), deleteSelected: async () => {} } as never,
       inspector,
+      extensions: { sectionsFor: () => [] } as never,
     })
     assert.ok(screen.getByText("This object has no transform"))
   })

@@ -138,7 +138,7 @@ describe("the golden vectors and the generated protocol", () => {
   test("the client is at 1.15.0 and the vectors are the same version", () => {
     const vectorsPath = path.join(__dirname, "..", "..", "src", "protocol", "test-vectors.json")
     const vectors = JSON.parse(fs.readFileSync(vectorsPath, "utf-8")) as { protocolVersion: string }
-    assert.equal(PROTOCOL_VERSION, "1.15.0")
+    assert.equal(PROTOCOL_VERSION, "1.16.0")
     assert.equal(vectors.protocolVersion, PROTOCOL_VERSION)
   })
 
@@ -285,7 +285,7 @@ describe("parseExtensionsUi", () => {
 
   test("a shape that is not an object is null, and nothing throws", () => {
     for (const value of [null, undefined, 3, "x", [], true]) assert.equal(parseExtensionsUi(value), null)
-    assert.deepEqual(parseExtensionsUi({ menuItems: {} }), { uiRevision: 0, menuItems: [] })
+    assert.deepEqual(parseExtensionsUi({ menuItems: {} }), { uiRevision: 0, menuItems: [], inspectorSections: [] })
   })
 })
 

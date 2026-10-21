@@ -14,7 +14,7 @@ export const MaxGroupDepth = 6
 /** A control character in a label becomes "?" (the host already does this for what it logs) */
 const Control = /[\u0000-\u001f\u007f]/g
 
-function clean(text: string): string {
+export function clean(text: string): string {
   const flat = text.replace(Control, "?")
   return flat.length > MaxLabelLength ? flat.slice(0, MaxLabelLength) + "..." : flat
 }

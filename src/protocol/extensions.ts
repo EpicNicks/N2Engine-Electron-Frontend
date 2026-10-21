@@ -28,8 +28,25 @@ export function supportsInvokeMenuItem(capabilities: unknown, protocolVersion: u
 }
 
 /**
+ * InvokeInspectorAction (since 1.16.0) has no capability of its own either: a 1.14 or 1.15 host has "editorExtensions"
+ * and answers the command with an unknown-command Error. So running a button needs the capability and a host of at
+ * least this minor.
+ */
+export const InvokeInspectorActionMinMinor = 16
+
+/** Whether a host with these ServerInfo capabilities and protocol version has InvokeInspectorAction (never throws) */
+export function supportsInvokeInspectorAction(capabilities: unknown, protocolVersion: unknown): boolean {
+  if (!hasCapability(capabilities, EditorExtensionsCapability)) return false
+  const version = typeof protocolVersion === "string" ? parseProtocolVersion(protocolVersion) : null
+  return (
+    version !== null && (version.major > 1 || (version.major === 1 && version.minor >= InvokeInspectorActionMinMinor))
+  )
+}
+
+/**
  * The ErrorCoded codes that concern extensions (the code is the contract, never the message): the first three since
- * 1.14.0 (answered by InvokeMenuItem since 1.15.0), staleUiRevision and editGroupOpen since 1.15.0
+ * 1.14.0 (answered by InvokeMenuItem since 1.15.0 and InvokeInspectorAction since 1.16.0), staleUiRevision and
+ * editGroupOpen since 1.15.0 (InvokeInspectorAction answers them since 1.16.0)
  */
 export const ExtensionErrorCodes = {
   extensionsDisabled: "extensionsDisabled",
@@ -130,10 +147,32 @@ export interface ExtensionMenuItem {
   form?: { fields: FieldSchema[]; defaults: Record<string, unknown> }
 }
 
-/** GetEditorUi's answer (inspectorSections is reserved and always empty in 1.14.0, so it is not modelled) */
+/** A button of an inspector section (since 1.16.0); id is unique across the host among the inspector buttons */
+export interface InspectorButton {
+  id: string
+  /** UNTRUSTED text: show it as text */
+  label: string
+  minRole: MinRole
+  form?: { fields: FieldSchema[]; defaults: Record<string, unknown> }
+}
+
+/**
+ * An inspector section an extension registered for a component type (since 1.16.0): shown under each component of that
+ * type, with read-only fields (read from the component's values by name) and buttons. Every string is UNTRUSTED text.
+ */
+export interface InspectorSection {
+  componentType: string
+  extension: string
+  label: string
+  fields: FieldSchema[]
+  buttons: InspectorButton[]
+}
+
+/** GetEditorUi's answer (inspectorSections is empty from a host before 1.16.0) */
 export interface ExtensionsUi {
   uiRevision: number
   menuItems: ExtensionMenuItem[]
+  inspectorSections: InspectorSection[]
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -239,7 +278,69 @@ export function parseExtensionsUi(value: unknown): ExtensionsUi | null {
       menuItems.push(item)
     }
   }
-  return { uiRevision: count(value.uiRevision), menuItems }
+  return { uiRevision: count(value.uiRevision), menuItems, inspectorSections: parseSections(value.inspectorSections) }
+}
+
+function parseFields(value: unknown, what: string): FieldSchema[] {
+  const fields: FieldSchema[] = []
+  if (!Array.isArray(value)) return fields
+  for (const [i, field] of value.entries()) {
+    try {
+      fields.push(parseFieldSchema(field, `${what} ${i}`))
+    } catch {
+      // A field that can't be shown is left out, not a reason to drop the section
+    }
+  }
+  return fields
+}
+
+function parseButton(value: unknown): InspectorButton | null {
+  if (!isObject(value)) return null
+  const id = text(value.id)
+  if (id === "") return null
+  const button: InspectorButton = {
+    id,
+    label: text(value.label, id),
+    // An unknown role is the stricter one: the host enforces the role anyway, so this only hides, never grants
+    minRole: value.minRole === "editor" ? "editor" : "admin",
+  }
+  const form = parseForm(value.form)
+  if (form) button.form = form
+  return button
+}
+
+function parseSection(value: unknown, seenButtons: Set<string>): InspectorSection | null {
+  if (!isObject(value)) return null
+  const componentType = text(value.componentType)
+  // A section with no component type can't be placed under anything
+  if (componentType === "") return null
+  const buttons: InspectorButton[] = []
+  for (const entry of Array.isArray(value.buttons) ? value.buttons : []) {
+    const button = parseButton(entry)
+    // Button ids are unique across the host: a repeated one is ignored
+    if (button && !seenButtons.has(button.id)) {
+      seenButtons.add(button.id)
+      buttons.push(button)
+    }
+  }
+  return {
+    componentType,
+    extension: text(value.extension),
+    label: text(value.label, componentType),
+    fields: parseFields(value.fields, "section field"),
+    buttons,
+  }
+}
+
+function parseSections(value: unknown): InspectorSection[] {
+  const sections: InspectorSection[] = []
+  if (!Array.isArray(value)) return sections
+  const seenButtons = new Set<string>()
+  for (const entry of value) {
+    const section = parseSection(entry, seenButtons)
+    if (section) sections.push(section)
+  }
+  return sections
 }
 
 /** The most objects InvokeMenuItem takes in its selection (the host refuses more) */
@@ -257,6 +358,25 @@ export function checkInvokeArguments(itemId: unknown, selection: unknown, params
   if (!Array.isArray(selection)) return "selection must be an array of object UUIDs"
   if (selection.length > MaxInvokeSelection) return `selection has more than ${MaxInvokeSelection} objects`
   if (!selection.every((id) => typeof id === "string" && UuidPattern.test(id))) return "selection must hold only UUID strings"
+  if (!isObject(params)) return "params must be a JSON object"
+  if (typeof uiRevision !== "number" || !Number.isInteger(uiRevision) || uiRevision < 0 || uiRevision > 0xffffffff) {
+    return "uiRevision must be an unsigned 32-bit integer"
+  }
+  return null
+}
+
+/**
+ * Why InvokeInspectorAction's arguments would be refused (null when they would not be): checked before sending, like
+ * checkInvokeArguments. componentId is the UUID of the component the inspector shows.
+ */
+export function checkInspectorArguments(
+  componentId: unknown,
+  actionId: unknown,
+  params: unknown,
+  uiRevision: unknown
+): string | null {
+  if (typeof componentId !== "string" || !UuidPattern.test(componentId)) return "componentId must be a UUID string"
+  if (typeof actionId !== "string" || actionId === "" || actionId.includes("\0")) return "actionId must be a non-empty string"
   if (!isObject(params)) return "params must be a JSON object"
   if (typeof uiRevision !== "number" || !Number.isInteger(uiRevision) || uiRevision < 0 || uiRevision > 0xffffffff) {
     return "uiRevision must be an unsigned 32-bit integer"

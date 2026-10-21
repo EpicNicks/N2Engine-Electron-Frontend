@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.15.0";
+export const PROTOCOL_VERSION = "1.16.0";
 
 // ==================== Types ====================
 
@@ -232,10 +232,25 @@ export interface MenuItemInfo {
   form?: MenuForm;
 }
 
+export interface InspectorButtonInfo {
+  id: string;
+  label: string;
+  minRole: string;
+  form?: MenuForm;
+}
+
+export interface InspectorSectionInfo {
+  componentType: string;
+  extension: string;
+  label: string;
+  fields: FieldSchema[];
+  buttons: InspectorButtonInfo[];
+}
+
 export interface EditorUiInfo {
   uiRevision: number;
   menuItems: MenuItemInfo[];
-  inspectorSections: unknown[];
+  inspectorSections: InspectorSectionInfo[];
 }
 
 export interface ExtensionResultInfo {
@@ -303,6 +318,7 @@ export const CommandType = {
   GetEditorUi: 0x81,
   ReloadEditorExtensions: 0x84,
   InvokeMenuItem: 0x82,
+  InvokeInspectorAction: 0x83,
   Undo: 0x90,
   Redo: 0x91,
   BeginEditGroup: 0x92,
@@ -422,6 +438,7 @@ export const CommandResponse = {
   GetEditorUi: "EditorUi",
   ReloadEditorExtensions: "EditorExtensions",
   InvokeMenuItem: "ExtensionResult",
+  InvokeInspectorAction: "ExtensionResult",
   Undo: "EditResult",
   Redo: "EditResult",
   BeginEditGroup: "Ok",
@@ -640,6 +657,13 @@ export interface SetStartupSceneRequest {
 export interface InvokeMenuItemRequest {
   itemId: string;
   selection: unknown;
+  params: unknown;
+  uiRevision: number;
+}
+
+export interface InvokeInspectorActionRequest {
+  componentId: string;
+  actionId: string;
   params: unknown;
   uiRevision: number;
 }
@@ -1811,6 +1835,26 @@ export function decodeInvokeMenuItemRequest(payload: Uint8Array): InvokeMenuItem
   return { itemId, selection, params, uiRevision };
 }
 
+/** InvokeInspectorAction's request payload (without the frame header) */
+export function encodeInvokeInspectorActionRequest(value: InvokeInspectorActionRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.componentId);
+  writer.string(value.actionId);
+  writer.json(value.params);
+  writer.u32(value.uiRevision);
+  return writer.finish();
+}
+
+/** Reads InvokeInspectorAction's request payload; bytes after the last field are ignored */
+export function decodeInvokeInspectorActionRequest(payload: Uint8Array): InvokeInspectorActionRequest {
+  const reader = new ProtocolReader(payload);
+  const componentId = reader.string();
+  const actionId = reader.string();
+  const params = reader.json() as unknown;
+  const uiRevision = reader.u32();
+  return { componentId, actionId, params, uiRevision };
+}
+
 /** BeginEditGroup's request payload (without the frame header) */
 export function encodeBeginEditGroupRequest(value: BeginEditGroupRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2570,6 +2614,7 @@ export const RequestCodecs = {
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
   InvokeMenuItem: { encode: encodeInvokeMenuItemRequest, decode: decodeInvokeMenuItemRequest },
+  InvokeInspectorAction: { encode: encodeInvokeInspectorActionRequest, decode: decodeInvokeInspectorActionRequest },
   BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },
   WritePlaySnapshot: { encode: encodeWritePlaySnapshotRequest, decode: decodeWritePlaySnapshotRequest },
   SetPaused: { encode: encodeSetPausedRequest, decode: decodeSetPausedRequest },

@@ -209,6 +209,17 @@ export interface EngineCommands {
     params: JsonObject,
     uiRevision: number
   ): Promise<ExtensionsResult<InvokeResult>>
+  /**
+   * Runs a button of an extension's inspector section on one component as one undo step (protocol 1.16.0):
+   * componentId is the component's UUID, actionId the button's id, params the button's form values, uiRevision the one
+   * of the GetEditorUi the button came from. Never rejects.
+   */
+  invokeInspectorAction(
+    componentId: string,
+    actionId: string,
+    params: JsonObject,
+    uiRevision: number
+  ): Promise<ExtensionsResult<InvokeResult>>
 }
 
 export type EngineCommandName = keyof EngineCommands
@@ -288,6 +299,7 @@ export const EngineCommandArgs = {
   getEditorUi: [],
   reloadEditorExtensions: [],
   invokeMenuItem: ["string", "stringArray", "jsonObject", "uint32"],
+  invokeInspectorAction: ["string", "string", "jsonObject", "uint32"],
 } as const satisfies { readonly [K in EngineCommandName]: readonly ArgKind[] }
 
 export const EngineCommandNames = Object.keys(EngineCommandArgs) as EngineCommandName[]

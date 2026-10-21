@@ -46,11 +46,13 @@ import {
   ExtensionsResult,
   ExtensionsUi,
   InvokeResult,
+  checkInspectorArguments,
   checkInvokeArguments,
   extensionErrorKindOf,
   hasCapability,
   parseExtensionsInfo,
   parseInvokeResult,
+  supportsInvokeInspectorAction,
   supportsInvokeMenuItem,
   parseExtensionsUi,
 } from "./extensions"
@@ -847,6 +849,36 @@ export class EngineClient {
     return this.extensionCommand(Commands.InvokeMenuItem, (r) => parseInvokeResult(r), {
       itemId,
       selection,
+      params,
+      uiRevision,
+    })
+  }
+
+  /**
+   * Runs one button of an inspector section on one component (protocol 1.16.0; a Write command, edit-only), exactly as
+   * invokeMenuItem runs an item: one undo step, the same result and the same error kinds. componentId is the UUID of the
+   * component the inspector shows, actionId the button's id, params the button's form values ({} for none), uiRevision
+   * the one of the GetEditorUi the button came from. The caller settles its pending edits and closes its edit groups
+   * first. "unsupported", without sending anything, when the host lacks the editorExtensions capability or speaks a
+   * protocol before 1.16 (a 1.14 or 1.15 host has the capability but not the command). Arguments of the wrong shape are
+   * an "invalid" error, also unsent. Never throws.
+   */
+  invokeInspectorAction(
+    componentId: string,
+    actionId: string,
+    params: Record<string, unknown>,
+    uiRevision: number
+  ): Promise<ExtensionsResult<InvokeResult>> {
+    if (!supportsInvokeInspectorAction(this.serverInfo?.capabilities, this.serverInfo?.protocolVersion)) {
+      return Promise.resolve({ status: "unsupported" })
+    }
+    const problem = checkInspectorArguments(componentId, actionId, params, uiRevision)
+    if (problem !== null) {
+      return Promise.resolve({ status: "error", kind: "invalid", message: `InvokeInspectorAction: ${problem}` })
+    }
+    return this.extensionCommand(Commands.InvokeInspectorAction, (r) => parseInvokeResult(r), {
+      componentId,
+      actionId,
       params,
       uiRevision,
     })
