@@ -12,6 +12,8 @@ import { DefaultPolicy, type Policy } from "../src/policy"
 import { WriteTools, WriteToolNames } from "../src/tools-write"
 import { ReadTools } from "../src/tools"
 import { checkAssetPath } from "../src/paths"
+import { Session } from "../src/session"
+import { MaxJournalEntries } from "../src/limits"
 import { FakeHost, Refusal, Silence } from "./fake-host"
 import { installWrites, FakeWorld } from "./write-host"
 import { TestToken, closeAllHarnesses, everything, plainConnector, startHarness, textOf, type Harness } from "./harness"
@@ -346,6 +348,31 @@ describe("budgets", () => {
     await h.call("n2_write_text_asset", { path: "res://y.txt", text: "y" })
     assert.equal(code(await h.call("n2_write_text_asset", { path: "res://z.txt", text: "z" })), "budget_exceeded")
     await h.close()
+  })
+
+  test("a same-label step left by an earlier bridge run is not undone as this call's", async () => {
+    const { h, world } = await setup()
+    const id = data(await h.call("n2_create_entity", { name: "A" })).entityId
+    // The next call is the bridge's step #2; an earlier run left a step with that very label on top
+    world.humanEdit("AI: n2_set_properties #2", () => undefined)
+    const steps = world.steps.length
+    const cursor = world.cursor
+    const r = await h.call("n2_set_properties", { entityId: "00000000-0000-0000-0000-00000000dead", name: "x" })
+    assert.ok(r.isError, textOf(r))
+    assert.equal(world.steps.length, steps)
+    assert.equal(world.cursor, cursor, "the foreign step stays done")
+    assert.equal(h.host.count("Undo"), 0)
+    assert.ok(id)
+    await h.close()
+  })
+
+  test("a full journal drops the oldest entry without a file backup first", () => {
+    const s = new Session("s", "t", 0, 1_000_000)
+    s.record({ tool: "n2_write_text_asset", summary: "file", stepAdded: false, file: { path: "res://a.txt", created: false } as any }, 0)
+    for (let i = 0; i < MaxJournalEntries + 5; i++) s.record({ tool: "n2_create_entity", summary: `e${i}`, stepAdded: true }, i)
+    assert.equal(s.journal.length, MaxJournalEntries)
+    assert.ok(s.journal.some((e) => e.file?.path === "res://a.txt"), "the backup entry is kept")
+    assert.equal(s.droppedEntries, 6)
   })
 
   test("n2_session_revert still works after the write budget is used up", async () => {
