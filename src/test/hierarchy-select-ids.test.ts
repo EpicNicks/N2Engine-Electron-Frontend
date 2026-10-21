@@ -55,10 +55,11 @@ describe("HierarchyState.selectIds (an extension asked for a selection)", () => 
 
 describe("the forwarded extension commands", () => {
   test("are in the page's command list with their argument kinds", () => {
-    for (const name of ["listEditorExtensions", "getEditorUi", "reloadEditorExtensions", "invokeMenuItem"] as const) {
+    for (const name of ["listEditorExtensions", "getEditorUi", "reloadEditorExtensions", "invokeMenuItem", "invokeInspectorAction"] as const) {
       assert.ok(EngineCommandNames.includes(name), name)
     }
     assert.deepEqual(EngineCommandArgs.invokeMenuItem, ["string", "stringArray", "jsonObject", "uint32"])
+    assert.deepEqual(EngineCommandArgs.invokeInspectorAction, ["string", "string", "jsonObject", "uint32"])
     assert.deepEqual(EngineCommandArgs.listEditorExtensions, [])
   })
 

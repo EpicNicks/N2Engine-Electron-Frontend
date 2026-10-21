@@ -1,10 +1,18 @@
-// Running an extension's menu item, as the editor does it (design lua-editor-extensions 4.3, decision D9): the
+// Running an extension's menu item or inspector button, as the editor does it (design lua-editor-extensions 4.3, decision D9): the
 // editor's own half-finished edits are made real and its edit groups are ended first (the host refuses an item while
 // one is open, and an extension's step must never be merged into a gesture), then the item's confirm question and
-// its parameter form, then InvokeMenuItem. What comes back is shown as text, the objects the item asks to select are
+// its parameter form, then InvokeMenuItem (or, for an inspector button, InvokeInspectorAction). What comes back is shown as text, the objects the item asks to select are
 // selected, and the panels follow the host's events as after an undo. No DOM and no store: it is given the pieces or
 // fakes, so it is unit tested in Node. Everything an extension says (message, warnings, its errors) is untrusted text.
-import type { ExtensionErrorKind, ExtensionMenuItem, ExtensionEdit, ExtensionResult, ExtensionsResult, InvokeResult } from "../protocol/extensions"
+import type {
+  ExtensionErrorKind,
+  ExtensionMenuItem,
+  ExtensionEdit,
+  ExtensionResult,
+  ExtensionsResult,
+  InspectorButton,
+  InvokeResult,
+} from "../protocol/extensions"
 import { MaxInvokeSelection } from "../protocol/extensions"
 import type { JsonObject } from "../shared/api"
 
@@ -19,9 +27,22 @@ export type RunOutcome =
   /** The host refused or the item failed (the failure was reported) */
   | "failed"
 
+/** What a run needs to know of what it runs: a menu item and an inspector button (its label is the title) both fit */
+export type Runnable = Pick<ExtensionMenuItem, "id" | "title" | "confirm" | "form">
+
+/** Where the run was started from: the wording of a refusal differs */
+export type Surface = "menu" | "inspector"
+
+/** An inspector button as something to run */
+export function runnableOf(button: InspectorButton): Runnable {
+  return { id: button.id, title: button.label, form: button.form }
+}
+
 /** What the run needs of the page: each is the real thing in the editor and a fake in tests */
 export interface RunDeps {
   invoke(itemId: string, selection: string[], params: JsonObject, uiRevision: number): Promise<ExtensionsResult<InvokeResult>>
+  /** InvokeInspectorAction: an inspector button, on one component */
+  invokeInspector(componentId: string, actionId: string, params: JsonObject, uiRevision: number): Promise<ExtensionsResult<InvokeResult>>
   /** The selected objects' ids, now */
   selection(): string[]
   /** Why an item can't be run now (read-only, viewer, no scene, ...), or null */
@@ -35,7 +56,7 @@ export interface RunDeps {
   /** The item's confirm question; true for yes */
   confirm(message: string, okLabel: string): Promise<boolean>
   /** The item's form dialog: the checked params, null when cancelled */
-  askForm(item: ExtensionMenuItem): Promise<JsonObject | null>
+  askForm(item: Runnable): Promise<JsonObject | null>
   /** Marks the item (or none) as running, for the spinner and for disabling the menu */
   setRunning(itemId: string | null): void
   /** The host's events are polled and the history read, so the panels show what the item did */
@@ -46,9 +67,9 @@ export interface RunDeps {
   applySelection(ids: string[]): Promise<void>
   /** The editor's own notes in the console, and the result for the notice */
   note(level: "info" | "warn" | "error", message: string): void
-  showResult(item: ExtensionMenuItem, result: ExtensionResult): void
-  /** A failure for the error banner; code is the host's ErrorCoded code when it gave one */
-  fail(what: string, message: string, code?: string): void
+  showResult(item: Pick<Runnable, "title">, result: ExtensionResult): void
+  /** A failure for the error banner; code is the host's ErrorCoded code when it gave one, surface where the run started */
+  fail(what: string, message: string, code?: string, surface?: Surface): void
   /** The menu and the extension list are fetched again (the host's UI changed under the editor) */
   refreshUi(): Promise<void>
 }
@@ -57,12 +78,16 @@ export interface RunDeps {
 export function describeInvokeFailure(
   kind: ExtensionErrorKind,
   hostMessage: string,
-  item: Pick<ExtensionMenuItem, "title">
+  item: Pick<Runnable, "title">,
+  surface: Surface = "menu"
 ): { text: string; refreshUi: boolean; syncScene: boolean } {
   switch (kind) {
     case "staleUi":
       return {
-        text: "The extensions changed since the Tools menu was built, so nothing ran. The menu was refreshed: run the item again if you still want it.",
+        text:
+          surface === "menu"
+            ? "The extensions changed since the Tools menu was built, so nothing ran. The menu was refreshed: run the item again if you still want it."
+            : "The extensions changed since this section was built, so nothing ran. The inspector was refreshed: press the button again if you still want it.",
         refreshUi: true,
         syncScene: false,
       }
@@ -95,7 +120,7 @@ export function describeInvokeFailure(
  */
 export async function runMenuItem(item: ExtensionMenuItem, uiRevision: number, deps: RunDeps): Promise<RunOutcome> {
   const refuse = (message: string): RunOutcome => {
-    deps.fail(item.title, message)
+    deps.fail(item.title, message, undefined, "menu")
     return "refused"
   }
   const blocked = deps.blockedReason()
@@ -105,7 +130,40 @@ export async function runMenuItem(item: ExtensionMenuItem, uiRevision: number, d
   if (selection.length > MaxInvokeSelection) {
     return refuse(`It runs on at most ${MaxInvokeSelection} objects, and ${selection.length} are selected.`)
   }
+  return runAction(item, "menu", deps, (params) => deps.invoke(item.id, selection, params, uiRevision))
+}
 
+/**
+ * Runs one button of an inspector section on one component: the same steps as a menu item (settle, close the groups,
+ * form, the host's call, the result), with InvokeInspectorAction as the call. componentId is the component the inspector
+ * showed when the button was pressed; uiRevision the one of the GetEditorUi the section was built from.
+ */
+export async function runInspectorButton(
+  button: InspectorButton,
+  componentId: string,
+  uiRevision: number,
+  deps: RunDeps
+): Promise<RunOutcome> {
+  const item = runnableOf(button)
+  const blocked = deps.blockedReason()
+  if (blocked !== null) {
+    deps.fail(item.title, `It can't run now: ${blocked}`, undefined, "inspector")
+    return "refused"
+  }
+  return runAction(item, "inspector", deps, (params) => deps.invokeInspector(componentId, button.id, params, uiRevision))
+}
+
+/** The steps both share, from the settled editor to the shown result; send makes the host's call with the form's params */
+async function runAction(
+  item: Runnable,
+  surface: Surface,
+  deps: RunDeps,
+  send: (params: JsonObject) => Promise<ExtensionsResult<InvokeResult>>
+): Promise<RunOutcome> {
+  const refuse = (message: string): RunOutcome => {
+    deps.fail(item.title, message, undefined, surface)
+    return "refused"
+  }
   deps.setRunning(item.id)
   try {
     await deps.settle()
@@ -123,11 +181,17 @@ export async function runMenuItem(item: ExtensionMenuItem, uiRevision: number, d
     const blockedNow = deps.blockedReason()
     if (blockedNow !== null) return refuse(`It can't run now: ${blockedNow}`)
 
-    const answer = await deps.invoke(item.id, selection, params, uiRevision)
-    if (answer.status === "unsupported") return refuse("This host can't run menu items (they need protocol 1.15.0).")
+    const answer = await send(params)
+    if (answer.status === "unsupported") {
+      return refuse(
+        surface === "menu"
+          ? "This host can't run menu items (they need protocol 1.15.0)."
+          : "This host can't run inspector buttons (they need protocol 1.16.0)."
+      )
+    }
     if (answer.status === "error") {
-      const failure = describeInvokeFailure(answer.kind, answer.message, item)
-      deps.fail(item.title, failure.text, answer.code)
+      const failure = describeInvokeFailure(answer.kind, answer.message, item, surface)
+      deps.fail(item.title, failure.text, answer.code, surface)
       deps.note("error", `${item.title}: ${failure.text}`)
       // A failed item took its changes back, and the scene's revision moved there and back: the panels hear of it
       if (failure.syncScene) await deps.syncAfterEdit().catch(() => undefined)

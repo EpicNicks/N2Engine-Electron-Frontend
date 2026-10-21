@@ -8,6 +8,7 @@ import type { EngineApi, ServerInfo } from "../shared/api"
 import {
   EditorExtensionsCapability,
   hasCapability,
+  supportsInvokeInspectorAction,
   supportsInvokeMenuItem,
   type ExtensionMenuItem,
   type ExtensionResult,
@@ -15,9 +16,13 @@ import {
   type ExtensionsInfo,
   type ExtensionsResult,
   type ExtensionsUi,
+  type InspectorButton,
+  type InspectorSection,
 } from "../protocol/extensions"
 import { buildToolsMenu, type MenuContext, type ToolsNode } from "./extension-menu"
-import { runMenuItem, type RunDeps, type RunOutcome } from "./extension-actions"
+import { runInspectorButton, runMenuItem, type RunDeps, type RunOutcome } from "./extension-actions"
+import { buttonAvailability, mayRunButtons, sectionsFor, type ButtonContext } from "./extension-inspector"
+import type { Availability } from "./extension-menu"
 import type { HostRole } from "./store"
 
 /**
@@ -39,7 +44,10 @@ export function runBlockedReason(editor: {
 
 /** What the extensions state needs of the page: signals of the store and the panels, and the run's pieces */
 export interface ExtensionsDeps {
-  engine: Pick<EngineApi, "listEditorExtensions" | "getEditorUi" | "reloadEditorExtensions" | "invokeMenuItem">
+  engine: Pick<
+    EngineApi,
+    "listEditorExtensions" | "getEditorUi" | "reloadEditorExtensions" | "invokeMenuItem" | "invokeInspectorAction"
+  >
   connected: ReadonlySignal<boolean>
   serverInfo: ReadonlySignal<ServerInfo | null>
   /** How many extensionsChanged events arrived (EditorStore.extensionsChangeCount) */
@@ -51,7 +59,7 @@ export interface ExtensionsDeps {
   selection: () => string[]
   componentsOf(id: string): readonly string[] | undefined
   /** The run's pieces (RunDeps) other than the ones this state supplies */
-  run: Omit<RunDeps, "invoke" | "selection" | "blockedReason" | "setRunning" | "showResult" | "refreshUi" | "openGroups">
+  run: Omit<RunDeps, "invoke" | "invokeInspector" | "selection" | "blockedReason" | "setRunning" | "showResult" | "refreshUi" | "openGroups">
 }
 
 /**
@@ -95,6 +103,10 @@ export class ExtensionsState {
   /** The host can run menu items (it speaks protocol 1.15.0 or later, with the capability) */
   readonly canInvoke = computed(() =>
     supportsInvokeMenuItem(this.deps.serverInfo.value?.capabilities, this.deps.serverInfo.value?.protocolVersion)
+  )
+  /** The host can run inspector buttons (it speaks protocol 1.16.0 or later, with the capability) */
+  readonly canInvokeInspector = computed(() =>
+    supportsInvokeInspectorAction(this.deps.serverInfo.value?.capabilities, this.deps.serverInfo.value?.protocolVersion)
   )
   readonly status = computed<ExtensionsStatus>(() => {
     if (!this.deps.connected.value) return "disconnected"
@@ -177,10 +189,15 @@ export class ExtensionsState {
 
   /** The extension an item belongs to, found by id or (when unique) by name; undefined when the list doesn't say */
   extensionOf(item: ExtensionMenuItem): ExtensionSummary | undefined {
+    return this.extensionOfName(item.extension)
+  }
+
+  /** The extension with this id or (when unique) name, as an item or a section names its extension */
+  extensionOfName(name: string): ExtensionSummary | undefined {
     const list = this.info.value?.extensions ?? []
-    const byId = list.find((extension) => extension.id === item.extension)
+    const byId = list.find((extension) => extension.id === name)
     if (byId) return byId
-    const byName = list.filter((extension) => extension.name === item.extension)
+    const byName = list.filter((extension) => extension.name === name)
     return byName.length === 1 ? byName[0] : undefined
   }
 
@@ -203,6 +220,31 @@ export class ExtensionsState {
     return buildToolsMenu(this.ui.value?.menuItems ?? [], this.menuContext())
   }
 
+  /**
+   * The inspector sections to show under a component of this type (none while extensions are off or the host is older
+   * than 1.16.0). A viewer gets the sections too, for their fields (a read), but not their buttons: see mayRunButtons.
+   */
+  sectionsFor(componentType: string): InspectorSection[] {
+    if (this.status.value !== "ready" || !this.canInvokeInspector.value) return []
+    return sectionsFor(this.ui.value?.inspectorSections ?? [], componentType)
+  }
+
+  /** Whether the user's role may run inspector buttons (a Write command: a viewer's buttons are not shown) */
+  readonly mayRunButtons = computed(() => mayRunButtons(this.deps.role.value))
+
+  /** Whether a button of a section can be pressed now, and why not */
+  buttonAvailability(section: InspectorSection, button: InspectorButton): Availability {
+    const ctx: ButtonContext = {
+      role: this.deps.role.value,
+      canInvoke: this.canInvokeInspector.value,
+      blockedReason: this.deps.blockedReason(),
+      openGroups: this.deps.openGroups.value,
+      running: this.running.value !== null,
+      extension: this.extensionOfName(section.extension),
+    }
+    return buttonAvailability(button, ctx)
+  }
+
   /** The revision of the menu the page last built from (what a run sends as uiRevision) */
   get uiRevision(): number {
     return this.ui.value?.uiRevision ?? 0
@@ -211,10 +253,26 @@ export class ExtensionsState {
   /** Runs an item of the menu that was built at uiRevision; resolves with how it ended */
   run(item: ExtensionMenuItem, uiRevision: number): Promise<RunOutcome> {
     if (this.running.value !== null) return Promise.resolve("refused")
+    return runMenuItem(item, uiRevision, this.runDeps())
+  }
+
+  /**
+   * Runs a button of an inspector section on one component (the section was built at uiRevision); resolves with how it
+   * ended. The result is shown in the same notice as a menu item's.
+   */
+  runButton(button: InspectorButton, componentId: string, uiRevision: number): Promise<RunOutcome> {
+    if (this.running.value !== null) return Promise.resolve("refused")
+    return runInspectorButton(button, componentId, uiRevision, this.runDeps())
+  }
+
+  /** The run's pieces: the page's (deps.run), the engine's calls and this state's signals */
+  private runDeps(): RunDeps {
     const deps = this.deps
-    return runMenuItem(item, uiRevision, {
+    return {
       ...deps.run,
       invoke: (itemId, selection, params, revision) => deps.engine.invokeMenuItem(itemId, selection, params, revision),
+      invokeInspector: (componentId, actionId, params, revision) =>
+        deps.engine.invokeInspectorAction(componentId, actionId, params, revision),
       selection: deps.selection,
       blockedReason: deps.blockedReason,
       openGroups: () => deps.openGroups.peek(),
@@ -225,7 +283,7 @@ export class ExtensionsState {
         this.notice.value = { title: shown.title, message: result.message, warnings: result.warnings }
       },
       refreshUi: () => this.refresh(),
-    })
+    }
   }
 
   dismissNotice(): void {

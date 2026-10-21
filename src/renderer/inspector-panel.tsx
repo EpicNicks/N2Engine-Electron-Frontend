@@ -17,6 +17,8 @@ import {
   visibleFields,
 } from "./inspector-fields"
 import { endWhenReleased } from "./edit-groups"
+import { clean } from "./extension-menu"
+import { formatFieldValue } from "./extension-inspector"
 import { Empty, Panel, useApp } from "./ui"
 
 // ==================== The object's own properties and transform ====================
@@ -250,6 +252,60 @@ function SchemaMissing({ type }: { type: string }) {
   return <Empty error>{type} isn't a registered component type, so it can't be edited</Empty>
 }
 
+/**
+ * The inspector sections the project's editor extensions registered for this component's type (protocol 1.16.0): a title,
+ * read-only fields (the component's values, as text) and buttons. A button runs on this component as one undo step, after
+ * its form when it has one. Every string here is the extension's, so it is a text node or an attribute, never HTML. A
+ * viewer sees the fields but no buttons (running one is a Write command).
+ */
+function ExtensionSections({ view }: { view: ComponentView }) {
+  const { extensions, inspector } = useApp()
+  const sections = extensions.sectionsFor(view.type)
+  if (sections.length === 0) return null
+  // The revision these sections were built from is what a press sends: a host that changed since refuses it (staleUi)
+  const revision = extensions.uiRevision
+  const values = inspector.valuesOf(view)
+  const mayRun = extensions.mayRunButtons.value
+  return (
+    <>
+      {sections.map((section, i) => (
+        <div class="extension-section" data-extension-section={i} key={i}>
+          <h5 class="extension-section-title" title={clean(section.extension)}>
+            {clean(section.label)}
+          </h5>
+          {section.fields
+            .filter((field) => !field.hidden)
+            .map((field) => (
+              <div class="field-row extension-field" key={(field.container ?? "") + "/" + field.name}>
+                <label title={field.tooltip || undefined}>{clean(field.displayName)}</label>
+                <div class="field-editor extension-value">{formatFieldValue(field, values)}</div>
+              </div>
+            ))}
+          {mayRun && section.buttons.length > 0 && (
+            <div class="extension-buttons">
+              {section.buttons.map((button) => {
+                const availability = extensions.buttonAvailability(section, button)
+                return (
+                  <button
+                    class="secondary"
+                    key={button.id}
+                    disabled={!availability.enabled}
+                    title={availability.reason ?? undefined}
+                    onClick={() => void extensions.runButton(button, view.id, revision)}
+                  >
+                    {clean(button.label)}
+                    {button.form !== undefined && button.form.fields.length > 0 ? "..." : ""}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  )
+}
+
 function ComponentCard({ view }: { view: ComponentView }) {
   const { store, inspector } = useApp()
   const schema = inspector.schemaFor(view)
@@ -314,6 +370,7 @@ function ComponentCard({ view }: { view: ComponentView }) {
             ))
           )}
           {problem && <div class="field-error">The script's fields can't be read: {problem}</div>}
+          <ExtensionSections view={view} />
           {error && <div class="field-error component-error">{error}</div>}
         </div>
       )}

@@ -129,17 +129,17 @@ const answerOf = (value: Partial<ExtensionResultResponse> = {}): Uint8Array =>
     })
   )
 
-describe("the generated protocol at 1.15.0", () => {
-  test("the client and the vectors are at 1.15.0", () => {
+describe("the generated protocol since 1.15.0", () => {
+  test("the client and the vectors are at 1.16.0", () => {
     const vectorsPath = path.join(__dirname, "..", "..", "src", "protocol", "test-vectors.json")
     const vectors = JSON.parse(fs.readFileSync(vectorsPath, "utf-8")) as { protocolVersion: string }
-    assert.equal(PROTOCOL_VERSION, "1.15.0")
+    assert.equal(PROTOCOL_VERSION, "1.16.0")
     assert.equal(vectors.protocolVersion, PROTOCOL_VERSION)
   })
 
-  test("InvokeMenuItem is 0x82 and 0x83 is still not a command", () => {
+  test("InvokeMenuItem is 0x82 (and InvokeInspectorAction 0x83 since 1.16.0)", () => {
     assert.equal(CommandType.InvokeMenuItem, 0x82)
-    assert.equal((Object.values(CommandType) as number[]).includes(0x83), false)
+    assert.equal(CommandType.InvokeInspectorAction, 0x83)
   })
 
   test("the request and the answer round-trip through the generated codecs", () => {

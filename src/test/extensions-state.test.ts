@@ -80,7 +80,7 @@ describe("ExtensionsState following the host", () => {
     const stop = f.state.start()
     await tick()
     assert.deepEqual(f.log.filter((s) => s === "list"), ["list"])
-    f.host.ui = { uiRevision: 5, menuItems: [menuItem("x", "Tools/X")] }
+    f.host.ui = { uiRevision: 5, menuItems: [menuItem("x", "Tools/X")], inspectorSections: [] }
     f.changeCount.value++
     await tick()
     assert.equal(f.state.uiRevision, 5, "the new revision is the one runs are built from")
@@ -101,7 +101,7 @@ describe("ExtensionsState following the host", () => {
   test("a slow older answer cannot replace a newer one", async () => {
     const f = fakeExtensions()
     const first = f.state.refresh()
-    f.host.ui = { uiRevision: 9, menuItems: [] }
+    f.host.ui = { uiRevision: 9, menuItems: [], inspectorSections: [] }
     const second = f.state.refresh()
     await Promise.all([first, second])
     assert.equal(f.state.uiRevision, 9)
