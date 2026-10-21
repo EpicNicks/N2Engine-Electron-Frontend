@@ -175,3 +175,16 @@ describe("the patch of the matrix", () => {
     assert.equal(LayersLogic.textOf?.(ctx, "layer.0"), "Default")
   })
 })
+
+describe("a no-op Apply on an invalid stored matrix", () => {
+  test("a pair edit equal to the value shown still writes a valid matrix", () => {
+    const built = buildLayersPatch({ layers: { collisionMatrix: [1, 2] } }, { "pair.1.2": "1" })
+    assert.deepEqual(built.changed, ["pair.1.2"])
+    assertEngineValid((built.patch as { layers: { collisionMatrix: number[] } }).layers.collisionMatrix)
+  })
+
+  test("a valid stored matrix with the same edit stays no change", () => {
+    const built = buildLayersPatch({ layers: { collisionMatrix: allRows() } }, { "pair.1.2": "1" })
+    assert.equal(built.patch, null)
+  })
+})

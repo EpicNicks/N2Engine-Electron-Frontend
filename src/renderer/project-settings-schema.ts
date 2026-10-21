@@ -532,6 +532,14 @@ export function buildLayersPatch(settings: unknown, edits: Edits): BuiltSection 
       }
     }
   }
+  // A matrix the host does not use is replaced on Apply (the notice says so), when a pair was edited, also when every edit is the value shown (a rename alone leaves it)
+  if (matrix.problem !== null && !matrixChanged) {
+    const pairEdits = Object.keys(edits).filter((key) => parsePairKey(key) !== null)
+    if (pairEdits.length > 0) {
+      matrixChanged = true
+      for (const key of pairEdits) if (!changed.includes(key)) changed.push(key)
+    }
+  }
   if (changed.length === 0) return { ...NothingBuilt, errors }
   if (Object.keys(errors).length > 0) return { patch: null, errors, changed, restart: [] }
   // An array is replaced whole by a merge patch: all 32 names go when one changed, all 32 rows when a pair changed
