@@ -38,7 +38,7 @@ export function rig(
     canEdit?: boolean
     picking?: PickBackend
     /** The marquee's candidates (and the scene revision they were listed at; change it to make the cache old); none: no marquee */
-    marquee?: { ids: string[]; revision: number }
+    marquee?: { ids: string[]; revision: number; select?: (ids: readonly string[], op: MarqueeOp) => void }
   } = {}
 ) {
   const entities = options.entities ?? { a: { position: vec3(1, 2, 3) } }
@@ -93,7 +93,10 @@ export function rig(
   if (options.marquee) {
     const marquee = options.marquee
     deps.marqueeCandidates = () => ({ revision: marquee.revision, ids: marquee.ids })
-    deps.selectMany = (ids, op) => void marquees.push({ ids: [...ids], op })
+    deps.selectMany = (ids, op) => {
+      marquees.push({ ids: [...ids], op })
+      marquee.select?.(ids, op)
+    }
   }
   const controller = new ViewportController(deps)
   controller.onFrameNeeded(() => frames++)
