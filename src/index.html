@@ -180,20 +180,11 @@
       .tab.active { background: #1e1e1e; border-bottom: 2px solid #0078d4; }
       .tab .close { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; border-radius: 3px; font-size: 16px; line-height: 1; }
       .tab .close:hover { background: #555; }
-      .script-editor {
-        flex: 1;
-        width: 100%;
-        background: #1e1e1e;
-        color: #d4d4d4;
-        border: none;
-        padding: 10px;
-        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-        font-size: 13px;
-        line-height: 1.5;
-        resize: none;
-        outline: none;
-        min-height: 0;
-      }
+      .script-editor-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+      .script-editor { flex: 1; min-height: 0; overflow: hidden; }
+      .script-editor .cm-editor { height: 100%; }
+      .script-editor .cm-focused { outline: none; }
+      .script-syntax-status { color: #e6b450; font-size: 11px; padding: 2px 8px; border-top: 1px solid #444; }
 
       .console-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
       .console-toolbar { display: flex; align-items: center; gap: 10px; padding: 4px 8px; border-bottom: 1px solid #333; flex-shrink: 0; font-size: 12px; }

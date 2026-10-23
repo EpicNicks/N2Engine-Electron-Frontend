@@ -9,7 +9,7 @@ const target = globalThis as unknown as Record<string, unknown>
 
 const names = [
   "window", "document", "navigator", "location", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
-  "Node", "Element", "HTMLElement", "SVGElement", "HTMLInputElement", "HTMLButtonElement", "HTMLTextAreaElement",
+  "Window", "Node", "Element", "HTMLElement", "SVGElement", "HTMLInputElement", "HTMLButtonElement", "HTMLTextAreaElement",
   "HTMLSelectElement", "HTMLFormElement", "HTMLLabelElement", "HTMLAnchorElement", "DocumentFragment", "Text", "Comment",
   "Event", "CustomEvent", "UIEvent", "MouseEvent", "PointerEvent", "KeyboardEvent", "FocusEvent", "InputEvent",
   "MutationObserver", "DOMException", "Range", "Selection",
@@ -22,3 +22,10 @@ for (const name of names) {
 
 // jsdom does not implement scrollIntoView, which panels call to keep a row visible
 dom.window.HTMLElement.prototype.scrollIntoView = () => {}
+
+// CodeMirror measures selection/cursor rectangles on animation frames. jsdom has no layout;
+// supply empty geometry and asynchronous frames while still running the real editor view.
+dom.window.requestAnimationFrame = fn => setTimeout(() => fn(Date.now()), 0) as unknown as number
+dom.window.cancelAnimationFrame = id => clearTimeout(id)
+Object.defineProperty(dom.window.Range.prototype, "getClientRects", { value: () => [] })
+Object.defineProperty(dom.window.Range.prototype, "getBoundingClientRect", { value: () => new dom.window.DOMRect() })
