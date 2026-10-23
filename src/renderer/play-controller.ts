@@ -8,6 +8,7 @@
 // The main process owns the child (main/play-session.ts); this only calls window.play and follows its state. No DOM:
 // it is given the page's API or a fake, so it is unit tested in Node.
 import { batch, computed, signal } from "@preact/signals-core"
+import type { ClientStats } from "./client-stats"
 import type { EditorEvent } from "../protocol/protocol.generated"
 import { EventPumpOptions } from "../protocol/event-pump"
 import { GameEndedMessage, InitialPlayState, MaxStepFrames, PlayApi, PlayState } from "../shared/api"
@@ -26,6 +27,7 @@ export type PlayControllerApi = Pick<
 >
 
 export interface PlayControllerDeps {
+  stats?: ClientStats
   api: PlayControllerApi
   /** Makes the scene read-only (EditorStore.setPlayMode: a reason) or editable again (null) */
   setPlayMode(reason: string | null): void
@@ -155,6 +157,7 @@ export class PlayController {
 
   /** A new state from the main process */
   private apply(next: PlayState): void {
+    this.deps.stats?.observePlayState(next)
     const previous = this.state.value
     if (next === previous) return
     batch(() => {
@@ -197,7 +200,13 @@ export class PlayController {
     this.console = console
     console.connect(launch)
     this.stopRefresh = this.every(() => {
-      this.deps.api.refresh().catch(() => {
+      const measurement = this.deps.stats?.beginPlayObservation()
+      this.deps.api.refresh().then((state) => {
+        const current = this.state.value
+        // A pushed state or disconnect may have superseded this in-flight observation.
+        if (measurement && this.live.value && state.launch === current.launch && state.status === current.status &&
+          state.frame >= current.frame && state.time >= current.time) this.deps.stats?.playStateReceived(measurement, state)
+      }).catch(() => {
         // The game ended or is going: its state follows
       })
     }, PlayRefreshMs)

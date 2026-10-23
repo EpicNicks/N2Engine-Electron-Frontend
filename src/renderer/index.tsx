@@ -127,6 +127,7 @@ const viewport = new ViewportController({
 // and the console are the game's
 const play = new PlayController({
   api: window.play,
+  stats: store.clientStats,
   setPlayMode: (reason) => store.setPlayMode(reason),
   // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
   settle: async () => {

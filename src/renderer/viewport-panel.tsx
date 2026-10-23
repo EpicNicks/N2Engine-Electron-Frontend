@@ -198,6 +198,7 @@ export function Viewport() {
           ? void play.failure("The game's picture stopped", e)
           : store.console.note("error", `Rendering stopped: ${e instanceof Error ? e.message : String(e)}`),
       {
+        stats: store.clientStats,
         onFrame: (size) => {
           viewport.setPixelRatio(window.devicePixelRatio || 1)
           if (viewport.setSize(size)) void viewport.verifyMatrices()

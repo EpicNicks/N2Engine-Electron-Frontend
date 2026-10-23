@@ -1,6 +1,7 @@
 // The editor's state, as signals the panels read, and the actions that change it. No DOM: it is given the page's
 // API (window.engine, window.host, window.project) or a fake, so it is unit tested in Node.
 import { Signal, batch, computed, signal } from "@preact/signals-core"
+import { ClientStats } from "./client-stats"
 import type {
   CreateProjectResult,
   DirectRemoteSettings,
@@ -368,7 +369,8 @@ export class EditorStore {
   constructor(
     private readonly api: StoreApi,
     consoleOptions: ConsoleStoreOptions = {},
-    retry: ConnectRetryOptions = {}
+    retry: ConnectRetryOptions = {},
+    readonly clientStats: ClientStats = new ClientStats()
   ) {
     this.retryTimers = retry.timers ?? {
       setTimeout: (callback, ms) => setTimeout(callback, ms),
@@ -378,7 +380,12 @@ export class EditorStore {
     this.retryRandom = retry.random ?? Math.random
     this.giveUpAfterMs = retry.giveUpAfterMs ?? GiveUpAfterMilliseconds
     this.host = signal(api.host.state())
-    this.console = new ConsoleStore((epoch, afterSeq, maxEvents) => api.engine.pollEvents(epoch, afterSeq, maxEvents), {
+    this.console = new ConsoleStore(async (epoch, afterSeq, maxEvents) => {
+      const request = this.clientStats.beginEventPoll()
+      const answer = await api.engine.pollEvents(epoch, afterSeq, maxEvents)
+      this.clientStats.eventPollReceived(request)
+      return answer
+    }, {
       filterDelayMs: FilterDebounceMs,
       ...consoleOptions,
       onEvents: (events) => {
@@ -752,6 +759,7 @@ export class EditorStore {
   }
 
   private onConnection(connected: boolean): void {
+    this.clientStats.connectionChanged(connected)
     batch(() => {
       this.connections++
       this.autosaveAsked = null
