@@ -1,12 +1,13 @@
 ﻿import { useLayoutEffect, useRef, useState } from "preact/hooks"
 import { Compartment, EditorState, Transaction } from "@codemirror/state"
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view"
-import { bracketMatching, defaultHighlightStyle, indentOnInput, StreamLanguage, syntaxHighlighting } from "@codemirror/language"
+import { bracketMatching, HighlightStyle, indentOnInput, StreamLanguage, syntaxHighlighting } from "@codemirror/language"
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands"
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search"
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete"
 import { hoverTooltip } from "@codemirror/view"
 import { lintGutter, setDiagnostics } from "@codemirror/lint"
+import { tags } from "@lezer/highlight"
 import { json } from "@codemirror/lang-json"
 import { lua } from "@codemirror/legacy-modes/mode/lua"
 import { indexForPath, luaCompletions, luaHover } from "./lua/lua-intelligence"
@@ -33,6 +34,19 @@ const theme = EditorView.theme({
   ".n2-lua-hover": { padding: "8px", maxWidth: "480px", whiteSpace: "pre-wrap" },
   ".n2-lua-hover pre": { margin: "0 0 4px", fontFamily: "inherit", color: "#9cdcfe" },
 }, { dark: true })
+
+// Explicit dark colors: CodeMirror's default highlight style targets a light background.
+const darkHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "#c586c0" },
+  { tag: [tags.name, tags.propertyName], color: "#9cdcfe" },
+  { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "#dcdcaa" },
+  { tag: [tags.typeName, tags.className], color: "#4ec9b0" },
+  { tag: [tags.string, tags.regexp], color: "#ce9178" },
+  { tag: [tags.number, tags.bool, tags.null], color: "#b5cea8" },
+  { tag: tags.comment, color: "#8ba776" },
+  { tag: [tags.operator, tags.punctuation], color: "#d4d4d4" },
+  { tag: tags.invalid, color: "#f48771", textDecoration: "underline" },
+])
 
 function language(path: string) {
   if (/\.lua$/i.test(path)) {
@@ -67,7 +81,7 @@ export function ScriptEditor(props: ScriptEditorProps) {
     const writable = new Compartment()
     const view = new EditorView({ parent: host.current, state: EditorState.create({ doc: latest.current.text, extensions: [
       lineNumbers(), highlightActiveLineGutter(), history(), drawSelection(), highlightActiveLine(),
-      indentOnInput(), bracketMatching(), syntaxHighlighting(defaultHighlightStyle), highlightSelectionMatches(),
+      indentOnInput(), bracketMatching(), syntaxHighlighting(darkHighlightStyle), highlightSelectionMatches(),
       keymap.of([...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab]),
       EditorState.tabSize.of(4), theme, ...language(latest.current.path), lintGutter(),
       writable.of([EditorState.readOnly.of(latest.current.readOnly), EditorView.editable.of(!latest.current.readOnly)]),
