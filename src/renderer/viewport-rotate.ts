@@ -17,7 +17,7 @@ import {
   AxisDirections,
   WorldAxes,
   GizmoPickPixels,
-  cameraPositionOf,
+  directionToCamera,
   gizmoFrame,
   localPositionAfterMove,
   rayPlane,
@@ -114,7 +114,7 @@ export function rotateLayout(
   const frame = gizmoFrame(view, viewProjection, origin, width, height, pixelRatio)
   if (!frame) return null
   const radiusWorld = frame.worldLength * RingRadius
-  const toCamera = normalize(sub(cameraPositionOf(view), origin))
+  const toCamera = directionToCamera(view, viewProjection, origin)
   const rings: RingHandle[] = []
   for (const axis of Axes) {
     const points: Array<Pixel | null> = []

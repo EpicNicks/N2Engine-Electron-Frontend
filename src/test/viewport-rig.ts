@@ -35,6 +35,7 @@ export function rig(
   options: {
     entities?: Record<string, Entity>
     selection?: string[]
+    sceneKey?: () => string
     canEdit?: boolean
     picking?: PickBackend
     /** The marquee's candidates (and the scene revision they were listed at; change it to make the cache old); none: no marquee */
@@ -85,6 +86,7 @@ export function rig(
     onError: (what) => errors.push(what),
     onNote: () => {},
     canEdit: () => canEdit,
+    sceneKey: options.sceneKey,
     selected: () => selection[0] ?? null,
     moveIds: () => selection,
     selectionIds: () => selection,

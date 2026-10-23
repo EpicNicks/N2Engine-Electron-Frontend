@@ -13,6 +13,7 @@ import { followViewportSelection } from "./viewport-selection"
 import { pointerActionFor, wheelPixels, PointerAction } from "./viewport-input"
 import { MarqueeOp, Rect, selectGesture } from "./viewport-marquee"
 import { ViewportKeyboard } from "./viewport-keys"
+import { ViewportViewMenu } from "./viewport-view-menu"
 import { ViewportToolbar } from "./viewport-toolbar"
 import { InputForwarder, scrollLines } from "./play-input"
 import { ViewportRenderer, editTarget, gameTarget } from "./viewport-renderer"
@@ -168,6 +169,10 @@ export function Viewport() {
       setMode: (mode) => viewport.setMode(mode),
       toggleSpace: () => viewport.toggleSpace(),
       togglePivot: () => viewport.togglePivot(),
+      bookmark: (slot,save) => viewport.bookmark(slot,save),
+      axisView: axis => viewport.setAxis(axis),
+      toggleOrthographic: () => viewport.setOrthographic(!viewport.camera.orthographic),
+      toggle2D: () => viewport.set2D(!viewport.camera.mode2D),
     })
     let gesture: Gesture | null = null
     let flyFrame: number | null = null
@@ -227,6 +232,7 @@ export function Viewport() {
       if (play.live.peek()) return
       const ratio = window.devicePixelRatio || 1
       untracked(() => {
+        viewport.drawSceneOverlays(ctx,over.width,over.height,ratio)
         const edges = viewport.boxEdges()
         if (edges.length > 0) {
           ctx.strokeStyle = "rgba(255, 200, 80, 0.9)"
@@ -488,6 +494,8 @@ export function Viewport() {
       // The overlay follows the gizmo, the selection and the camera
       effect(() => {
         viewport.overlayVersion.value
+        viewport.viewPreferences.value
+        hierarchy.response.value
         viewport.mode.value
         viewport.target.value
         viewport.selectionBounds.value // the selection's boxes
@@ -550,6 +558,7 @@ export function Viewport() {
           >
             Frame
           </button>
+          <ViewportViewMenu key={store.scene.value?.uuid ?? ""} viewport={viewport} enabled={!play.live.value && connected} onUsed={() => container.current?.focus()} />
           <ViewportToolbar viewport={viewport} canEdit={store.canEdit.value} onUsed={() => container.current?.focus()} />
           <span
             class="viewport-help"

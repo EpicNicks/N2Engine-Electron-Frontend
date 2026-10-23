@@ -114,6 +114,13 @@ export function cameraPositionOf(view: Mat4): Vec3 {
   )
 }
 
+/** Orthographic rays are parallel: facing must not depend on the gizmo's lateral position. */
+export function directionToCamera(view: Mat4, viewProjection: Mat4, origin: Vec3): Vec3 {
+  return Math.abs(viewProjection[3])+Math.abs(viewProjection[7])+Math.abs(viewProjection[11])<1e-8
+    ? normalize(vec3(view[2],view[6],view[10]))
+    : normalize(sub(cameraPositionOf(view),origin))
+}
+
 /**
  * Where a gizmo at origin is on screen and how long its handles are in the world, so that they are GizmoSizePixels
  * (times the pixel ratio) on screen whatever the distance: the same for every tool. Null when the origin is behind the
@@ -162,7 +169,7 @@ export function gizmoLayout(
     handles.push({ axis, from: { x: center.x, y: center.y }, to: { x: end.x, y: end.y } })
   }
 
-  const toCamera = normalize(sub(cameraPositionOf(view), origin))
+  const toCamera = directionToCamera(view, viewProjection, origin)
   const planes: PlaneHandle[] = []
   for (const plane of Planes) {
     const { a, b, normal } = PlaneAxes[plane]

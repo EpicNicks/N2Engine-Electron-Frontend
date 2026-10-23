@@ -615,6 +615,16 @@
       ::-webkit-scrollbar-track { background: #1e1e1e; }
       ::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
       ::-webkit-scrollbar-thumb:hover { background: #666; }
+      /* View controls use pointer events inside the otherwise transparent toolbar. */
+      .viewport-view-menu { position: relative; font-size: 12px; pointer-events: auto; }
+      .viewport-view-menu summary { cursor: pointer; padding: 4px 7px; white-space: nowrap; }
+      .viewport-view-menu > div {
+        position: absolute; top: 100%; left: 0; z-index: 30; width: 260px; max-height: 65vh; overflow: auto;
+        padding: 10px; background: #20252c; border: 1px solid #526070; border-radius: 4px; box-shadow: 0 4px 15px #0008;
+      }
+      .viewport-view-menu label { display: flex; gap: 6px; align-items: center; margin: 5px 0; }
+      .viewport-view-menu fieldset { margin: 8px 0; border: 1px solid #526070; padding: 6px; }
+      .viewport-bookmark-row { display: flex; gap: 5px; align-items: center; margin: 3px 0; }
     </style>
   </head>
   <body>

@@ -8,6 +8,8 @@
 // Picking and bounds (protocol 1.8.0: PickEntity, GetEntityBounds) are reached through PickBackend (the engine's
 // implementation is viewport-picking.ts's createPickBackend, passed as `picking`). With none (a test, or a host without
 // them), a click does not select, there is no selection box, and "frame selected" frames the object's world position.
+import { DefaultViewPreferences, ViewPreferences } from "./viewport-view-prefs"
+import { OverlayEntityCache, entityOverlays, gridLines, projectLine, OverlayOptions, MaxOverlayEntities } from "./viewport-overlays"
 import { signal } from "@preact/signals-core"
 import type { EditorCameraResponse, Mat4, Quat, Vec3 } from "../protocol/protocol.generated"
 import type { EngineApi } from "../shared/api"
@@ -42,7 +44,7 @@ import {
   scaleLayout,
   worldAxesOf,
 } from "./viewport-scale"
-import { IdentityMat4, Pixel, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
+import { IdentityMat4, Pixel, sub, scale, quatRotate, quatFromAxes, worldToScreen, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
 import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
 import { selectionKeyOf } from "./viewport-selection"
@@ -74,6 +76,7 @@ export interface ViewportDeps {
   /** Whether the scene can be edited now (connected, not a play session): the gizmo is shown and used only then */
   canEdit(): boolean
   /** The primary selection, or what a click selected */
+  sceneKey?(): string
   selected(): string | null
   /**
    * The selected objects the gizmo moves: the topmost of the selection, so an object under another selected one is not
@@ -176,6 +179,12 @@ interface PickClick {
 
 export class ViewportController {
   readonly camera = new EditorCameraController()
+  readonly viewPreferences = signal<ViewPreferences>({overlays:{...DefaultViewPreferences.overlays},bookmarks:{}})
+  private readonly overlayEntities: OverlayEntityCache
+  private allBoundsPending = false
+  private allBoundsKey = ""
+  private allBoundsGeneration = 0
+  private allBounds: ReadonlyMap<string, Bounds> = new Map()
   /**
    * Where the gizmo is: the primary selection as the gizmo needs it (or, when the primary has no transform, the first
    * object that moves); null with no selection
@@ -233,6 +242,7 @@ export class ViewportController {
   private frameListener: (() => void) | null = null
 
   constructor(private readonly deps: ViewportDeps) {
+    this.overlayEntities = new OverlayEntityCache(id=>deps.engine.getEntity(id),()=>this.redraw())
     this.cameraSender = new LatestWinsSender(
       async (request) => {
         const { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane } = request
@@ -364,6 +374,10 @@ export class ViewportController {
   /** The connection ended: nothing of the host's is valid */
   disconnected(): void {
     this.connections++
+    this.overlayEntities.clear()
+    this.allBoundsGeneration++
+    this.allBoundsKey=""
+    this.allBounds=new Map()
     this.loads++
     if (this.drag) void this.finishDrag("abandon", false)
     this.pressed = null
@@ -419,8 +433,8 @@ export class ViewportController {
     if (!this.size) return null
     const settings: ProjectionSettings = {
       fovY: this.camera.fovY,
-      orthographic: false,
-      orthoSize: 5,
+      orthographic: this.camera.orthographic,
+      orthoSize: this.camera.orthoSize,
       nearPlane: this.camera.nearPlane,
       farPlane: this.camera.farPlane,
     }
@@ -438,12 +452,14 @@ export class ViewportController {
 
   orbit(dx: number, dy: number): void {
     if (this.drag) return // the drag's maths is for the camera it began with
+    if(this.camera.mode2D) { this.pan(dx,dy);return }
     this.camera.orbit(dx, dy)
     this.cameraChanged()
   }
 
   look(dx: number, dy: number): void {
     if (this.drag) return // the drag's maths is for the camera it began with
+    if(this.camera.mode2D) { this.pan(dx,dy);return }
     this.camera.look(dx, dy)
     this.cameraChanged()
   }
@@ -501,6 +517,87 @@ export class ViewportController {
     this.camera.framePoint(mat4Translation(target.worldMatrix))
     this.cameraChanged()
     return true
+  }
+
+  setOverlay(key: keyof OverlayOptions, value:boolean):void {
+    this.viewPreferences.value={...this.viewPreferences.value,overlays:{...this.viewPreferences.value.overlays,[key]:value}}
+    this.redraw()
+  }
+
+  setOrthographic(value:boolean):void { if(this.drag || this.marquee)return;this.camera.setOrthographic(value);this.cameraChanged() }
+  set2D(value:boolean):void { if(this.drag || this.marquee)return;this.camera.set2D(value);this.cameraChanged() }
+  setAxis(axis:"front"|"back"|"left"|"right"|"top"|"bottom"):void {
+    if(this.drag || this.marquee)return
+    if(this.camera.mode2D)this.camera.set2D(false)
+    this.camera.setAxis(axis);this.cameraChanged()
+  }
+  alignViewToSelected():boolean {
+    if(this.drag || this.marquee || !this.target.value)return false
+    const target=this.target.value
+    // The selected object's world axes, rather than its local rotation under a rotated parent.
+    const axes=worldAxesOf(target.worldMatrix)
+    const rotation=quatFromAxes(axes.x,axes.y,axes.z)
+    if(!rotation)return false
+    this.camera.set2D(false)
+    const position=sub(mat4Translation(target.worldMatrix),scale(quatRotate(rotation,{x:0,y:0,z:-1}),this.camera.distance))
+    this.camera.adopt({...this.camera.toRequest(),position,rotation})
+    this.cameraChanged();return true
+  }
+  bookmark(slot:number,save:boolean):boolean {
+    const key=this.deps.sceneKey?.() ?? ""
+    if(!key || key.length>512 || !Number.isInteger(slot) || slot<1 || slot>9 || this.drag || this.marquee)return false
+    const prefs=this.viewPreferences.value
+    const existing=Object.hasOwn(prefs.bookmarks,key)?prefs.bookmarks[key]:[]
+    if(save) {
+      const bookmarks=Array.from({length:9},(_,i)=>existing[i] ?? null)
+      bookmarks[slot-1]={camera:this.camera.toRequest(),distance:this.camera.distance,mode2D:this.camera.mode2D}
+      const entries=Object.entries({...prefs.bookmarks,[key]:bookmarks}).slice(-64)
+      this.viewPreferences.value={...prefs,bookmarks:Object.fromEntries(entries)}
+      this.redraw();return true
+    }
+    const bookmark=existing[slot-1]
+    if(!bookmark)return false
+    this.camera.set2D(false)
+    if(bookmark.mode2D)this.camera.set2D(true)
+    this.camera.adopt(bookmark.camera,bookmark.distance)
+    this.cameraChanged();return true
+  }
+  hasBookmark(slot:number):boolean {
+    const key=this.deps.sceneKey?.() ?? "",all=this.viewPreferences.value.bookmarks
+    return Object.hasOwn(all,key) && !!all[key][slot-1]
+  }
+
+  drawSceneOverlays(ctx:CanvasRenderingContext2D,width:number,height:number,ratio:number):void {
+    const matrices=this.matrices();if(!matrices || !this.deps.engine.isConnected())return
+    const options=this.viewPreferences.value.overlays,selected=new Set(this.deps.selectionIds?.() ?? (this.deps.selected()?[this.deps.selected()!]:[]))
+    const candidates=this.deps.marqueeCandidates?.()
+    const all=options.allColliders || options.icons || options.ranges || options.bounds
+    const ids=all ? [...selected,...(candidates?.ids ?? [])] : [...selected]
+    const revision=JSON.stringify([this.connections,this.sceneChanges,candidates?.revision ?? 0,this.deps.sceneKey?.() ?? ""])
+    const entities=this.overlayEntities.get(ids,revision)
+    const lines=options.grid ? gridLines(this.camera.target,this.camera.orthographic?this.camera.orthoSize:this.camera.distance,this.camera.forward,this.camera.orthographic):[]
+    for(const entity of entities) {
+      const geometry=entityOverlays(entity,options,selected.has(entity.entity.header.id));lines.push(...geometry.lines.slice(0,Math.max(0,20000-lines.length)))
+      if(options.icons)for(const icon of geometry.icons) {
+        const pixel=worldToScreen(matrices.viewProjection,icon.at,width,height)
+        if(pixel && pixel.depth>=-1 && pixel.depth<=1) {ctx.fillStyle=icon.color;ctx.font=`${16*ratio}px sans-serif`;ctx.fillText(icon.label,pixel.x,pixel.y)}
+      }
+    }
+    for(const line of lines) {
+      const points=projectLine(matrices.viewProjection,line,width,height);if(!points)continue
+      ctx.strokeStyle=line.color;ctx.globalAlpha=line.alpha;ctx.lineWidth=ratio;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);ctx.lineTo(points[1].x,points[1].y);ctx.stroke()
+    }
+    ctx.globalAlpha=1
+    if(options.bounds && this.deps.picking) {
+      const bounded=[...new Set(ids)].slice(0,MaxOverlayEntities),key=JSON.stringify([revision,bounded])
+      if(key!==this.allBoundsKey && !this.allBoundsPending) {
+        this.allBoundsPending=true
+        this.allBoundsKey=key;this.allBounds=new Map();const generation=++this.allBoundsGeneration
+        void this.deps.picking.bounds(bounded).then(found=>{if(generation===this.allBoundsGeneration){this.allBounds=found ?? new Map();this.redraw()}},()=>{}).finally(()=>{this.allBoundsPending=false;this.redraw()})
+      }
+      ctx.strokeStyle="#789bbb";ctx.lineWidth=ratio
+      for(const bounds of this.allBounds.values())for(const [a,b] of projectBox(matrices.viewProjection,bounds.min,bounds.max,width,height)) {ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
+    }
   }
 
   // ==================== The selected object ====================

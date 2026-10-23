@@ -51,6 +51,10 @@ export interface ViewportKeyHost {
   toggleSpace?(): boolean
   /** Toggles pivot and center; false as toggleSpace. Without it the key is not registered. */
   togglePivot?(): boolean
+  bookmark?(slot:number,save:boolean):boolean
+  axisView?(axis:"front"|"back"|"left"|"right"|"top"|"bottom"):void
+  toggleOrthographic?():void
+  toggle2D?():void
 }
 
 export interface KeyEventLike {
@@ -136,6 +140,18 @@ export class ViewportKeyboard {
         )
       )
     }
+    if(this.host.bookmark)for(let slot=1;slot<=9;slot++)for(const save of [false,true]) {
+      off.push(keymap.handle(`viewport.bookmark${save?"Save":"Recall"}${slot}`,()=>{
+        if(this.host.live())return false
+        return this.host.bookmark!(slot,save)
+      },{within:view}))
+    }
+    const views: Array<[string,()=>void]> = [
+      ["viewport.orthographic",()=>this.host.toggleOrthographic?.()],
+      ["viewport.twoD",()=>this.host.toggle2D?.()],
+      ...(["front","back","left","right","top","bottom"] as const).map(axis=>[`viewport.axis${axis[0].toUpperCase()+axis.slice(1)}`,()=>this.host.axisView?.(axis)] as [string,()=>void])
+    ]
+    for(const [id,action] of views)off.push(keymap.handle(id,()=>{if(this.host.live())return false;action()},{within:view}))
     return () => off.forEach((unregister) => unregister())
   }
 }
