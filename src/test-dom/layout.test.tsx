@@ -10,7 +10,8 @@ import { LayoutPersistence, KeyValueStore, ProjectLayoutPref, UserLayoutPref, pr
 import { prefStorageKey } from "../renderer/prefs"
 import { PanelDragType } from "../renderer/layout/panel-frame"
 import { defaultLayout, serializeLayout } from "../renderer/layout/layout-model"
-import { ContextMenu, Panel, showContextMenu } from "../renderer/ui"
+import { closePreferences } from "../renderer/preferences-request"
+import { ContextMenu, Panel, showContextMenu, modalOpen } from "../renderer/ui"
 import { builtinPanels } from "../renderer/layout/builtin-panels"
 import { fixtureRegistry, shape } from "../test/layout-fixture"
 
@@ -436,9 +437,18 @@ describe("the Window menu", () => {
       "Engine",
       "Reset layout",
       "Save layout as the default for new projects",
+      "Preferences...",
       "Keyboard shortcuts",
     ])
     assert.ok((menuItem("Inspector").textContent ?? "").startsWith("\u2713"))
+  })
+
+  test("Preferences opens from the Window menu without a host write guard", () => {
+    renderLayout()
+    try {
+      chooseFromWindow("Preferences...")
+      assert.equal(modalOpen(), true)
+    } finally { closePreferences() }
   })
 
   test("choosing a shown panel closes it, and choosing it again opens it where it started", () => {

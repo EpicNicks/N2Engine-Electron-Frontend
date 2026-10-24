@@ -20,6 +20,7 @@ import {
   PlayCommands,
   PlayState,
   ProjectApi,
+  PreferencesApi,
   RemoteApi,
 } from "../shared/api"
 
@@ -199,3 +200,10 @@ contextBridge.exposeInMainWorld("host", hostApi)
 contextBridge.exposeInMainWorld("play", play)
 contextBridge.exposeInMainWorld("project", project)
 contextBridge.exposeInMainWorld("remote", remote)
+
+const preferences: PreferencesApi = {
+  getHost: () => invoke(Channels.preferencesGetHost),
+  saveHost: settings => invoke(Channels.preferencesSaveHost, settings),
+  chooseHostPath: () => invoke(Channels.preferencesChooseHost),
+}
+contextBridge.exposeInMainWorld("preferences", preferences)

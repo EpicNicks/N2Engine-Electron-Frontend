@@ -1,3 +1,4 @@
+import { PreferencesDialog } from "./preferences-dialog"
 // The page's entry point (bundled by esbuild into dist/bundle/renderer.js). The page is sandboxed: window.engine
 // (the engine connection), window.host (the project's editor host process) and window.project (projects and their
 // files) are the typed IPC API the preload exposes (src/shared/api.ts); there is no Node here.
@@ -70,6 +71,10 @@ function App({ app }: { app: AppState }) {
       <UnsavedDialog />
       <AutosaveDialog />
       <ShortcutsDialog />
+      <PreferencesDialog onSaved={tool => {
+        app.viewport.setMode(tool.mode); app.viewport.setSpace(tool.space); app.viewport.setPivot(tool.pivot)
+        void app.store.refreshHostLocation()
+      }} />
       <ContextMenu />
     </AppContext.Provider>
   )

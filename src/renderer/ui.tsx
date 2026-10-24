@@ -2,6 +2,7 @@
 // context menu.
 import { ComponentChildren, createContext } from "preact"
 import { useContext, useEffect, useRef } from "preact/hooks"
+import { preferencesRequest } from "./preferences-request"
 import { signal } from "@preact/signals"
 import { PanelFrameContext } from "./layout/panel-frame"
 import type { KeymapScope, ShortcutRow } from "./keymap"
@@ -440,7 +441,8 @@ export function modalOpen(): boolean {
     formRequest.value !== null ||
     unsavedRequest.value !== null ||
     autosaveRequest.value !== null ||
-    shortcutsRequest.value !== null
+    shortcutsRequest.value !== null ||
+    preferencesRequest.value !== null
   )
 }
 
