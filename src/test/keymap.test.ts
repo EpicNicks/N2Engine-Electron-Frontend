@@ -147,7 +147,7 @@ describe("the default actions", () => {
       assert.equal(ids.has(def.id), false, `${def.id} twice`)
       ids.add(def.id)
       assert.ok((KeymapScopes as readonly string[]).includes(def.scope), def.id)
-      assert.match(def.id, /^[a-z]+\.[a-zA-Z]+$/)
+      assert.match(def.id, /^[a-z]+\.[a-zA-Z][a-zA-Z0-9]*$/)
       assert.ok(def.title.length > 0)
       assert.equal(keymap.chordsOf(def.id).length, def.chords.length, def.id)
     }
@@ -177,6 +177,10 @@ describe("the default actions", () => {
         "hierarchy.collapse",
         "viewport.frame",
         "viewport.cancel",
+        "viewport.orthographic",
+        "viewport.twoD",
+        ...["Front","Back","Right","Left","Top","Bottom"].map(axis=>`viewport.axis${axis}`),
+        ...Array.from({length:9},(_,i)=>[`viewport.bookmarkSave${i+1}`,`viewport.bookmarkRecall${i+1}`]).flat(),
         "gizmo.translate",
         "gizmo.rotate",
         "gizmo.scale",

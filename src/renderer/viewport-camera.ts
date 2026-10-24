@@ -54,6 +54,8 @@ export interface CameraSnapshot {
   fovY: number
   nearPlane: number
   farPlane: number
+  orthographic?: boolean
+  orthoSize?: number
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
@@ -63,6 +65,11 @@ export class EditorCameraController {
   yaw = 0
   pitch = 0
   distance = 10
+  orthographic = false
+  orthoSize = DefaultCamera.orthoSize
+  mode2D = false
+  private fixedRotation: Quat | null = null
+  private before2D: { request:SetEditorCameraRequest; distance:number } | null = null
   fovY = DefaultCamera.fovY
   nearPlane = DefaultCamera.nearPlane
   farPlane = DefaultCamera.farPlane
@@ -82,6 +89,7 @@ export class EditorCameraController {
 
   /** The camera's rotation */
   get rotation(): Quat {
+    if (this.fixedRotation) return this.fixedRotation
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), this.yaw)
     const pitch = quatFromAxisAngle(vec3(1, 0, 0), this.pitch)
     return quatNormalize(quatMultiply(yaw, pitch))
@@ -103,14 +111,14 @@ export class EditorCameraController {
     return sub(this.target, scale(this.forward, this.distance))
   }
 
-  /** The pose as SetEditorCamera sends it (perspective; the orthographic fields keep the host's defaults) */
+  /** The pose and projection sent to the host */
   toRequest(): SetEditorCameraRequest {
     return {
       position: this.position,
       rotation: this.rotation,
       fovY: this.fovY,
-      orthographic: false,
-      orthoSize: DefaultCamera.orthoSize,
+      orthographic: this.orthographic,
+      orthoSize: this.orthoSize,
       nearPlane: this.nearPlane,
       farPlane: this.farPlane,
     }
@@ -118,9 +126,12 @@ export class EditorCameraController {
 
   /**
    * Takes the host's camera as the pose (when connecting: the host may have been moved by an earlier session): the
-   * look direction gives yaw and pitch (roll is dropped), and the target is kept in front of it at the same distance.
+   * look direction gives yaw and pitch; the exact rotation is retained until navigation, and the target is kept in front of it at the same distance.
    */
   adopt(camera: CameraSnapshot, distance: number = this.distance): void {
+    this.fixedRotation = quatNormalize(camera.rotation)
+    this.orthographic = camera.orthographic ?? false
+    this.orthoSize = camera.orthoSize ?? DefaultCamera.orthoSize
     const forward = quatRotate(quatNormalize(camera.rotation), vec3(0, 0, -1))
     this.yaw = Math.atan2(-forward.x, -forward.z)
     this.pitch = clamp(Math.asin(clamp(forward.y, -1, 1)), -MaxPitch, MaxPitch)
@@ -134,6 +145,8 @@ export class EditorCameraController {
 
   /** Orbit around the target: dragging right turns the view to the right, dragging down looks down on it */
   orbit(dxPixels: number, dyPixels: number): void {
+    if (this.mode2D) return
+    this.fixedRotation = null
     this.yaw -= dxPixels * RadiansPerPixel
     this.pitch = clamp(this.pitch - dyPixels * RadiansPerPixel, -MaxPitch, MaxPitch)
     this.changed()
@@ -142,6 +155,8 @@ export class EditorCameraController {
   /** Turn the camera where it stands (the fly camera's mouse look): the target swings with it */
   look(dxPixels: number, dyPixels: number): void {
     const position = this.position
+    if (this.mode2D) return
+    this.fixedRotation = null
     this.yaw -= dxPixels * RadiansPerPixel
     this.pitch = clamp(this.pitch - dyPixels * RadiansPerPixel, -MaxPitch, MaxPitch)
     this.target = add(position, scale(this.forward, this.distance))
@@ -154,7 +169,7 @@ export class EditorCameraController {
    */
   pan(dxPixels: number, dyPixels: number, viewportHeight: number): void {
     if (!(viewportHeight > 0)) return
-    const worldPerPixel = (2 * this.distance * Math.tan((this.fovY * Math.PI) / 360)) / viewportHeight
+    const worldPerPixel = (2 * (this.orthographic ? this.orthoSize : this.distance * Math.tan((this.fovY * Math.PI) / 360))) / viewportHeight
     const move = add(scale(this.right, -dxPixels * worldPerPixel), scale(this.up, dyPixels * worldPerPixel))
     this.target = add(this.target, move)
     this.changed()
@@ -162,7 +177,8 @@ export class EditorCameraController {
 
   /** Dolly towards (negative) or away from (positive) the target; the wheel's deltaY in pixels */
   zoom(deltaPixels: number): void {
-    this.distance = clamp(this.distance * Math.exp(deltaPixels * ZoomPerPixel), MinDistance, MaxDistance)
+    if (this.orthographic) this.orthoSize = clamp(this.orthoSize * Math.exp(deltaPixels * ZoomPerPixel), MinDistance, MaxDistance)
+    else this.distance = clamp(this.distance * Math.exp(deltaPixels * ZoomPerPixel), MinDistance, MaxDistance)
     this.changed()
   }
 
@@ -171,6 +187,7 @@ export class EditorCameraController {
    * The target moves with the camera, so the orbit distance is unchanged.
    */
   fly(move: Vec3, dtSeconds: number, speed: number): void {
+    if (this.mode2D) return
     if (!(dtSeconds > 0) || !(speed > 0)) return
     if (move.x === 0 && move.y === 0 && move.z === 0) return
     const delta = add(
@@ -198,7 +215,36 @@ export class EditorCameraController {
     // one: a wider-than-tall viewport is then the safe side
     const fitted = radius > 0 ? (radius * FrameMargin) / Math.sin(halfFov) : PointFrameDistance
     this.target = center
+    if (this.orthographic) this.orthoSize = clamp(radius * FrameMargin || PointFrameDistance, MinDistance, MaxDistance)
     this.distance = clamp(fitted, Math.max(MinDistance, this.nearPlane * 2), MaxDistance)
+    this.changed()
+  }
+
+  setOrthographic(value: boolean): void {
+    this.orthographic = value
+    if (!value) this.mode2D = false
+    this.changed()
+  }
+
+  setAxis(axis: "front" | "back" | "left" | "right" | "top" | "bottom"): void {
+    this.yaw = axis === "back" ? Math.PI : axis === "right" ? Math.PI / 2 : axis === "left" ? -Math.PI / 2 : 0
+    this.pitch = axis === "top" ? -Math.PI / 2 : axis === "bottom" ? Math.PI / 2 : 0
+    this.fixedRotation = quatNormalize(quatMultiply(quatFromAxisAngle(vec3(0,1,0),this.yaw),quatFromAxisAngle(vec3(1,0,0),this.pitch)))
+    this.changed()
+  }
+
+  set2D(value: boolean): void {
+    if (this.mode2D === value) return
+    if (value) {
+      this.before2D = {request:this.toRequest(),distance:this.distance}
+      this.setAxis("front")
+      this.orthographic = true
+      this.mode2D = true
+    } else {
+      this.mode2D = false
+      if (this.before2D) this.adopt(this.before2D.request,this.before2D.distance)
+      this.before2D = null
+    }
     this.changed()
   }
 

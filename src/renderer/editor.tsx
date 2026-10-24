@@ -12,6 +12,7 @@ import { useKeymapActions } from "./keymap-hooks"
 import { appPrefs } from "./prefs"
 import { attachConsoleFilterPrefs } from "./console-filter-prefs"
 import { attachHierarchyFilterPrefs } from "./hierarchy-filter-prefs"
+import { attachViewportViewPrefs } from "./viewport-view-prefs"
 import { attachViewportSnapPrefs, attachViewportToolPrefs } from "./viewport-tool-prefs"
 import { builtinPanels } from "./layout/builtin-panels"
 import { LayoutController } from "./layout/layout-controller"
@@ -338,10 +339,12 @@ export function Editor() {
         const detachHierarchy = attachHierarchyFilterPrefs(hierarchy, scope)
         const detachConsole = attachConsoleFilterPrefs(store.console, scope)
         const detachSnap = attachViewportSnapPrefs(viewport, scope)
+        const detachView = attachViewportViewPrefs(viewport, scope)
         detachFilters = () => {
           detachHierarchy()
           detachConsole()
           detachSnap()
+          detachView()
         }
       },
       // Without the id the layout is the user default's and isn't remembered for this project

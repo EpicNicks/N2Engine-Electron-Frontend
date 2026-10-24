@@ -110,6 +110,7 @@ const viewport = new ViewportController({
   onError: (what, e) => store.reportError(what, e),
   onNote: (message) => store.console.note("warn", message),
   canEdit: () => store.canEdit.peek(),
+  sceneKey: () => store.scene.peek()?.uuid ?? "",
   selected: () => hierarchy.selection.peek().primary,
   // The gizmo moves the topmost of the selection (what is under a selected object moves with it), all in one group
   moveIds: () => moveIdsOf(hierarchy.tree.peek(), hierarchy.selection.peek()),
@@ -127,6 +128,7 @@ const viewport = new ViewportController({
 // and the console are the game's
 const play = new PlayController({
   api: window.play,
+  stats: store.clientStats,
   setPlayMode: (reason) => store.setPlayMode(reason),
   // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
   settle: async () => {
