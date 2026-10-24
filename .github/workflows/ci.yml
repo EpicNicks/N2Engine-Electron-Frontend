@@ -42,7 +42,7 @@ jobs:
         run: npm test
 
   protocol:
-    name: Generated protocol matches the pinned engine
+    name: Generated protocol and Lua API match the pinned engine
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,20 +55,26 @@ jobs:
           repository: EpicNicks/N2Engine
           ref: ${{ steps.engine.outputs.ref }}
           path: engine
-          sparse-checkout: editor-server/protocol
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            editor-server/protocol
+            editor-server/editor-api.lua
+            engine/src/scripting/bindings/engine-api.lua
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Regenerate src/protocol/protocol.generated.ts and test-vectors.json
-        run: node scripts/sync-protocol.js engine
-      - name: Fail if src/protocol differs from what is committed (changed or new files)
+      - name: Regenerate protocol and Lua API declarations
         run: |
-          if [ -n "$(git status --porcelain -- src/protocol)" ]; then
-            git status --porcelain -- src/protocol
-            git diff -- src/protocol
-            echo "::error::src/protocol/protocol.generated.ts or test-vectors.json is out of date with the engine at $(cat engine-ref.txt). Run npm run sync-protocol against that engine commit and commit the result."
+          node scripts/sync-protocol.js engine
+          node scripts/sync-lua-api.js engine
+      - name: Fail if generated declarations differ from committed files
+        run: |
+          if [ -n "$(git status --porcelain -- src/protocol src/renderer/lua/lua-api.generated.json)" ]; then
+            git status --porcelain -- src/protocol src/renderer/lua/lua-api.generated.json
+            git diff -- src/protocol src/renderer/lua/lua-api.generated.json
+            echo "::error::Generated protocol or Lua API declarations are out of date with the engine at $(cat engine-ref.txt). Run npm run sync-protocol and npm run sync-lua-api against that engine commit and commit the result."
             exit 1
           fi

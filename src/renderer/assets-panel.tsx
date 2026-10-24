@@ -1,6 +1,8 @@
 // The Assets panel (protocol 1.9.0): the project's folders and assets as the host lists them, with their types and UUIDs;
 // drag an asset onto an asset field of the inspector; make folders and scripts; read and edit an asset's import
 // settings; and the text editor for scripts and other text files (bottom panel tabs). All state is in AssetsState.
+import { ScriptEditor } from "./script-editor"
+import type { LuaSyntaxChecker } from "./lua/lua-syntax"
 import { useRef } from "preact/hooks"
 import { entriesAfter } from "./console-store"
 import { AssetDragEffect, AssetDragType, assetDragData } from "./drag-types"
@@ -468,14 +470,9 @@ function OpenTextEditor({ path }: { path: string }) {
           ))}
         </div>
       )}
-      <textarea
-        class="script-editor"
-        spellcheck={false}
-        value={tab.text}
-        readOnly={!store.canWrite.value}
-        aria-label={nameOf(path)}
-        onInput={(e) => assets.editText(path, (e.currentTarget as HTMLTextAreaElement).value)}
-      />
+      <ScriptEditor path={path} text={tab.text} readOnly={!store.canWrite.value}
+        onChange={text => assets.editText(path, text)}
+        checkSyntax={(window.engine as unknown as { checkLuaSyntax?: LuaSyntaxChecker } | undefined)?.checkLuaSyntax} />
       <div class="text-status">
         <span>{path}</span>
         <span class={dirty ? "dirty" : ""}>{status}</span>

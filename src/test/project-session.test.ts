@@ -19,6 +19,7 @@ import type { SshTunnel, TunnelOptions } from "../main/ssh-tunnel"
 /** The HostProcess surface ProjectSession uses */
 class FakeHost {
   killed = 0
+  onKill: (() => void) | null = null
   /** Ignores kill (a host that takes its time to die) */
   stubborn = false
   exitInfo: HostExit | null = null
@@ -42,6 +43,7 @@ class FakeHost {
   }
   kill(): void {
     this.killed++
+    this.onKill?.()
     if (!this.stubborn) this.end({ code: null, signal: "SIGTERM" })
   }
   /** The process ends */
@@ -436,10 +438,12 @@ describe("ProjectSession: quitting, reloading, stopping and closing", () => {
     const { session, hosts, launches } = setup({ stopGraceMs: 30 })
     await session.openProject("A")
     hosts[0].stubborn = true
+    const stopping = new Promise<void>(resolve => { hosts[0].onKill = resolve })
     const opening = session.openProject("B")
-    await tick()
+    await stopping
     // openProject(B) is in stopCurrent, waiting for host A to exit
     session.shutdown()
+    hosts[0].end({ code: null, signal: "SIGTERM" })
     await assert.rejects(opening, CancelledError)
     assert.equal(launches.length, 1, "nothing launched after shutdown")
   })
@@ -448,9 +452,11 @@ describe("ProjectSession: quitting, reloading, stopping and closing", () => {
     const { session, hosts, launches, getRoot } = setup({ stopGraceMs: 30 })
     await session.openProject("A")
     hosts[0].stubborn = true
+    const stopping = new Promise<void>(resolve => { hosts[0].onKill = resolve })
     const opening = session.openProject("B")
-    await tick()
+    await stopping
     const resetting = session.reset()
+    hosts[0].end({ code: null, signal: "SIGTERM" })
     await assert.rejects(opening, CancelledError)
     await resetting
     assert.equal(launches.length, 1)

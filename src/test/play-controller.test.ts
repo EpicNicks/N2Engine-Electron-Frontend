@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict"
 import type { EventsResponse } from "../protocol/protocol.generated"
 import { GameEndedMessage, InitialPlayState, PlayState } from "../shared/api"
 import { ConsoleEntry } from "../renderer/console-store"
+import { ClientStats } from "../renderer/client-stats"
 import {
   PlayControllerApi,
   PlayController,
@@ -63,7 +64,7 @@ class FakeApi implements PlayControllerApi {
   }
 }
 
-function setup(options: { canStart?: boolean } = {}) {
+function setup(options: { canStart?: boolean; stats?: ClientStats } = {}) {
   const api = new FakeApi()
   const pumpCallbacks: Array<() => void> = []
   const modes: Array<string | null> = []
@@ -75,6 +76,7 @@ function setup(options: { canStart?: boolean } = {}) {
   const order: string[] = []
   const controller = new PlayController({
     api,
+    stats: options.stats,
     settle: async () => {
       order.push("settle")
       await turn()
@@ -110,6 +112,40 @@ function setup(options: { canStart?: boolean } = {}) {
 }
 
 describe("PlayController", () => {
+  test("samples unchanged GetPlayState answers so paused game progress is measured as zero", async () => {
+    let now = 0
+    const stats = new ClientStats(() => now)
+    stats.connectionChanged(true)
+    const t = setup({ stats })
+    t.api.push(state("paused", { frame: 20, time: 0.3 }))
+    assert.equal(stats.snapshot().playFramesPerSecond, null)
+    now = 250
+    t.timers.find((timer) => timer.ms === PlayRefreshMs && !timer.stopped)!.callback()
+    await turn()
+    assert.equal(stats.snapshot().playFramesPerSecond, 0)
+    assert.equal(stats.snapshot().playTimePerSecond, 0)
+    assert.equal(t.api.calls.filter((call) => call === "refresh").length, 1)
+    t.api.push(state("stopped"))
+    assert.equal(stats.snapshot().playFramesPerSecond, null)
+    assert.ok(t.timers.every((timer) => timer.stopped))
+  })
+
+  test("a late GetPlayState sample cannot restore progress after the game stopped", async () => {
+    const stats = new ClientStats(() => 250)
+    stats.connectionChanged(true)
+    const t = setup({ stats })
+    const playing = state("playing", { frame: 20, time: 0.3 })
+    t.api.push(playing)
+    let answer!: (state: PlayState) => void
+    t.api.refresh = () => new Promise((resolve) => { answer = resolve })
+    t.timers.find((timer) => timer.ms === PlayRefreshMs && !timer.stopped)!.callback()
+    t.api.push(state("stopped"))
+    answer(playing)
+    await turn()
+    assert.equal(stats.snapshot().playStatus, "stopped")
+    assert.equal(stats.snapshot().playFramesPerSecond, null)
+  })
+
   test("starts stopped, with Play available when the editor can start a game", () => {
     const t = setup()
     assert.equal(t.controller.active.value, false)

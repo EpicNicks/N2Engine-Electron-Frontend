@@ -6,6 +6,7 @@
 // stretched. Frames arrive as RGBA, top row first (engine #69), and are drawn as they are.
 import type { FrameUpdateResponse } from "../protocol/protocol.generated"
 import type { EngineApi, PlayApi } from "../shared/api"
+import type { ClientStats } from "./client-stats"
 import { FrameRetryPolicy, FrameScheduler } from "./viewport-frames"
 import { PixelSize, cssSizeForPixels, viewportPixelSize } from "./viewport-size"
 
@@ -53,6 +54,8 @@ export function gameTarget(play: Pick<PlayApi, "state" | "renderFrame" | "setVie
 }
 
 export interface ViewportHooks {
+  /** Client-side observations only; no additional frame requests. */
+  stats?: ClientStats
   /** An editor frame was presented: its size is the one the picture (and so the gizmo's maths) has */
   onFrame?(size: PixelSize): void
   /** A game frame was presented (its size is the viewport's, which the game's input is in) */
@@ -86,7 +89,13 @@ export class ViewportRenderer {
   ) {
     this.context = canvas.getContext("2d")!
     this.scheduler = new FrameScheduler({
-      request: (since) => this.target.request(since),
+      request: async (since) => {
+        const target = this.target
+        const measurement = this.hooks.stats?.beginFrameRequest(target.kind)
+        const frame = await target.request(since)
+        if (measurement) this.hooks.stats?.frameReceived(measurement, frame.pixels.byteLength)
+        return frame
+      },
       present: (frame) => {
         if (this.canvas.width !== frame.width || this.canvas.height !== frame.height) {
           this.canvas.width = frame.width
@@ -97,6 +106,7 @@ export class ViewportRenderer {
         const { buffer, byteOffset, byteLength } = frame.pixels
         const pixels = new Uint8ClampedArray(buffer as ArrayBuffer, byteOffset, byteLength)
         this.context.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0)
+        this.hooks.stats?.framePresented(this.target.kind)
         this.retry.succeeded()
         if (this.target.kind === "game") {
           this.hooks.onGameFrame?.({ width: frame.width, height: frame.height })
@@ -137,6 +147,7 @@ export class ViewportRenderer {
   start(): void {
     if (this.scheduler.isRunning || this.disposed) return
     this.syncSize(true)
+    this.hooks.stats?.viewportStarted(this.target.kind)
     this.scheduler.start()
   }
 
@@ -148,6 +159,7 @@ export class ViewportRenderer {
   stop(): void {
     this.clearRetry()
     this.scheduler.stop()
+    this.hooks.stats?.viewportStopped()
     this.setSentSize(null)
   }
 

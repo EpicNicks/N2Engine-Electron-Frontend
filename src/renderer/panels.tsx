@@ -3,6 +3,7 @@
 import { useEffect, useState } from "preact/hooks"
 import type { EngineHealthResponse } from "../protocol/protocol.generated"
 import { Empty, Panel, useApp } from "./ui"
+import { ClientStatsPanel } from "./client-stats-panel"
 
 // ==================== Engine health ====================
 
@@ -69,6 +70,7 @@ export function EnginePanel() {
       }
     >
       {content}
+      {connected && <ClientStatsPanel />}
     </Panel>
   )
 }
