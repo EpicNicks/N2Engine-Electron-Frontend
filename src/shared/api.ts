@@ -435,6 +435,23 @@ export interface ExtensionTrustState {
   enabled: boolean
 }
 
+/** Local launch preferences, independent of any connected engine or project role. Empty path uses N2ENGINE_HOST. */
+export interface HostLaunchPreferences {
+  hostPath: string
+  renderer: "" | "opengl" | "software"
+  readyTimeoutMs: number
+}
+export interface HostPreferencesState {
+  settings: HostLaunchPreferences
+  location: Pick<HostLocation, "path" | "source" | "problem">
+}
+/** The main process stores launch settings; choosing a file does not save or launch it. */
+export interface PreferencesApi {
+  getHost(): Promise<HostPreferencesState>
+  saveHost(settings: HostLaunchPreferences): Promise<HostPreferencesState>
+  chooseHostPath(): Promise<string | null>
+}
+
 /** window.host: the project's editor host process */
 export interface HostApi {
   /** The last known state (pushed by the main process, so it's synchronous) */
@@ -717,6 +734,9 @@ export const Channels = {
   hostStop: "host:stop",
   hostLocation: "host:location",
   hostLocate: "host:locate",
+  preferencesGetHost: "preferences:getHost",
+  preferencesSaveHost: "preferences:saveHost",
+  preferencesChooseHost: "preferences:chooseHost",
   /** (settings: RemoteSettings, token: string) → IpcResult<string> */
   remoteConnect: "remote:connect",
   remoteGetRecent: "remote:getRecent",

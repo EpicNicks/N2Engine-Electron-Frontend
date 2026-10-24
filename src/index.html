@@ -608,6 +608,26 @@
       ::-webkit-scrollbar-track { background: #1e1e1e; }
       ::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
       ::-webkit-scrollbar-thumb:hover { background: #666; }
+      /* Local Preferences dialog. */
+      .preferences-dialog { width: min(580px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; }
+      .preferences-dialog select { background: #3c3c3c; color: #ccc; border: 1px solid #555; border-radius: 2px; padding: 6px; font: inherit; color-scheme: dark; }
+      .preferences-dialog h2 { margin-bottom: 8px; }
+      .preferences-dialog fieldset { border: 1px solid #444; border-radius: 4px; margin: 14px 0; padding: 10px 12px; min-width: 0; }
+      .preferences-dialog legend { padding: 0 4px; font-weight: 600; }
+      .preferences-dialog label { display: block; margin-top: 10px; margin-bottom: 4px; }
+      .preferences-dialog input, .preferences-dialog select { width: 100%; min-width: 0; }
+      .preferences-path { display: flex; gap: 6px; }
+      .preferences-path input { flex: 1; }
+      .preferences-path button { flex-shrink: 0; }
+      .preferences-dialog .note { font-size: 12px; color: #aaa; margin-top: 6px; line-height: 1.4; }
+      .preferences-location { color: #aaa; font-size: 11px; margin-top: 6px; overflow-wrap: anywhere; }
+      .preferences-error { color: #f48771; margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+      .preferences-error button { margin-left: 8px; }
+      .preferences-dialog .modal-buttons { align-items: center; flex-wrap: wrap; }
+      .preferences-dialog .modal-buttons > span { flex: 1; color: #e6b450; font-size: 11px; }
+      .preferences-discard { border-top: 1px solid #555; padding-top: 10px; }
+      .preferences-discard p { margin-bottom: 8px; }
+      .preferences-discard button { margin-right: 8px; }
     </style>
   </head>
   <body>

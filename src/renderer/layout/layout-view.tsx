@@ -1,3 +1,4 @@
+import { showPreferences } from "../preferences-request"
 // The editor's panels on screen: the four regions, each a column of tab stacks, with splitters between the regions, a
 // Window menu, and tabs that can be dragged to another stack or region (or moved from their menu, for the keyboard).
 // The arrangement itself is the layout model (layout-model.ts); this file is the DOM glue over LayoutController.
@@ -393,6 +394,7 @@ export function windowMenuItems(controller: LayoutController): MenuItem[] {
     items.push({ label: "Forget the saved default layout", action: () => controller.forgetUserDefault() })
   }
   items.push({ separator: true })
+  items.push({ label: "Preferences...", action: showPreferences })
   items.push({ label: "Keyboard shortcuts", action: () => showShortcutsDialog(keymap.describe()) })
   return items
 }

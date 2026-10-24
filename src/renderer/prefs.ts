@@ -346,6 +346,16 @@ export class PrefsStore {
     }
   }
 
+  /** Readback for an explicit Save UI. Guarded stores can otherwise apply a value only for this session. */
+  persisted(entry: Entry): boolean {
+    try {
+      const raw = this.storage.get(entry.storageKey)
+      if (!raw) return false
+      const parsed: unknown = JSON.parse(raw)
+      return isRecord(parsed) && parsed.version === PrefsVersion && JSON.stringify(parsed.value) === JSON.stringify(entry.value)
+    } catch { return false }
+  }
+
   /** Writes what is waiting when the window is hidden, closed or reloaded; returns the detach */
   flushOnUnload(target: EventTarget): () => void {
     const save = () => this.flush()
@@ -384,6 +394,12 @@ export class PrefScopeView<S extends PrefScope> {
   set<T>(def: PrefDef<T, S>, value: T, options: { immediate?: boolean } = {}): boolean {
     const entry = this.store.entry(def as PrefDef<unknown>, this.scopeId)
     return entry ? this.store.write(entry, value, options.immediate === true) : false
+  }
+
+  /** Whether the value matches durable storage after an explicit immediate write. */
+  isPersisted<T>(def: PrefDef<T, S>): boolean {
+    const entry = this.store.entry(def as PrefDef<unknown>, this.scopeId)
+    return !!entry && this.store.persisted(entry)
   }
 
   /** Forgets the value: the default applies again */

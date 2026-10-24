@@ -12,6 +12,7 @@ import { HostSettings } from "./host-settings"
 import { EditorPage } from "./ipc"
 import { PlaySession } from "./play-session"
 import { registerPlayIpc } from "./play-ipc"
+import { registerPreferencesIpc } from "./preferences-ipc"
 import { registerProjectIpc } from "./project-ipc"
 import { registerRemoteIpc } from "./remote-ipc"
 import { ProjectFiles } from "./project-files"
@@ -117,6 +118,13 @@ engine.client.onClose(() => {
 registerPlayIpc(ipcMain, { page, session: play })
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
+registerPreferencesIpc(ipcMain, { page, settings, chooseHostPath: async () => {
+  const window = getWindow()
+  if (!window) return null
+  const result = await dialog.showOpenDialog(window, { title: "Choose N2EditorHost", properties: ["openFile"],
+    filters: process.platform === "win32" ? [{ name: "Programs", extensions: ["exe"] }, { name: "All files", extensions: ["*"] }] : [] })
+  return result.canceled ? null : result.filePaths[0] ?? null
+} })
 registerRemoteIpc(ipcMain, { page, session: projectSession, recent: recentRemotes, pins })
 
 function createWindow(): void {

@@ -1,3 +1,4 @@
+import { showPreferences } from "./preferences-request"
 // The welcome screen, in two modes. Local engine: open a project, create one (N2EditorHost --create, engine #90),
 // reopen a recent one, and say where N2EditorHost is. Remote engine (frontend issue #21): connect to a host that is
 // already running, through an SSH tunnel the editor opens (user@host, ports, identity file and the access token).
@@ -459,6 +460,7 @@ export function Welcome() {
       <div class="welcome-screen">
         <h1>N2Engine Editor</h1>
         <ModeSwitch />
+        <button class="secondary" onClick={showPreferences}>Preferences...</button>
         <RemoteForm />
       </div>
     )
@@ -472,6 +474,7 @@ export function Welcome() {
     <div class="welcome-screen">
       <h1>N2Engine Editor</h1>
       <ModeSwitch />
+      <button class="secondary" onClick={showPreferences}>Preferences...</button>
       <div class="actions">
         <button onClick={() => store.openProject()} disabled={busy || !hostUsable}>
           Open Project

@@ -9,7 +9,9 @@
 // readyTimeoutMs: how long a launched host may take to print its ready line (default 30 s).
 import * as fs from "fs"
 import * as path from "path"
-import type { HostLocation } from "../shared/api"
+import { randomUUID } from "crypto"
+import type { HostLocation, HostPreferencesState } from "../shared/api"
+import { parseHostLaunchPreferences } from "../shared/host-preferences"
 import { DefaultReadyTimeoutMs } from "./host-launcher"
 
 /** The environment variable that names the host executable when none is configured */
@@ -81,6 +83,52 @@ export class HostSettings {
     return value === "opengl" || value === "software" ? value : undefined
   }
 
+  preferences(): HostPreferencesState {
+    const raw = this.readPreferences()
+    const configured = typeof raw.hostPath === "string" ? raw.hostPath : ""
+    const effective = configured || (this.env[HostPathEnv] ? path.resolve(this.env[HostPathEnv]!) : null)
+    const renderer = raw.renderer === "opengl" || raw.renderer === "software" ? raw.renderer : ""
+    const readyTimeoutMs = typeof raw.readyTimeoutMs === "number" && Number.isFinite(raw.readyTimeoutMs) && raw.readyTimeoutMs > 0
+      ? raw.readyTimeoutMs : DefaultReadyTimeoutMs
+    return { settings: { hostPath: configured, renderer, readyTimeoutMs }, location: {
+      path: effective, source: configured ? "setting" : effective ? "env" : null,
+      problem: effective ? hostPathProblem(effective) : null,
+    } }
+  }
+
+  /** Preferences must distinguish absent settings from a file the user needs to repair or regain access to. */
+  private readPreferences(): Record<string, unknown> {
+    let text: string
+    try { text = fs.readFileSync(this.file, "utf8") }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}
+      throw new Error(`Couldn't read editor settings: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    try {
+      const parsed: unknown = JSON.parse(text)
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("settings.json must contain an object")
+      return parsed as Record<string, unknown>
+    } catch (error) { throw new Error(`Couldn't read editor settings: ${error instanceof Error ? error.message : String(error)}`) }
+  }
+
+  /** Validate every field before writing. This changes future launches only, never the running session. */
+  savePreferences(raw: unknown): HostPreferencesState {
+    const value = parseHostLaunchPreferences(raw)
+    const resolved = value.hostPath ? path.resolve(value.hostPath) : ""
+    if (resolved) {
+      const problem = hostPathProblem(resolved)
+      if (problem) throw new Error(problem)
+    }
+    const previous = this.readPreferences()
+    const next: Record<string, unknown> = { ...previous, readyTimeoutMs: value.readyTimeoutMs }
+    if (resolved) next.hostPath = resolved
+    else delete next.hostPath
+    if (value.renderer) next.renderer = value.renderer
+    else delete next.renderer
+    this.write(next)
+    return this.preferences()
+  }
+
   private read(): Record<string, unknown> {
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(this.file, "utf-8"))
@@ -95,6 +143,12 @@ export class HostSettings {
 
   private write(settings: Record<string, unknown>): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true })
-    fs.writeFileSync(this.file, JSON.stringify(settings, null, 2))
+    const temporary = this.file + ".tmp-" + randomUUID()
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(settings, null, 2), { mode: fs.existsSync(this.file) ? fs.statSync(this.file).mode & 0o777 : 0o600 })
+      fs.renameSync(temporary, this.file)
+    } finally {
+      try { fs.rmSync(temporary, { force: true }) } catch { /* Preserve the original write failure. */ }
+    }
   }
 }
