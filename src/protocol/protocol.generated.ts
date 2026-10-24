@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.17.0";
+export const PROTOCOL_VERSION = "1.18.0";
 
 // ==================== Types ====================
 
@@ -259,6 +259,13 @@ export interface ExtensionResultInfo {
   warnings?: string[];
 }
 
+export interface ClipboardPayload {
+  format: string;
+  version: number;
+  objectCount: number;
+  entities: unknown[];
+}
+
 export interface LuaSyntaxResult {
   ok: boolean;
   line: number;
@@ -320,6 +327,8 @@ export const CommandType = {
   SetEntityParent: 0x36,
   SetEntityProperties: 0x37,
   DuplicateEntity: 0x38,
+  SerializeEntities: 0x3B,
+  InstantiateEntities: 0x3C,
   GetEntity: 0x39,
   SetLocalTransform: 0x3A,
   CreateScript: 0x40,
@@ -408,6 +417,8 @@ export const ResponseType = {
   ExtensionResult: 0x1F,
   LuaSyntax: 0x20,
   AssetPreview: 0xA4,
+  SerializedEntities: 0x21,
+  EntitiesCreated: 0x22,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -445,6 +456,8 @@ export const CommandResponse = {
   SetEntityParent: "Ok",
   SetEntityProperties: "Ok",
   DuplicateEntity: "EntityCreated",
+  SerializeEntities: "SerializedEntities",
+  InstantiateEntities: "EntitiesCreated",
   GetEntity: "EntityData",
   SetLocalTransform: "Ok",
   CreateScript: "ScriptData",
@@ -606,6 +619,17 @@ export interface SetEntityPropertiesRequest {
 
 export interface DuplicateEntityRequest {
   entityId: string;
+}
+
+export interface SerializeEntitiesRequest {
+  ids: unknown;
+}
+
+export interface InstantiateEntitiesRequest {
+  clipboard: string;
+  parentId: string;
+  siblingIndex: number;
+  keepExternalRefs: boolean;
 }
 
 export interface GetEntityRequest {
@@ -843,6 +867,14 @@ export interface EntityTransformResponse {
 export interface EntityListResponse {
   count: number;
   entities: EntityInfo[];
+}
+
+export interface SerializedEntitiesResponse {
+  clipboard: ClipboardPayload;
+}
+
+export interface EntitiesCreatedResponse {
+  ids: string[];
 }
 
 export interface EntityDataResponse {
@@ -1609,6 +1641,40 @@ export function decodeDuplicateEntityRequest(payload: Uint8Array): DuplicateEnti
   return { entityId };
 }
 
+/** SerializeEntities's request payload (without the frame header) */
+export function encodeSerializeEntitiesRequest(value: SerializeEntitiesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.ids);
+  return writer.finish();
+}
+
+/** Reads SerializeEntities's request payload; bytes after the last field are ignored */
+export function decodeSerializeEntitiesRequest(payload: Uint8Array): SerializeEntitiesRequest {
+  const reader = new ProtocolReader(payload);
+  const ids = reader.json() as unknown;
+  return { ids };
+}
+
+/** InstantiateEntities's request payload (without the frame header) */
+export function encodeInstantiateEntitiesRequest(value: InstantiateEntitiesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.clipboard);
+  writer.string(value.parentId);
+  writer.i32(value.siblingIndex);
+  writer.bool(value.keepExternalRefs);
+  return writer.finish();
+}
+
+/** Reads InstantiateEntities's request payload; bytes after the last field are ignored */
+export function decodeInstantiateEntitiesRequest(payload: Uint8Array): InstantiateEntitiesRequest {
+  const reader = new ProtocolReader(payload);
+  const clipboard = reader.string();
+  const parentId = reader.string();
+  const siblingIndex = reader.i32();
+  const keepExternalRefs = reader.bool();
+  return { clipboard, parentId, siblingIndex, keepExternalRefs };
+}
+
 /** GetEntity's request payload (without the frame header) */
 export function encodeGetEntityRequest(value: GetEntityRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2340,6 +2406,34 @@ export function decodeEntityListResponse(payload: Uint8Array): EntityListRespons
   return { count, entities };
 }
 
+/** SerializedEntities's payload (without the frame header) */
+export function encodeSerializedEntitiesResponse(value: SerializedEntitiesResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.clipboard);
+  return writer.finish();
+}
+
+/** Reads SerializedEntities's payload; bytes after the last field are ignored */
+export function decodeSerializedEntitiesResponse(payload: Uint8Array): SerializedEntitiesResponse {
+  const reader = new ProtocolReader(payload);
+  const clipboard = reader.json() as ClipboardPayload;
+  return { clipboard };
+}
+
+/** EntitiesCreated's payload (without the frame header) */
+export function encodeEntitiesCreatedResponse(value: EntitiesCreatedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.ids);
+  return writer.finish();
+}
+
+/** Reads EntitiesCreated's payload; bytes after the last field are ignored */
+export function decodeEntitiesCreatedResponse(payload: Uint8Array): EntitiesCreatedResponse {
+  const reader = new ProtocolReader(payload);
+  const ids = reader.json() as string[];
+  return { ids };
+}
+
 /** EntityData's payload (without the frame header) */
 export function encodeEntityDataResponse(value: EntityDataResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2730,6 +2824,8 @@ export const RequestCodecs = {
   SetEntityParent: { encode: encodeSetEntityParentRequest, decode: decodeSetEntityParentRequest },
   SetEntityProperties: { encode: encodeSetEntityPropertiesRequest, decode: decodeSetEntityPropertiesRequest },
   DuplicateEntity: { encode: encodeDuplicateEntityRequest, decode: decodeDuplicateEntityRequest },
+  SerializeEntities: { encode: encodeSerializeEntitiesRequest, decode: decodeSerializeEntitiesRequest },
+  InstantiateEntities: { encode: encodeInstantiateEntitiesRequest, decode: decodeInstantiateEntitiesRequest },
   GetEntity: { encode: encodeGetEntityRequest, decode: decodeGetEntityRequest },
   SetLocalTransform: { encode: encodeSetLocalTransformRequest, decode: decodeSetLocalTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
@@ -2778,6 +2874,8 @@ export const ResponseCodecs = {
   EntityCreated: { encode: encodeEntityCreatedResponse, decode: decodeEntityCreatedResponse },
   EntityTransform: { encode: encodeEntityTransformResponse, decode: decodeEntityTransformResponse },
   EntityList: { encode: encodeEntityListResponse, decode: decodeEntityListResponse },
+  SerializedEntities: { encode: encodeSerializedEntitiesResponse, decode: decodeSerializedEntitiesResponse },
+  EntitiesCreated: { encode: encodeEntitiesCreatedResponse, decode: decodeEntitiesCreatedResponse },
   EntityData: { encode: encodeEntityDataResponse, decode: decodeEntityDataResponse },
   ScriptData: { encode: encodeScriptDataResponse, decode: decodeScriptDataResponse },
   AssetList: { encode: encodeAssetListResponse, decode: decodeAssetListResponse },

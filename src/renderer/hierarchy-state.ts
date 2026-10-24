@@ -7,6 +7,7 @@ import type { EngineApi } from "../shared/api"
 import type { HierarchyResponse } from "../protocol/protocol.generated"
 import type { SceneChange } from "../protocol/editor-events"
 import type { EditGroups } from "./edit-groups"
+import { clipboardText, parseClipboardText } from "../protocol/entity-clipboard"
 import {
   DropTarget,
   RootId,
@@ -40,7 +41,9 @@ type Engine = Pick<
   | "setEntityProperties"
   | "duplicateEntity"
   | "destroyEntity"
->
+> &
+  // Protocol 1.18.0: a host before it has neither (the copy and paste actions say so)
+  Partial<Pick<EngineApi, "serializeEntities" | "instantiateEntities">>
 
 /** What the state asks the user, and tells the rest of the page */
 export interface HierarchyOptions {
@@ -53,6 +56,8 @@ export interface HierarchyOptions {
    * change is a step of its own.
    */
   groups?: Pick<EditGroups, "within">
+  /** The system clipboard as text; without it (or when it refuses) copy and paste go through the editor's own copy */
+  clipboard?: { readText(): Promise<string>; writeText(text: string): Promise<void> }
 }
 
 /** The objects the Create menu makes: a label and CreateEntityEx's preset */
@@ -91,6 +96,8 @@ export class HierarchyState {
   readonly readOnlyReason = signal<string | null>(null)
   readonly readOnly = computed(() => this.readOnlyReason.value !== null)
 
+  /** The editor's own copy (the clipboard text), for when the system clipboard can't be read; null: none */
+  private copied: string | null = null
   /** Counts reads, so a slow answer can't replace a newer one */
   private fetches = 0
   /** The newest read, which refresh() waits for */
@@ -467,6 +474,102 @@ export class HierarchyState {
           })
         }
       }
+    })
+  }
+
+  /** Whether the host can copy and paste objects (protocol 1.18.0) */
+  get canCopyPaste(): boolean {
+    return typeof this.engine.serializeEntities === "function" && typeof this.engine.instantiateEntities === "function"
+  }
+
+  /** Asks the host for the selected objects (the topmost, with what is under them) as the clipboard text */
+  private async serializeSelection(): Promise<string | null> {
+    if (!this.canCopyPaste) throw new Error("This editor host can't copy objects (it needs protocol 1.18.0)")
+    const ids = topLevel(this.tree.value, this.actingIds())
+    if (ids.length === 0) return null
+    return clipboardText(await this.engine.serializeEntities!(ids))
+  }
+
+  /** Keeps the text as the editor's own copy and puts it on the system clipboard (which may refuse: the copy stays) */
+  private async store(text: string): Promise<void> {
+    this.copied = text
+    try {
+      await this.options.clipboard?.writeText(text)
+    } catch {
+      // the editor's own copy still pastes within this window
+    }
+  }
+
+  /** Copies the selected objects with what is under them; resolves false when nothing is selected. Allowed during play. */
+  copySelected(): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      const text = await this.serializeSelection()
+      if (text === null) return false
+      await this.store(text)
+      return true
+    })
+  }
+
+  /** Copies the selected objects, then destroys them, as one undo step; nothing is destroyed unless the copy was made */
+  cutSelected(): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      this.assertEditable()
+      const ids = topLevel(this.tree.value, this.actingIds())
+      const text = await this.serializeSelection()
+      if (text === null) return false
+      await this.store(text)
+      try {
+        await this.grouped("Cut", ids.length, async () => {
+          for (const id of ids) await this.engine.destroyEntity(id)
+        })
+      } finally {
+        await this.refresh()
+      }
+      return true
+    })
+  }
+
+  /** The clipboard text to paste: the system clipboard's when it is ours; the editor's own copy when it can't be read */
+  private async clipboardToPaste(): Promise<string | null> {
+    if (this.options.clipboard) {
+      try {
+        return parseClipboardText(await this.options.clipboard.readText())
+      } catch {
+        // unreadable: the editor's own copy
+      }
+    }
+    return parseClipboardText(this.copied)
+  }
+
+  /**
+   * Pastes the copied objects right after the selected one (under the same parent), or last in the scene when nothing
+   * is selected, as one undo step, and selects them. Resolves false when there is nothing of ours to paste.
+   */
+  pasteCopied(): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      this.assertEditable()
+      if (!this.canCopyPaste) throw new Error("This editor host can't paste objects (it needs protocol 1.18.0)")
+      const json = await this.clipboardToPaste()
+      if (json === null) return false
+      const tree = this.tree.value
+      const anchor = topLevel(tree, this.actingIds()).pop()
+      const parentId = anchor === undefined ? RootId : (tree.parents.get(anchor) ?? RootId)
+      const siblingIndex = anchor === undefined ? -1 : childrenOf(tree, parentId).indexOf(anchor) + 1
+      let created: string[] = []
+      try {
+        // References to objects outside the copy are kept when the open scene has them (the host checks)
+        created = await this.engine.instantiateEntities!(json, parentId, siblingIndex, true)
+      } finally {
+        await this.refresh()
+      }
+      const found = created.filter((id) => this.tree.value.nodes.has(id))
+      if (found.length > 0) {
+        batch(() => {
+          for (const id of found) this.expandAncestors(id)
+          this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
+        })
+      }
+      return true
     })
   }
 

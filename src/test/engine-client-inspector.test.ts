@@ -114,8 +114,8 @@ const answerOf = (value: Partial<ExtensionResultResponse> = {}): Uint8Array =>
   )
 
 describe("the generated protocol at 1.16.0", () => {
-  test("the client is at 1.17.0 and InvokeInspectorAction is 0x83", () => {
-    assert.equal(PROTOCOL_VERSION, "1.17.0")
+  test("the client is at 1.18.0 and InvokeInspectorAction is 0x83", () => {
+    assert.equal(PROTOCOL_VERSION, "1.18.0")
     assert.equal(CommandType.InvokeInspectorAction, 0x83)
   })
 

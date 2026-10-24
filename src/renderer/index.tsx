@@ -106,6 +106,8 @@ const hierarchy = new HierarchyState(window.engine, {
   // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
   onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to select the object", e)),
   groups,
+  // Copy and paste also go through the system clipboard, so a paste can come from another window or project
+  clipboard: navigator.clipboard,
 })
 // The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected, click to select and
 // the selection box (the engine's PickEntity and GetEntityBounds)
