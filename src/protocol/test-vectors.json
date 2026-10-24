@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.17.0",
+  "protocolVersion": "1.18.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -239,6 +239,35 @@
         "entityId": "entityId 0 ✓ é"
       },
       "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "SerializeEntities",
+      "id": "0x3B",
+      "fields": {
+        "ids": {
+          "list": [
+            0,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "370000007b226c697374223a5b302c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "command": "InstantiateEntities",
+      "id": "0x3C",
+      "fields": {
+        "clipboard": "clipboard 0 ✓ é",
+        "parentId": "parentId 1 ✓ é",
+        "siblingIndex": -123458,
+        "keepExternalRefs": false
+      },
+      "payload": "12000000636c6970626f617264203020e29c9320c3a911000000706172656e744964203120e29c9320c3a9be1dfeff00"
     },
     {
       "command": "GetEntity",
@@ -944,6 +973,53 @@
         ]
       },
       "payload": "020000000b0000006964203120e29c9320c3a90d0000006e616d65203220e29c9320c3a90b0000006964203220e29c9320c3a90d0000006e616d65203320e29c9320c3a9"
+    },
+    {
+      "response": "SerializedEntities",
+      "id": "0x21",
+      "fields": {
+        "clipboard": {
+          "entities": [
+            {
+              "list": [
+                3,
+                "two ✓",
+                true,
+                null
+              ],
+              "nested": {
+                "value": 1.5
+              }
+            },
+            {
+              "list": [
+                4,
+                "two ✓",
+                true,
+                null
+              ],
+              "nested": {
+                "value": 1.5
+              }
+            }
+          ],
+          "format": "format 0 ✓",
+          "objectCount": 4.5,
+          "version": 3.5
+        }
+      },
+      "payload": "b60000007b22656e746974696573223a5b7b226c697374223a5b332c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c7b226c697374223a5b342c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d5d2c22666f726d6174223a22666f726d6174203020e29c93222c226f626a656374436f756e74223a342e352c2276657273696f6e223a332e357d"
+    },
+    {
+      "response": "EntitiesCreated",
+      "id": "0x22",
+      "fields": {
+        "ids": [
+          "ids 0 ✓",
+          "ids 1 ✓"
+        ]
+      },
+      "payload": "190000005b22696473203020e29c93222c22696473203120e29c93225d"
     },
     {
       "response": "EntityData",
