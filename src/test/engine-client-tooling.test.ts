@@ -10,6 +10,10 @@ import {
   PROTOCOL_VERSION,
   ResponseType,
   decodeCheckLuaSyntaxRequest,
+  decodeInstantiateEntitiesRequest,
+  decodeSerializeEntitiesRequest,
+  encodeEntitiesCreatedResponse,
+  encodeSerializedEntitiesResponse,
   decodeGetAssetPreviewRequest,
   decodeSetEditorViewOptionsRequest,
   encodeAssetPreviewResponse,
@@ -125,5 +129,33 @@ describe("EngineClient editor tooling commands", () => {
     const client = await connected()
     reply(ResponseType.Error, encodeErrorResponse({ message: "Unsupported asset type" }))
     await assert.rejects(client.getAssetPreview("res://a.mesh", 64), (e) => e instanceof EngineError && /Unsupported/.test(e.message))
+  })
+
+  test("serializeEntities sends the ids and answers the payload (protocol 1.18.0)", async () => {
+    const client = await connected()
+    const clipboard = { format: "n2engine.entities", version: 1, objectCount: 1, entities: [{ uuid: "a" }] }
+    reply(ResponseType.SerializedEntities, encodeSerializedEntitiesResponse({ clipboard }))
+    assert.deepEqual(await client.serializeEntities(["a", "b"]), clipboard)
+    assert.equal(requests[0].type, CommandType.SerializeEntities)
+    assert.deepEqual(decodeSerializeEntitiesRequest(requests[0].payload), { ids: ["a", "b"] })
+  })
+
+  test("instantiateEntities sends the text, the place and the flag, and answers the new ids", async () => {
+    const client = await connected()
+    reply(ResponseType.EntitiesCreated, encodeEntitiesCreatedResponse({ ids: ["n1", "n2"] }))
+    assert.deepEqual(await client.instantiateEntities('{"format":"n2engine.entities"}', "p", 3, true), ["n1", "n2"])
+    assert.equal(requests[0].type, CommandType.InstantiateEntities)
+    assert.deepEqual(decodeInstantiateEntitiesRequest(requests[0].payload), {
+      clipboard: '{"format":"n2engine.entities"}',
+      parentId: "p",
+      siblingIndex: 3,
+      keepExternalRefs: true,
+    })
+  })
+
+  test("the host's refusal of a payload is an EngineError", async () => {
+    const client = await connected()
+    reply(ResponseType.Error, encodeErrorResponse({ message: "Clipboard payload is too large" }))
+    await assert.rejects(client.instantiateEntities("{}", "", -1, false), (e) => e instanceof EngineError && /too large/.test(e.message))
   })
 })

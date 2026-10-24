@@ -9,6 +9,7 @@ import {
   ComponentSchema,
   CommandType,
   EngineHealthResponse,
+  ClipboardPayload,
   EntityDataResponse,
   EntityInfo,
   EventsResponse,
@@ -620,6 +621,28 @@ export class EngineClient {
 
   async duplicateEntity(entityId: string): Promise<string> {
     return (await this.send(Commands.DuplicateEntity, { entityId })).entityId
+  }
+
+  /**
+   * Protocol 1.18.0: the topmost of the objects with what is under them, in scene order, as an n2engine.entities
+   * payload (entityClipboard capability). Read-only: allowed during play.
+   */
+  async serializeEntities(ids: string[]): Promise<ClipboardPayload> {
+    return (await this.send(Commands.SerializeEntities, { ids })).clipboard
+  }
+
+  /**
+   * Protocol 1.18.0: builds the payload's JSON text under parentId at siblingIndex (-1: last) as one undo step, with
+   * fresh UUIDs; answers the new roots' ids. keepExternalRefs keeps references to objects outside the payload that
+   * exist in the open scene; the host refuses a payload over its limits.
+   */
+  async instantiateEntities(
+    clipboard: string,
+    parentId: string,
+    siblingIndex: number,
+    keepExternalRefs: boolean
+  ): Promise<string[]> {
+    return (await this.send(Commands.InstantiateEntities, { clipboard, parentId, siblingIndex, keepExternalRefs })).ids
   }
 
   getEntity(entityId: string): Promise<EntityDataResponse> {

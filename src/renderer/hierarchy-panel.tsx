@@ -144,6 +144,10 @@ export function HierarchyPanel() {
   const fail = (what: string) => (e: unknown) => store.reportError(what, e)
   const duplicate = () => hierarchy.duplicateSelected().catch(fail("Failed to duplicate"))
   const remove = () => hierarchy.deleteSelected().catch(fail("Failed to delete"))
+  const copyPaste = hierarchy.canCopyPaste
+  const copy = () => hierarchy.copySelected().catch(fail("Failed to copy"))
+  const cut = () => hierarchy.cutSelected().catch(fail("Failed to cut"))
+  const paste = () => hierarchy.pasteCopied().catch(fail("Failed to paste"))
 
   // The keys (the keymap's hierarchy scope: the list has the focus). The name being typed keeps its keys (the keymap
   // doesn't fire these in a text field); the active checkbox, say, doesn't take them from the list.
@@ -159,6 +163,19 @@ export function HierarchyPanel() {
       },
       "hierarchy.duplicate": (e) => {
         if (!readOnly && !e.repeat) void duplicate()
+      },
+      // A host before protocol 1.18.0 can't copy: the keys are left alone (false)
+      "hierarchy.copy": (e) => {
+        if (!copyPaste) return false
+        if (!e.repeat) void copy()
+      },
+      "hierarchy.cut": (e) => {
+        if (!copyPaste) return false
+        if (!readOnly && !e.repeat) void cut()
+      },
+      "hierarchy.paste": (e) => {
+        if (!copyPaste) return false
+        if (!readOnly && !e.repeat) void paste()
       },
       "hierarchy.next": () => void hierarchy.step(1, false),
       "hierarchy.previous": () => void hierarchy.step(-1, false),
@@ -179,6 +196,13 @@ export function HierarchyPanel() {
       ? [{ label: `Read only: ${hierarchy.readOnlyReason.value}`, action: () => {}, disabled: true }]
       : [
           { label: keymap.withChord("Rename", "hierarchy.rename"), action: () => hierarchy.beginRename(id) },
+          ...(copyPaste
+            ? [
+                { label: keymap.withChord("Cut", "hierarchy.cut"), action: cut },
+                { label: keymap.withChord("Copy", "hierarchy.copy"), action: copy },
+                { label: keymap.withChord("Paste", "hierarchy.paste"), action: paste },
+              ]
+            : []),
           { label: keymap.withChord("Duplicate", "hierarchy.duplicate"), action: duplicate },
           { label: keymap.withChord("Delete", "hierarchy.delete"), action: remove },
           { separator: true },

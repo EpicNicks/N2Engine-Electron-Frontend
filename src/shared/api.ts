@@ -13,6 +13,7 @@ import type {
   BoundsResponse,
   ComponentSchema,
   EngineHealthResponse,
+  ClipboardPayload,
   EntityDataResponse,
   EventsResponse,
   FrameDataResponse,
@@ -148,6 +149,10 @@ export interface EngineCommands {
   setEntityProperties(entityId: string, properties: JsonObject): Promise<void>
   /** Copies an object and everything under it, right after the original among its siblings; answers the copy's id */
   duplicateEntity(entityId: string): Promise<string>
+  /** Protocol 1.18.0: the topmost of the objects with what is under them as an n2engine.entities payload (a copy) */
+  serializeEntities(ids: string[]): Promise<ClipboardPayload>
+  /** Protocol 1.18.0: builds the payload's JSON text (a paste) as one undo step; answers the new roots' ids */
+  instantiateEntities(clipboard: string, parentId: string, siblingIndex: number, keepExternalRefs: boolean): Promise<string[]>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -288,6 +293,8 @@ export const EngineCommandArgs = {
   setEntityParent: ["string", "string", "int32", "bool"],
   setEntityProperties: ["string", "jsonObject"],
   duplicateEntity: ["string"],
+  serializeEntities: ["stringArray"],
+  instantiateEntities: ["string", "string", "int32", "bool"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],
