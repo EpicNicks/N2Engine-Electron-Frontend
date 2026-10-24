@@ -38,7 +38,7 @@ describe("read tools against a fake host", () => {
     assert.equal(d.bridge.backend, "connect")
     assert.equal(d.host.role, "editor")
     assert.equal(d.host.readOnly, false)
-    assert.equal(d.host.protocolVersion, "1.16.0")
+    assert.equal(d.host.protocolVersion, "1.17.0")
     assert.deepEqual(d.project, { name: "Demo", projectId: "22222222-0000-0000-0000-000000000000" })
     assert.equal(d.scene.path, "res://scenes/Main.scene")
     assert.equal(d.scene.dirty, false)

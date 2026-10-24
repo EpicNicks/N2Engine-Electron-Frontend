@@ -2,7 +2,8 @@
 import "./setup"
 import { test } from "node:test"
 import * as assert from "node:assert/strict"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/preact"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact"
+import { forEachDiagnostic } from "@codemirror/lint"
 import { signal } from "@preact/signals-core"
 import { EditorView } from "@codemirror/view"
 import { startCompletion, currentCompletions } from "@codemirror/autocomplete"
@@ -66,4 +67,49 @@ test("Lua member completion and the find/replace panel run inside the mounted ed
   fireEvent.keyDown(view.contentDOM, { key: "f", code: "KeyF", ctrlKey: true })
   await waitFor(() => assert.ok(view.dom.querySelector('.cm-search input[name="search"]')))
   assert.ok(view.dom.querySelector('.cm-search input[name="replace"]'))
+})
+
+test("a syntax error from the host becomes a squiggle at its line and column, after the debounce, and goes when the text is fixed", async () => {
+  const asked: string[] = []
+  const checkSyntax = async (text: string, name: string) => {
+    asked.push(`${name}|${text}`)
+    return text.includes("=\n") ? { ok: false, line: 1, column: 3, message: "unexpected symbol near '='" } : { ok: true, line: 0, message: "" }
+  }
+  const result = render(<ScriptEditor path="res://scripts/a.lua" text="x = 1" readOnly={false} onChange={() => {}} checkSyntax={checkSyntax} />)
+  const view = viewOf()
+  assert.equal(asked.length, 0, "nothing is asked before the debounce")
+  result.rerender(<ScriptEditor path="res://scripts/a.lua" text={"x ==\n"} readOnly={false} onChange={() => {}} checkSyntax={checkSyntax} />)
+  await waitFor(() => assert.ok(view.dom.querySelector(".cm-lintRange-error")), { timeout: 3000 })
+  assert.deepEqual(asked, ["res://scripts/a.lua|x ==\n"], "only the newest text was checked")
+  assert.ok(screen.getByRole("status").textContent?.includes("1 syntax error"))
+  const marks: string[] = []
+  forEachDiagnostic(view.state, (d, from, to) => marks.push(`${from}-${to}:${d.message}`))
+  assert.deepEqual(marks, ["2-3:unexpected symbol near '='"])
+  result.rerender(<ScriptEditor path="res://scripts/a.lua" text={"x = 2\n"} readOnly={false} onChange={() => {}} checkSyntax={checkSyntax} />)
+  await waitFor(() => assert.equal(view.dom.querySelector(".cm-lintRange-error"), null), { timeout: 3000 })
+  assert.equal(screen.queryByRole("status"), null)
+})
+
+test("a read-only editor still lints, a non-Lua file never does and a host that cannot check shows no squiggles", async () => {
+  const bad = async () => ({ ok: false, line: 1, message: "bad" })
+  let asked = 0
+  const counting = async () => { asked++; return bad() }
+  render(<ScriptEditor path="res://scripts/a.lua" text="oops" readOnly={true} onChange={() => {}} checkSyntax={counting} />)
+  await waitFor(() => assert.ok(viewOf().dom.querySelector(".cm-lintRange-error")), { timeout: 3000 })
+  cleanup()
+  asked = 0
+  render(<ScriptEditor path="res://data/a.json" text="{" readOnly={false} onChange={() => {}} checkSyntax={counting} />)
+  await new Promise(resolve => setTimeout(resolve, 800))
+  assert.equal(asked, 0)
+  assert.equal(viewOf().dom.querySelector(".cm-lintRange-error"), null)
+  cleanup()
+  render(<ScriptEditor path="res://scripts/a.lua" text="oops" readOnly={false} onChange={() => {}} />)
+  await new Promise(resolve => setTimeout(resolve, 800))
+  assert.equal(viewOf().dom.querySelector(".cm-lintRange-error"), null)
+})
+
+test("a failing check says it is unavailable instead of marking the code", async () => {
+  render(<ScriptEditor path="res://scripts/a.lua" text="x = 1" readOnly={false} onChange={() => {}} checkSyntax={async () => { throw new Error("connection lost") }} />)
+  await waitFor(() => assert.match(screen.getByRole("status").textContent ?? "", /Syntax check unavailable: connection lost/), { timeout: 3000 })
+  assert.equal(viewOf().dom.querySelector(".cm-lintRange-error"), null)
 })

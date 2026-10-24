@@ -2,6 +2,7 @@ import * as net from "net"
 import {
   AssetDetails,
   AssetListResponse,
+  LuaSyntaxResult,
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
@@ -36,6 +37,7 @@ import {
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { parseAssetDetails, parseAssetList } from "./asset-parse"
+import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
 import { checkComponentValues, checkId, parseComponentSchema, parseComponentTypes } from "./component-schema"
@@ -426,6 +428,25 @@ export class EngineClient {
     farPlane: number
   ): Promise<void> {
     return this.send(Commands.SetEditorCamera, { position, rotation, fovY, orthographic, orthoSize, nearPlane, farPlane })
+  }
+
+  /** Protocol 1.17.0: whether the editor view draws wireframe. View-only: no scene, history or save change; a play host refuses. */
+  setEditorViewOptions(wireframe: boolean): Promise<void> {
+    return this.send(Commands.SetEditorViewOptions, { wireframe })
+  }
+
+  /** Protocol 1.17.0: compiles Lua text on the host without running it; the answer is validated */
+  async checkLuaSyntax(text: string, chunkName: string): Promise<LuaSyntaxResult> {
+    return parseLuaSyntax(await this.send(Commands.CheckLuaSyntax, { text, chunkName }))
+  }
+
+  /**
+   * Protocol 1.17.0: a preview of a top-level asset (uuid or res:// path): a texture's RGBA pixels (longest edge at most
+   * maxSize, 1..256) or an audio clip's peaks. The answer is validated against maxSize.
+   */
+  async getAssetPreview(uuidOrPath: string, maxSize: number): Promise<AssetPreview> {
+    checkPreviewSize(maxSize)
+    return parseAssetPreview(await this.send(Commands.GetAssetPreview, { uuidOrPath, maxSize }), maxSize)
   }
 
   getEditorCamera(): Promise<EditorCameraResponse> {

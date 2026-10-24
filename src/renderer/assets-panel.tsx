@@ -2,8 +2,9 @@
 // drag an asset onto an asset field of the inspector; make folders and scripts; read and edit an asset's import
 // settings; and the text editor for scripts and other text files (bottom panel tabs). All state is in AssetsState.
 import { ScriptEditor } from "./script-editor"
-import type { LuaSyntaxChecker } from "./lua/lua-syntax"
+import { hostHasEditorTooling } from "../protocol/editor-tooling"
 import { useRef } from "preact/hooks"
+import { AssetThumb, DetailPreviewSize, RowPreviewSize } from "./asset-thumb"
 import { entriesAfter } from "./console-store"
 import { AssetDragEffect, AssetDragType, assetDragData } from "./drag-types"
 import { isTextAssetPath, parseImportSettings } from "./asset-edit"
@@ -178,6 +179,7 @@ function RowView({ row }: { row: AssetRow }) {
         <span class="arrow" />
       )}
       <span class="icon">{typeIcon(type, row.path)}</span>
+      {row.kind === "asset" && <AssetThumb asset={row.asset} size={RowPreviewSize} name={row.name} />}
       <span class="asset-name">{row.name}</span>
       <span class="asset-type">{type || "Unknown"}</span>
       <span class="asset-uuid">{shortUuid(entry.uuid)}</span>
@@ -224,6 +226,7 @@ function AssetDetailView() {
   return (
     <div class="asset-detail">
       <div class="asset-detail-title">{nameOf(file.path)}</div>
+      <AssetThumb asset={file} size={DetailPreviewSize} name={nameOf(file.path)} />
       <DetailLine label="Path" value={file.path} />
       <DetailLine label="Type" value={file.type || "Unknown"} />
       <DetailLine label="UUID" value={file.uuid} mono />
@@ -425,6 +428,8 @@ function OpenTextEditor({ path }: { path: string }) {
   // Ctrl+S in this editor writes its file (before the scene's save: the text scope is the more specific)
   useKeymapActions({ "text.save": () => void assets.saveText(path) }, root)
   const tab = assets.tabs.value.find((t) => t.path === path)
+  // CheckLuaSyntax (protocol 1.17.0) is a Read command: it lints in a read-only session too, but needs the connection
+  const lintAvailable = store.connected.value && hostHasEditorTooling(store.serverInfo.value?.protocolVersion)
   // The reload's errors arrive as log events after the save
   const entries = store.console.entries.value
   if (!tab) return null
@@ -472,7 +477,7 @@ function OpenTextEditor({ path }: { path: string }) {
       )}
       <ScriptEditor path={path} text={tab.text} readOnly={!store.canWrite.value}
         onChange={text => assets.editText(path, text)}
-        checkSyntax={(window.engine as unknown as { checkLuaSyntax?: LuaSyntaxChecker } | undefined)?.checkLuaSyntax} />
+        checkSyntax={lintAvailable ? window.engine?.checkLuaSyntax : undefined} />
       <div class="text-status">
         <span>{path}</span>
         <span class={dirty ? "dirty" : ""}>{status}</span>

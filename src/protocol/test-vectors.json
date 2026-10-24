@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.16.0",
+  "protocolVersion": "1.17.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -540,6 +540,32 @@
         ]
       },
       "payload": "ba0000005b7b22627574746f6e223a22627574746f6e203220e29c93222c22646f776e223a66616c73652c226b6579223a226b6579203120e29c93222c2274797065223a2274797065203020e29c93222c2278223a362e352c2279223a372e357d2c7b22627574746f6e223a22627574746f6e203320e29c93222c22646f776e223a747275652c226b6579223a226b6579203220e29c93222c2274797065223a2274797065203120e29c93222c2278223a372e352c2279223a382e357d5d"
+    },
+    {
+      "command": "SetEditorViewOptions",
+      "id": "0x17",
+      "fields": {
+        "wireframe": true
+      },
+      "payload": "01"
+    },
+    {
+      "command": "CheckLuaSyntax",
+      "id": "0xA7",
+      "fields": {
+        "text": "text 0 ✓ é",
+        "chunkName": "chunkName 1 ✓ é"
+      },
+      "payload": "0d00000074657874203020e29c9320c3a9120000006368756e6b4e616d65203120e29c9320c3a9"
+    },
+    {
+      "command": "GetAssetPreview",
+      "id": "0xA8",
+      "fields": {
+        "uuidOrPath": "uuidOrPath 0 ✓ é",
+        "maxSize": 305419897
+      },
+      "payload": "13000000757569644f7250617468203020e29c9320c3a979563412"
     }
   ],
   "responses": [
@@ -1952,6 +1978,50 @@
         "time": 1.75
       },
       "payload": "0e0000007374617465203020e29c9320c3a9795634120000e03f"
+    },
+    {
+      "response": "LuaSyntax",
+      "id": "0x20",
+      "fields": {
+        "result": {
+          "column": 4.5,
+          "line": 3.5,
+          "message": "message 3 ✓",
+          "ok": true
+        }
+      },
+      "payload": "3d0000007b22636f6c756d6e223a342e352c226c696e65223a332e352c226d657373616765223a226d657373616765203320e29c93222c226f6b223a747275657d"
+    },
+    {
+      "response": "AssetPreview",
+      "id": "0xA4",
+      "fields": {
+        "info": {
+          "channels": 11.5,
+          "durationMs": 10.5,
+          "height": 7.5,
+          "kind": "kind 0 ✓",
+          "modified": 5.5,
+          "path": "path 2 ✓",
+          "peaks": [
+            {
+              "max": 14.5,
+              "min": 13.5
+            },
+            {
+              "max": 15.5,
+              "min": 14.5
+            }
+          ],
+          "sampleRate": 12.5,
+          "sourceHeight": 9.5,
+          "sourceWidth": 8.5,
+          "uuid": "uuid 1 ✓",
+          "width": 6.5
+        },
+        "pixels": "01264b7095badf04"
+      },
+      "payload": "f80000007b226368616e6e656c73223a31312e352c226475726174696f6e4d73223a31302e352c22686569676874223a372e352c226b696e64223a226b696e64203020e29c93222c226d6f646966696564223a352e352c2270617468223a2270617468203220e29c93222c227065616b73223a5b7b226d6178223a31342e352c226d696e223a31332e357d2c7b226d6178223a31352e352c226d696e223a31342e357d5d2c2273616d706c6552617465223a31322e352c22736f75726365486569676874223a392e352c22736f757263655769647468223a382e352c2275756964223a2275756964203120e29c93222c227769647468223a362e357d01264b7095badf04"
     },
     {
       "response": "ErrorCoded",

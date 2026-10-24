@@ -2,6 +2,7 @@
 // engines record every command they receive.
 import { computed, signal } from "@preact/signals"
 import type { AssetInfo, HierarchyNode, HierarchyResponse, SceneInfoResponse } from "../protocol/protocol.generated"
+import type { AssetPreview } from "../protocol/editor-tooling"
 import { HostReadOnlyReason } from "../renderer/store"
 import type { EditorStore } from "../renderer/store"
 
@@ -16,6 +17,8 @@ export function stubStore(options: { connected?: boolean; scene?: SceneInfoRespo
       : options.scene
   )
   const playMode = signal<string | null>(null)
+  /** The host's Hello answer, as far as the panels read it (protocol 1.17.0 has the editor tooling commands) */
+  const serverInfo = signal<{ protocolVersion: string } | null>({ protocolVersion: "1.17.0" })
   const hostReadOnly = signal(false)
   const readOnlyReason = computed<string | null>(() => playMode.value ?? (hostReadOnly.value ? HostReadOnlyReason : null))
   const canWrite = computed(() => readOnlyReason.value === null)
@@ -26,6 +29,7 @@ export function stubStore(options: { connected?: boolean; scene?: SceneInfoRespo
   const calls: string[] = []
   const members = {
     connected,
+    serverInfo,
     scene,
     playMode,
     hostReadOnly,
@@ -60,6 +64,9 @@ export class FakeAssetHost {
   files = new Map<string, string>([["res://scripts/a.lua", "print(1)"]])
   /** The commands received, as text */
   calls: string[] = []
+  /** GetAssetPreview: the commands received, and what each asset (by path) answers (none: the host refuses) */
+  previewCalls: string[] = []
+  previews = new Map<string, AssetPreview>()
   /** A refusal the next command of this name throws */
   refuse = new Map<string, string>()
 
@@ -78,6 +85,13 @@ export class FakeAssetHost {
       const asset = this.assets.find((a) => a.path === path)
       if (!asset) throw new Error(`No asset ${path}`)
       return { ...asset, customData: {}, loaded: false }
+    },
+    getAssetPreview: async (uuidOrPath: string, maxSize: number) => {
+      this.previewCalls.push(`${uuidOrPath} ${maxSize}`)
+      const asset = this.assets.find((a) => a.uuid === uuidOrPath || a.path === uuidOrPath)
+      const preview = asset && this.previews.get(asset.path)
+      if (!preview) throw new Error("No preview")
+      return preview
     },
     setImportSettings: async () => {},
     readTextAsset: async (path: string) => {

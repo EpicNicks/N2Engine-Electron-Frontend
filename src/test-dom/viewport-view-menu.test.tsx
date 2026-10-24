@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/preact"
 import { ViewportViewMenu } from "../renderer/viewport-view-menu"
 import { attachViewportViewPrefs } from "../renderer/viewport-view-prefs"
 import { PrefsStore } from "../renderer/prefs"
-import { rig } from "../test/viewport-rig"
+import { rig, settle } from "../test/viewport-rig"
 import { keymap } from "../renderer/keymap"
 import { ViewportKeyboard } from "../renderer/viewport-keys"
 afterEach(cleanup)
@@ -48,4 +48,25 @@ test("bookmark and axis shortcuts only act inside the viewport and leave live-ga
     fireEvent.keyDown(view,{code:"Numpad5"});assert.equal(c.camera.orthographic,true)
     live=true;fireEvent.keyDown(view,{code:"Numpad5"});assert.equal(c.camera.orthographic,true)
   } finally {off();detach();view.remove()}
+})
+test("the Wireframe toggle tells the host, is remembered per project and sent again after a reload",async()=>{
+  const data=new Map<string,string>(),storage={get:(k:string)=>data.get(k)??null,set:(k:string,v:string)=>void data.set(k,v),remove:(k:string)=>void data.delete(k)}
+  const prefs=new PrefsStore(storage),a=rig({sceneKey:()=>"scene",viewOptions:{}}),off=attachViewportViewPrefs(a.controller,prefs.project(project))
+  await a.ready();show(a.controller)
+  const box=()=>screen.getByRole("checkbox",{name:"Wireframe"}) as HTMLInputElement
+  assert.equal(box().checked,false);assert.equal(box().disabled,false)
+  fireEvent.click(box());await settle();assert.deepEqual(a.wireframes,[true]);assert.equal(box().checked,true)
+  prefs.flush();off();cleanup()
+  const next=new PrefsStore(storage),b=rig({sceneKey:()=>"scene",viewOptions:{}}),offB=attachViewportViewPrefs(b.controller,next.project(project))
+  await b.ready();show(b.controller);await settle()
+  assert.equal(box().checked,true);assert.deepEqual(b.wireframes,[true]);offB();cleanup()
+  const other=rig({viewOptions:{}}),offC=attachViewportViewPrefs(other.controller,next.project("22222222-2222-4222-8222-222222222222"))
+  await other.ready();show(other.controller);assert.equal(box().checked,false);assert.deepEqual(other.wireframes,[]);offC()
+})
+test("the Wireframe toggle is disabled for a host without the command and while the game is live",()=>{
+  show(rig().controller)
+  assert.equal((screen.getByRole("checkbox",{name:"Wireframe"}) as HTMLInputElement).disabled,true)
+  cleanup()
+  show(rig({viewOptions:{}}).controller,false)
+  assert.equal((screen.getByRole("checkbox",{name:"Wireframe"}) as HTMLInputElement).disabled,true)
 })

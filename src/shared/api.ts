@@ -20,12 +20,14 @@ import type {
   HierarchyResponse,
   HistoryResponse,
   InputEvent,
+  LuaSyntaxResult,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
   Quat,
   Vec3,
 } from "../protocol/protocol.generated"
+import type { AssetPreview } from "../protocol/editor-tooling"
 import type { AudioSamples } from "../audio-stream"
 import type { ExtensionsInfo, ExtensionsResult, ExtensionsUi, InvokeResult } from "../protocol/extensions"
 
@@ -49,6 +51,12 @@ export interface EngineCommands {
     farPlane: number
   ): Promise<void>
   /** The editor camera as stored, with the view and projection matrices frames are rendered with */
+  /** Whether the editor view draws wireframe (protocol 1.17.0; view-only, not saved, refused by a play host) */
+  setEditorViewOptions(wireframe: boolean): Promise<void>
+  /** Compiles Lua text on the host without running it (protocol 1.17.0); a Read command, fine in a read-only session */
+  checkLuaSyntax(text: string, chunkName: string): Promise<LuaSyntaxResult>
+  /** A texture's RGBA pixels (longest edge at most maxSize, 1..256) or an audio clip's peaks (protocol 1.17.0) */
+  getAssetPreview(uuidOrPath: string, maxSize: number): Promise<AssetPreview>
   getEditorCamera(): Promise<EditorCameraResponse>
   /** The object under a pixel of the editor view (protocol 1.8.0; frame pixels, top-left origin); entityId "" is a miss */
   pickEntity(x: number, y: number, includeInactive: boolean): Promise<PickResultResponse>
@@ -242,6 +250,9 @@ export const EngineCommandArgs = {
   setViewportSize: ["int32", "int32"],
   renderFrameIfChanged: ["uint32"],
   setEditorCamera: ["vec3", "quat", "number", "bool", "number", "number", "number"],
+  setEditorViewOptions: ["bool"],
+  checkLuaSyntax: ["string", "string"],
+  getAssetPreview: ["string", "uint32"],
   getEditorCamera: [],
   pickEntity: ["number", "number", "bool"],
   getEntityBounds: ["stringArray"],

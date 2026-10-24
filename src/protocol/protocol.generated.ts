@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.16.0";
+export const PROTOCOL_VERSION = "1.17.0";
 
 // ==================== Types ====================
 
@@ -259,6 +259,33 @@ export interface ExtensionResultInfo {
   warnings?: string[];
 }
 
+export interface LuaSyntaxResult {
+  ok: boolean;
+  line: number;
+  column?: number;
+  message: string;
+}
+
+export interface AudioPeak {
+  min: number;
+  max: number;
+}
+
+export interface AssetPreviewInfo {
+  kind: string;
+  uuid: string;
+  path: string;
+  modified: number;
+  width?: number;
+  height?: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
+  durationMs?: number;
+  channels?: number;
+  sampleRate?: number;
+  peaks?: AudioPeak[];
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -333,6 +360,9 @@ export const CommandType = {
   GetPlayState: 0xB3,
   SendInput: 0xB4,
   Shutdown: 0xFF,
+  SetEditorViewOptions: 0x17,
+  CheckLuaSyntax: 0xA7,
+  GetAssetPreview: 0xA8,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -376,6 +406,8 @@ export const ResponseType = {
   EditorExtensions: 0x1D,
   EditorUi: 0x1E,
   ExtensionResult: 0x1F,
+  LuaSyntax: 0x20,
+  AssetPreview: 0xA4,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -453,6 +485,9 @@ export const CommandResponse = {
   GetPlayState: "PlayState",
   SendInput: "Ok",
   Shutdown: "Ok",
+  SetEditorViewOptions: "Ok",
+  CheckLuaSyntax: "LuaSyntax",
+  GetAssetPreview: "AssetPreview",
 } as const;
 
 // ==================== Messages ====================
@@ -688,6 +723,20 @@ export interface SendInputRequest {
   events: InputEvent[];
 }
 
+export interface SetEditorViewOptionsRequest {
+  wireframe: boolean;
+}
+
+export interface CheckLuaSyntaxRequest {
+  text: string;
+  chunkName: string;
+}
+
+export interface GetAssetPreviewRequest {
+  uuidOrPath: string;
+  maxSize: number;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -894,6 +943,15 @@ export interface PlayStateResponse {
   state: string;
   frame: number;
   time: number;
+}
+
+export interface LuaSyntaxResponse {
+  result: LuaSyntaxResult;
+}
+
+export interface AssetPreviewResponse {
+  info: AssetPreviewInfo;
+  pixels: Uint8Array;
 }
 
 export interface ErrorCodedResponse {
@@ -1925,6 +1983,52 @@ export function decodeSendInputRequest(payload: Uint8Array): SendInputRequest {
   return { events };
 }
 
+/** SetEditorViewOptions's request payload (without the frame header) */
+export function encodeSetEditorViewOptionsRequest(value: SetEditorViewOptionsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.bool(value.wireframe);
+  return writer.finish();
+}
+
+/** Reads SetEditorViewOptions's request payload; bytes after the last field are ignored */
+export function decodeSetEditorViewOptionsRequest(payload: Uint8Array): SetEditorViewOptionsRequest {
+  const reader = new ProtocolReader(payload);
+  const wireframe = reader.bool();
+  return { wireframe };
+}
+
+/** CheckLuaSyntax's request payload (without the frame header) */
+export function encodeCheckLuaSyntaxRequest(value: CheckLuaSyntaxRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.text);
+  writer.string(value.chunkName);
+  return writer.finish();
+}
+
+/** Reads CheckLuaSyntax's request payload; bytes after the last field are ignored */
+export function decodeCheckLuaSyntaxRequest(payload: Uint8Array): CheckLuaSyntaxRequest {
+  const reader = new ProtocolReader(payload);
+  const text = reader.string();
+  const chunkName = reader.string();
+  return { text, chunkName };
+}
+
+/** GetAssetPreview's request payload (without the frame header) */
+export function encodeGetAssetPreviewRequest(value: GetAssetPreviewRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  writer.u32(value.maxSize);
+  return writer.finish();
+}
+
+/** Reads GetAssetPreview's request payload; bytes after the last field are ignored */
+export function decodeGetAssetPreviewRequest(payload: Uint8Array): GetAssetPreviewRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  const maxSize = reader.u32();
+  return { uuidOrPath, maxSize };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2556,6 +2660,36 @@ export function decodePlayStateResponse(payload: Uint8Array): PlayStateResponse 
   return { state, frame, time };
 }
 
+/** LuaSyntax's payload (without the frame header) */
+export function encodeLuaSyntaxResponse(value: LuaSyntaxResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.result);
+  return writer.finish();
+}
+
+/** Reads LuaSyntax's payload; bytes after the last field are ignored */
+export function decodeLuaSyntaxResponse(payload: Uint8Array): LuaSyntaxResponse {
+  const reader = new ProtocolReader(payload);
+  const result = reader.json() as LuaSyntaxResult;
+  return { result };
+}
+
+/** AssetPreview's payload (without the frame header) */
+export function encodeAssetPreviewResponse(value: AssetPreviewResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  writer.bytes(value.pixels);
+  return writer.finish();
+}
+
+/** Reads AssetPreview's payload; bytes after the last field are ignored */
+export function decodeAssetPreviewResponse(payload: Uint8Array): AssetPreviewResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as AssetPreviewInfo;
+  const pixels = reader.rest();
+  return { info, pixels };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2620,6 +2754,9 @@ export const RequestCodecs = {
   SetPaused: { encode: encodeSetPausedRequest, decode: decodeSetPausedRequest },
   Step: { encode: encodeStepRequest, decode: decodeStepRequest },
   SendInput: { encode: encodeSendInputRequest, decode: decodeSendInputRequest },
+  SetEditorViewOptions: { encode: encodeSetEditorViewOptionsRequest, decode: decodeSetEditorViewOptionsRequest },
+  CheckLuaSyntax: { encode: encodeCheckLuaSyntaxRequest, decode: decodeCheckLuaSyntaxRequest },
+  GetAssetPreview: { encode: encodeGetAssetPreviewRequest, decode: decodeGetAssetPreviewRequest },
 } as const;
 
 /** Each response's codecs */
@@ -2661,5 +2798,7 @@ export const ResponseCodecs = {
   Autosave: { encode: encodeAutosaveResponse, decode: decodeAutosaveResponse },
   PlaySnapshot: { encode: encodePlaySnapshotResponse, decode: decodePlaySnapshotResponse },
   PlayState: { encode: encodePlayStateResponse, decode: decodePlayStateResponse },
+  LuaSyntax: { encode: encodeLuaSyntaxResponse, decode: decodeLuaSyntaxResponse },
+  AssetPreview: { encode: encodeAssetPreviewResponse, decode: decodeAssetPreviewResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

@@ -16,6 +16,7 @@ import { HierarchyState } from "./hierarchy-state"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
 import { applyMarquee, marqueeCandidatesOf } from "./viewport-marquee"
+import { hostHasEditorTooling } from "../protocol/editor-tooling"
 import { createPickBackend, hostHasPicking } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
 import { PlayController } from "./play-controller"
@@ -96,7 +97,9 @@ const assets = new AssetsState(
   { mark: () => store.console.lastEntryId, poll: () => store.console.pollNow() },
   (what, e) => store.reportError(what, e),
   // The host refuses the asset writers during a play session, and always when it is read-only
-  () => store.readOnlyReason.peek()
+  () => store.readOnlyReason.peek(),
+  // Previews need GetAssetPreview (protocol 1.17.0)
+  () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion)
 )
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
@@ -111,6 +114,8 @@ const viewport = new ViewportController({
   groups,
   picking: createPickBackend(window.engine),
   // No scene open, or a host from before protocol 1.8.0: a click asks nothing (and raises no error)
+  // Wireframe is for the editor view: a host from before protocol 1.17.0 has no such command
+  canViewOptions: () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion),
   canPick: () => store.scene.peek() !== null && hostHasPicking(store.serverInfo.peek()?.protocolVersion),
   onError: (what, e) => store.reportError(what, e),
   onNote: (message) => store.console.note("warn", message),
