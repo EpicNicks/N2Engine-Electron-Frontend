@@ -38,6 +38,8 @@ export function rig(
     sceneKey?: () => string
     canEdit?: boolean
     picking?: PickBackend
+    /** The host has SetEditorViewOptions (protocol 1.17.0): the wireframe flags it was sent are in `wireframes`; it refuses when `refuse` is set */
+    viewOptions?: { refuse?: () => string | null }
     /** The marquee's candidates (and the scene revision they were listed at; change it to make the cache old); none: no marquee */
     marquee?: { ids: string[]; revision: number; select?: (ids: readonly string[], op: MarqueeOp) => void }
   } = {}
@@ -51,6 +53,8 @@ export function rig(
   /** What each marquee selected, and how */
   const marquees: Array<{ ids: string[]; op: MarqueeOp }> = []
   let frames = 0
+  const wireframes: boolean[] = []
+  let viewOptionsOn = options.viewOptions !== undefined
   let canEdit = options.canEdit ?? true
   const deps: ViewportDeps = {
     engine: {
@@ -86,11 +90,20 @@ export function rig(
     onError: (what) => errors.push(what),
     onNote: () => {},
     canEdit: () => canEdit,
+    canViewOptions: () => viewOptionsOn,
     sceneKey: options.sceneKey,
     selected: () => selection[0] ?? null,
     moveIds: () => selection,
     selectionIds: () => selection,
     select: (id) => selected.push(id),
+  }
+  if (options.viewOptions) {
+    const view = options.viewOptions
+    deps.engine.setEditorViewOptions = async (wireframe) => {
+      const refusal = view.refuse?.()
+      if (refusal) throw new Error(refusal)
+      wireframes.push(wireframe)
+    }
   }
   if (options.marquee) {
     const marquee = options.marquee
@@ -111,6 +124,8 @@ export function rig(
     selected,
     marquees,
     frames: () => frames,
+    wireframes,
+    setViewOptions: (value: boolean) => (viewOptionsOn = value),
     setCanEdit: (value: boolean) => (canEdit = value),
     /** Connects and reads the targets; the gizmo is then where the primary object is */
     async ready() {

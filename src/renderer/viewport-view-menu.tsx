@@ -14,6 +14,8 @@ export function ViewportViewMenu({viewport,enabled,onUsed}:{viewport:ViewportCon
         {["front","back","left","right","top","bottom"].map(axis=><option value={axis}>{axis}</option>)}
       </select></label>
       <button type="button" disabled={!enabled || !viewport.target.value} onClick={()=>{viewport.alignViewToSelected();onUsed?.()}}>Align view to selected</button>
+      <label title={viewport.canViewOptions ? "Draw the editor view as wireframe (not saved in the scene; some backends ignore it)" : "The editor host doesn't support wireframe"}>
+        <input type="checkbox" disabled={!enabled || !viewport.canViewOptions} checked={viewport.viewPreferences.value.wireframe} onChange={e=>viewport.setWireframe((e.target as HTMLInputElement).checked)} />Wireframe</label>
       <fieldset><legend>Gizmos (overlays draw through objects)</legend>
         {(Object.keys(labels) as Array<keyof OverlayOptions>).map(key=><label><input type="checkbox" disabled={!enabled} checked={options[key]} onChange={e=>viewport.setOverlay(key,(e.target as HTMLInputElement).checked)} />{labels[key]}</label>)}
       </fieldset>

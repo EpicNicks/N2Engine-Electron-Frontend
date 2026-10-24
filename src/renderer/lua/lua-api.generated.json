@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "8b7e8cac7f3f10b6e7643faa8cd1954c87c3e37c",
+  "engineRef": "03ada2ae82f23422839b23236d95174e6f325256",
   "runtime": {
     "available": true,
     "classes": {
@@ -616,6 +616,27 @@
         "description": "",
         "fields": {}
       },
+      "OverlapHit": {
+        "name": "OverlapHit",
+        "description": "One collider an overlap query found",
+        "fields": {
+          "gameObject": {
+            "name": "gameObject",
+            "type": "GameObject|nil",
+            "description": "The collider's body's object (its Rigidbody's object for a compound body)"
+          },
+          "collider": {
+            "name": "collider",
+            "type": "Component|nil",
+            "description": "The collider, as its own type (BoxCollider, ...)"
+          },
+          "rigidbody": {
+            "name": "rigidbody",
+            "type": "Rigidbody|nil",
+            "description": "nil for a static collider"
+          }
+        }
+      },
       "PhysicsMaterial": {
         "name": "PhysicsMaterial",
         "description": "",
@@ -659,6 +680,12 @@
         "name": "CapsuleCollider",
         "base": "Component",
         "description": "",
+        "fields": {}
+      },
+      "CharacterController": {
+        "name": "CharacterController",
+        "base": "Component",
+        "description": "An engine-owned character controller (docs/physics.html, \"Character controller\"): an upright capsule moved once per\nfixed tick over the physics backend's capsule casts, so it behaves the same on PhysX and Jolt. It has no body of its\nown (other bodies do not see it) and moves the object. Leave the layer of the object's own colliders out of its\nlayer mask. The input is held until the next SetInput, except the jump, which is one press. Settings are read at\nevery step; a value that is not a finite number in the setting's range raises an error.",
         "fields": {}
       },
       "AudioSource": {
@@ -775,6 +802,42 @@
           }
         }
       },
+      "InputControlDeclaration": {
+        "name": "InputControlDeclaration",
+        "description": "One control of the networked input layout (netcode stage B4)",
+        "fields": {
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": "1 to 32 characters of A-Z, a-z, 0-9 and _, not starting with a digit, unique in the layout"
+          },
+          "kind": {
+            "name": "kind",
+            "type": "\"button\"|\"axis\"|\"vector2\"|\"vector3\"",
+            "description": ""
+          },
+          "bits": {
+            "name": "bits?",
+            "type": "integer",
+            "description": "Bits per component, 1 to 16 (2 to 16 when signed); default 8; a button ignores it"
+          },
+          "range": {
+            "name": "range?",
+            "type": "number",
+            "description": "The largest magnitude of a component, above 0 and at most 1000000; default 1"
+          },
+          "signed": {
+            "name": "signed?",
+            "type": "boolean",
+            "description": "true (default): [-range, range] with an exact zero; false: [0, range]"
+          }
+        }
+      },
+      "Network": {
+        "name": "Network",
+        "description": "",
+        "fields": {}
+      },
       "Application": {
         "name": "Application",
         "description": "",
@@ -831,6 +894,42 @@
         "name": "Debug",
         "description": "",
         "fields": {}
+      },
+      "LagCompensatedHit": {
+        "name": "LagCompensatedHit",
+        "description": "",
+        "fields": {
+          "netId": {
+            "name": "netId",
+            "type": "integer",
+            "description": ""
+          },
+          "hitbox": {
+            "name": "hitbox",
+            "type": "integer",
+            "description": ""
+          },
+          "point": {
+            "name": "point",
+            "type": "Vector3",
+            "description": ""
+          },
+          "normal": {
+            "name": "normal",
+            "type": "Vector3",
+            "description": ""
+          },
+          "distance": {
+            "name": "distance",
+            "type": "number",
+            "description": ""
+          },
+          "timeMicros": {
+            "name": "timeMicros",
+            "type": "integer",
+            "description": ""
+          }
+        }
       }
     },
     "functions": {
@@ -3619,7 +3718,7 @@
         "owner": "GameObject",
         "method": true,
         "signature": "GameObject:AddComponent(typeName)",
-        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
+        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CharacterController\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
         "params": [
           {
             "name": "typeName",
@@ -7822,7 +7921,7 @@
         "owner": "Physics",
         "method": false,
         "signature": "Physics.Raycast(origin, direction, maxDistance, layerMask)",
-        "description": "The closest hit along a ray, or nil. Without physics (no backend, or built without PhysX) nothing is hit.\nA zero direction or a negative distance hits nothing.",
+        "description": "The closest hit along a ray, or nil. Without physics (no backend, or built without PhysX) nothing is hit.\nA zero direction or a distance that is not above 0 hits nothing; a ray that starts inside a collider hits it at distance 0.",
         "params": [
           {
             "name": "origin",
@@ -7884,6 +7983,196 @@
         "returns": [
           {
             "type": "RaycastHit[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.SphereCast": {
+        "name": "Physics.SphereCast",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.SphereCast(origin, radius, direction, maxDistance, layerMask)",
+        "description": "The closest hit of a sphere swept along a direction, or nil. The same hit table as Physics.Raycast: `point` is on the\nsurface that was hit and `distance` is how far the sphere's centre travelled. A sphere that starts inside a collider\nhits it at distance 0 (the normal is the opposite of the direction, the point is `origin`). A zero direction, a\nnegative distance or a radius that is not above zero hits nothing. Sweeps are limited to a distance of 1e7.",
+        "params": [
+          {
+            "name": "origin",
+            "type": "Vector3",
+            "description": "the sphere's centre"
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": "above 0"
+          },
+          {
+            "name": "direction",
+            "type": "Vector3",
+            "description": "normalised internally"
+          },
+          {
+            "name": "maxDistance",
+            "type": "number|nil",
+            "description": "default and maximum (longer ones, math.huge included, are clamped): 1e7"
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": "as Physics.Raycast"
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.CapsuleCast": {
+        "name": "Physics.CapsuleCast",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.CapsuleCast(point0, point1, radius, direction, maxDistance, layerMask)",
+        "description": "The closest hit of a capsule swept along a direction, or nil. The capsule is the segment point0-point1 (the centres\nof its two end spheres) with a radius, as in Unity; equal points make a sphere. The hit table, the start-inside\nrule and the limits are those of Physics.SphereCast; `distance` is how far the capsule's centre (the middle of the\nsegment) travelled.",
+        "params": [
+          {
+            "name": "point0",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "point1",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": "above 0"
+          },
+          {
+            "name": "direction",
+            "type": "Vector3",
+            "description": "normalised internally"
+          },
+          {
+            "name": "maxDistance",
+            "type": "number|nil",
+            "description": "default and maximum (longer ones, math.huge included, are clamped): 1e7"
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": "as Physics.Raycast"
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.OverlapSphere": {
+        "name": "Physics.OverlapSphere",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.OverlapSphere(center, radius, layerMask)",
+        "description": "Every collider that overlaps a sphere, each once, as an array ordered by body, then by the order the colliders were\nadded to it (an empty table for none, or for a radius that is not above 0). A collider that only touches the\nsphere's surface may or may not be found.",
+        "params": [
+          {
+            "name": "center",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": "above 0"
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": "as Physics.Raycast"
+          }
+        ],
+        "returns": [
+          {
+            "type": "OverlapHit[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.OverlapBox": {
+        "name": "Physics.OverlapBox",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.OverlapBox(center, halfExtents, rotation, layerMask)",
+        "description": "Every collider that overlaps a box, as Physics.OverlapSphere. The box has the given half extents (each above 0)\naround `center`, turned by `rotation`.",
+        "params": [
+          {
+            "name": "center",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "halfExtents",
+            "type": "Vector3",
+            "description": "half the box's size on each axis"
+          },
+          {
+            "name": "rotation",
+            "type": "Quaternion|nil",
+            "description": "default: Quaternion.Identity"
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": "as Physics.Raycast"
+          }
+        ],
+        "returns": [
+          {
+            "type": "OverlapHit[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.OverlapCapsule": {
+        "name": "Physics.OverlapCapsule",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.OverlapCapsule(point0, point1, radius, layerMask)",
+        "description": "Every collider that overlaps a capsule (the segment point0-point1 with a radius, as Physics.CapsuleCast), as\nPhysics.OverlapSphere.",
+        "params": [
+          {
+            "name": "point0",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "point1",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": "above 0"
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": "as Physics.Raycast"
+          }
+        ],
+        "returns": [
+          {
+            "type": "OverlapHit[]",
             "description": ""
           }
         ],
@@ -8610,6 +8899,434 @@
         "returns": [
           {
             "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetInput": {
+        "name": "CharacterController.SetInput",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetInput(move, jump)",
+        "description": "The input of the next ticks",
+        "params": [
+          {
+            "name": "move",
+            "type": "Vector3",
+            "description": "the wanted horizontal velocity in world units per second (y is ignored)"
+          },
+          {
+            "name": "jump",
+            "type": "boolean|nil",
+            "description": "jump on the next tick (only a grounded character jumps); nil is false"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetInput": {
+        "name": "CharacterController.GetInput",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetInput()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "{move: Vector3, jump: boolean}",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.GetState": {
+        "name": "CharacterController.GetState",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetState()",
+        "description": "A copy of the state (what a prediction saves)",
+        "params": [],
+        "returns": [
+          {
+            "type": "{position: Vector3, velocity: Vector3, grounded: boolean, groundNormal: Vector3}",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetState": {
+        "name": "CharacterController.SetState",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetState(state)",
+        "description": "Restores a saved state (what a server correction does) and moves the object to its position",
+        "params": [
+          {
+            "name": "state",
+            "type": "{position: Vector3, velocity: Vector3|nil, grounded: boolean|nil, groundNormal: Vector3|nil}",
+            "description": "position is required; velocity defaults to rest, grounded to false, groundNormal to up"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.Teleport": {
+        "name": "CharacterController.Teleport",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:Teleport(position)",
+        "description": "The state at `position`, at rest and not grounded (the next step finds the ground)",
+        "params": [
+          {
+            "name": "position",
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.Step": {
+        "name": "CharacterController.Step",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:Step(dt)",
+        "description": "One step now with the held input (what the fixed tick does)",
+        "params": [
+          {
+            "name": "dt",
+            "type": "number",
+            "description": "seconds, above 0"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ran false when there is no physics backend or the settings are not valid"
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.IsGrounded": {
+        "name": "CharacterController.IsGrounded",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:IsGrounded()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.GetPosition": {
+        "name": "CharacterController.GetPosition",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetPosition()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector3",
+            "description": "the centre of the capsule"
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.GetVelocity": {
+        "name": "CharacterController.GetVelocity",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetVelocity()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector3",
+            "description": "x and z: the horizontal velocity the last step achieved; y: the vertical velocity"
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetRadius": {
+        "name": "CharacterController.SetRadius",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetRadius(radius)",
+        "description": "",
+        "params": [
+          {
+            "name": "radius",
+            "type": "number",
+            "description": "0.01 to 100 (default 0.5)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetRadius": {
+        "name": "CharacterController.GetRadius",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetRadius()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetHeight": {
+        "name": "CharacterController.SetHeight",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetHeight(height)",
+        "description": "",
+        "params": [
+          {
+            "name": "height",
+            "type": "number",
+            "description": "the whole height, caps included, 0.02 to 1000 (default 2); a height under twice the radius is a sphere"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetHeight": {
+        "name": "CharacterController.GetHeight",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetHeight()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetStepOffset": {
+        "name": "CharacterController.SetStepOffset",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetStepOffset(stepOffset)",
+        "description": "",
+        "params": [
+          {
+            "name": "stepOffset",
+            "type": "number",
+            "description": "the tallest step it walks up, 0 to 100 (default 0.3)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetStepOffset": {
+        "name": "CharacterController.GetStepOffset",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetStepOffset()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetSlopeLimit": {
+        "name": "CharacterController.SetSlopeLimit",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetSlopeLimit(degrees)",
+        "description": "",
+        "params": [
+          {
+            "name": "degrees",
+            "type": "number",
+            "description": "the steepest ground it stands on or walks up, 0 to 89 (default 45)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetSlopeLimit": {
+        "name": "CharacterController.GetSlopeLimit",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetSlopeLimit()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetSkinWidth": {
+        "name": "CharacterController.SetSkinWidth",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetSkinWidth(skinWidth)",
+        "description": "",
+        "params": [
+          {
+            "name": "skinWidth",
+            "type": "number",
+            "description": "the gap kept to what it touches, 0.0001 to 1 (default 0.02); at most half the radius is used"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetSkinWidth": {
+        "name": "CharacterController.GetSkinWidth",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetSkinWidth()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetJumpSpeed": {
+        "name": "CharacterController.SetJumpSpeed",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetJumpSpeed(speed)",
+        "description": "",
+        "params": [
+          {
+            "name": "speed",
+            "type": "number",
+            "description": "the upward speed of a jump, 0 to 1000 (default 5)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetJumpSpeed": {
+        "name": "CharacterController.GetJumpSpeed",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetJumpSpeed()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetGravityScale": {
+        "name": "CharacterController.SetGravityScale",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetGravityScale(scale)",
+        "description": "",
+        "params": [
+          {
+            "name": "scale",
+            "type": "number",
+            "description": "multiplies the physics gravity's y, -100 to 100 (default 1)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetGravityScale": {
+        "name": "CharacterController.GetGravityScale",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetGravityScale()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetMaxFallSpeed": {
+        "name": "CharacterController.SetMaxFallSpeed",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetMaxFallSpeed(speed)",
+        "description": "",
+        "params": [
+          {
+            "name": "speed",
+            "type": "number",
+            "description": "the fastest it falls, 0.01 to 100000 (default 50)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetMaxFallSpeed": {
+        "name": "CharacterController.GetMaxFallSpeed",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetMaxFallSpeed()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CharacterController.SetLayerMask": {
+        "name": "CharacterController.SetLayerMask",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:SetLayerMask(layerMask)",
+        "description": "",
+        "params": [
+          {
+            "name": "layerMask",
+            "type": "integer",
+            "description": "the layers it collides with, cut to 32 bits so -1 means every layer (default: every layer but Ignore Raycast)"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CharacterController.GetLayerMask": {
+        "name": "CharacterController.GetLayerMask",
+        "owner": "CharacterController",
+        "method": true,
+        "signature": "CharacterController:GetLayerMask()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
             "description": ""
           }
         ],
@@ -9720,6 +10437,107 @@
         "returns": [],
         "overloads": []
       },
+      "Network.DeclareInputLayout": {
+        "name": "Network.DeclareInputLayout",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.DeclareInputLayout(controls)",
+        "description": "Declare the networked input layout: which controls a player input holds and how each is quantised on the wire. Call it\nonce, at the top level of a script that loads with the scene; the server and every client must declare the same layout or a\nclient is refused at join. A malformed declaration is an error and changes nothing; the last valid one wins.",
+        "params": [
+          {
+            "name": "controls",
+            "type": "InputControlDeclaration[]",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Network.GetInput": {
+        "name": "Network.GetInput",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetInput(gameObject)",
+        "description": "On a server: the input of the client that OWNS this object (the owner the server gave it at spawn) for the current fixed tick.\nReturns a table of the layout controls (a button is a boolean, an axis a number, a vector2/vector3 a Vector2/Vector3) and where\nit came from: \"frame\" (a frame arrived for the tick), \"repeated\" (the last input again) or \"neutral\" (no input). Returns nothing\nwhen there is no server in this process, the object has no NetworkObject, the server owns it, or its owner has no input.",
+        "params": [
+          {
+            "name": "gameObject",
+            "type": "GameObject",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "table<string, boolean|number|Vector2|Vector3>?",
+            "description": "input"
+          },
+          {
+            "type": "(\"frame\"|\"repeated\"|\"neutral\")?",
+            "description": "source"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetServerTime": {
+        "name": "Network.GetServerTime",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetServerTime()",
+        "description": "The server's time in seconds (its fixed tick divided by its tick rate). On a client it is the estimate from the clock sync\n(netcode stage B3): it never decreases, and it is nil until the first answer from the server has arrived. On a server it is\nthe server's own tick count. nil when this process runs neither.",
+        "params": [],
+        "returns": [
+          {
+            "type": "number?",
+            "description": "seconds"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetServerTick": {
+        "name": "Network.GetServerTick",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetServerTick()",
+        "description": "The server's fixed tick: fractional on a client (an estimate, never decreasing), whole on a server. nil under the same\nconditions as Network.GetServerTime.",
+        "params": [],
+        "returns": [
+          {
+            "type": "number?",
+            "description": "tick"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetRtt": {
+        "name": "Network.GetRtt",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetRtt()",
+        "description": "The round trip from this client to the server in seconds (the median of its recent clock pings). nil on a process that\nruns no client and before the clock has synced.",
+        "params": [],
+        "returns": [
+          {
+            "type": "number?",
+            "description": "seconds"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetJitter": {
+        "name": "Network.GetJitter",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetJitter()",
+        "description": "The jitter of the round trip in seconds (the mean absolute deviation of the recent clock pings from their median). nil under\nthe same conditions as Network.GetRtt.",
+        "params": [],
+        "returns": [
+          {
+            "type": "number?",
+            "description": "seconds"
+          }
+        ],
+        "overloads": []
+      },
       "Application.Quit": {
         "name": "Application.Quit",
         "owner": "Application",
@@ -10448,6 +11266,196 @@
         ],
         "returns": [],
         "overloads": []
+      },
+      "Physics.RaycastLagCompensated": {
+        "name": "Physics.RaycastLagCompensated",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.RaycastLagCompensated(clientId, renderTimeMicros, origin, direction, maxDistance, layerMask, ignoreNetId)",
+        "description": "Server only. renderTimeMicros is on NetworkServer.Update's monotonic clock. Rewind is capped by measured RTT.",
+        "params": [
+          {
+            "name": "clientId",
+            "type": "integer",
+            "description": "authenticated requesting client"
+          },
+          {
+            "name": "renderTimeMicros",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "origin",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "direction",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "maxDistance",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": ""
+          },
+          {
+            "name": "ignoreNetId",
+            "type": "integer|nil",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "LagCompensatedHit|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics.SphereCastLagCompensated": {
+        "name": "Physics.SphereCastLagCompensated",
+        "owner": "Physics",
+        "method": false,
+        "signature": "Physics.SphereCastLagCompensated(clientId, renderTimeMicros, origin, radius, direction, maxDistance, layerMask, ignoreNetId)",
+        "description": "",
+        "params": [
+          {
+            "name": "clientId",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "renderTimeMicros",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "origin",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "direction",
+            "type": "Vector3",
+            "description": ""
+          },
+          {
+            "name": "maxDistance",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask",
+            "type": "integer|nil",
+            "description": ""
+          },
+          {
+            "name": "ignoreNetId",
+            "type": "integer|nil",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "LagCompensatedHit|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Network.SetInterestPolicy": {
+        "name": "Network.SetInterestPolicy",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.SetInterestPolicy(object, mode, radius, priority)",
+        "description": "",
+        "params": [
+          {
+            "name": "object",
+            "type": "GameObject",
+            "description": ""
+          },
+          {
+            "name": "mode",
+            "type": "string",
+            "description": "always, owner or radius"
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "priority",
+            "type": "number",
+            "description": "positive, 0.001 to 1000"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Network.SetObserver": {
+        "name": "Network.SetObserver",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.SetObserver(clientId, object)",
+        "description": "",
+        "params": [
+          {
+            "name": "clientId",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "object",
+            "type": "GameObject",
+            "description": "must belong to the requesting client in the server world"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Network.ClearObserver": {
+        "name": "Network.ClearObserver",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.ClearObserver(clientId)",
+        "description": "",
+        "params": [
+          {
+            "name": "clientId",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
       }
     },
     "globals": {
@@ -10631,6 +11639,11 @@
         "type": "Physics",
         "description": ""
       },
+      "OverlapHit": {
+        "name": "OverlapHit",
+        "type": "OverlapHit",
+        "description": ""
+      },
       "PhysicsMaterial": {
         "name": "PhysicsMaterial",
         "type": "PhysicsMaterial",
@@ -10654,6 +11667,11 @@
       "CapsuleCollider": {
         "name": "CapsuleCollider",
         "type": "CapsuleCollider",
+        "description": ""
+      },
+      "CharacterController": {
+        "name": "CharacterController",
+        "type": "CharacterController",
         "description": ""
       },
       "AudioSource": {
@@ -10714,6 +11732,11 @@
       "Time": {
         "name": "Time",
         "type": "Time",
+        "description": ""
+      },
+      "Network": {
+        "name": "Network",
+        "type": "Network",
         "description": ""
       },
       "Application": {
@@ -10788,11 +11811,13 @@
       "Trigger": "Trigger",
       "RaycastHit": "RaycastHit",
       "Physics": "Physics",
+      "OverlapHit": "OverlapHit",
       "PhysicsMaterial": "PhysicsMaterial",
       "Rigidbody": "Rigidbody",
       "BoxCollider": "BoxCollider",
       "SphereCollider": "SphereCollider",
       "CapsuleCollider": "CapsuleCollider",
+      "CharacterController": "CharacterController",
       "AudioSource": "AudioSource",
       "AudioListener": "AudioListener",
       "Audio": "Audio",
@@ -10805,6 +11830,7 @@
       "WindowResizeEvent": "WindowResizeEvent",
       "GameObjectEvent": "GameObjectEvent",
       "Time": "Time",
+      "Network": "Network",
       "Application": "Application",
       "Window": "Window",
       "BoundingBox": "BoundingBox",
@@ -10815,10 +11841,1371 @@
     }
   },
   "editor": {
-    "available": false,
-    "classes": {},
-    "functions": {},
-    "globals": {},
-    "aliases": {}
+    "available": true,
+    "classes": {
+      "EditorVector3": {
+        "name": "EditorVector3",
+        "description": "",
+        "fields": {
+          "x": {
+            "name": "x",
+            "type": "number",
+            "description": ""
+          },
+          "y": {
+            "name": "y",
+            "type": "number",
+            "description": ""
+          },
+          "z": {
+            "name": "z",
+            "type": "number",
+            "description": ""
+          }
+        }
+      },
+      "EditorQuaternion": {
+        "name": "EditorQuaternion",
+        "description": "",
+        "fields": {
+          "x": {
+            "name": "x",
+            "type": "number",
+            "description": ""
+          },
+          "y": {
+            "name": "y",
+            "type": "number",
+            "description": ""
+          },
+          "z": {
+            "name": "z",
+            "type": "number",
+            "description": ""
+          },
+          "w": {
+            "name": "w",
+            "type": "number",
+            "description": ""
+          }
+        }
+      },
+      "EditorLocalTransform": {
+        "name": "EditorLocalTransform",
+        "description": "An object's transform relative to its parent",
+        "fields": {
+          "position": {
+            "name": "position",
+            "type": "EditorVector3",
+            "description": ""
+          },
+          "rotation": {
+            "name": "rotation",
+            "type": "EditorQuaternion",
+            "description": ""
+          },
+          "scale": {
+            "name": "scale",
+            "type": "EditorVector3",
+            "description": ""
+          }
+        }
+      },
+      "EditorLocalTransformChange": {
+        "name": "EditorLocalTransformChange",
+        "description": "What Editor.Scene.SetLocalTransform takes: a part left out keeps the object's own value; a part given must be complete",
+        "fields": {
+          "position": {
+            "name": "position?",
+            "type": "EditorVector3",
+            "description": ""
+          },
+          "rotation": {
+            "name": "rotation?",
+            "type": "EditorQuaternion",
+            "description": ""
+          },
+          "scale": {
+            "name": "scale?",
+            "type": "EditorVector3",
+            "description": ""
+          }
+        }
+      },
+      "EditorHierarchyNode": {
+        "name": "EditorHierarchyNode",
+        "description": "One object of Editor.Scene.GetHierarchy (the protocol's HierarchyNode)",
+        "fields": {
+          "id": {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          "parentId": {
+            "name": "parentId",
+            "type": "string",
+            "description": "The parent's id, \"\" for a root of the scene"
+          },
+          "index": {
+            "name": "index",
+            "type": "integer",
+            "description": "Its place among its siblings"
+          },
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          "active": {
+            "name": "active",
+            "type": "boolean",
+            "description": "The object's own flag"
+          },
+          "activeInHierarchy": {
+            "name": "activeInHierarchy",
+            "type": "boolean",
+            "description": ""
+          },
+          "layer": {
+            "name": "layer",
+            "type": "integer",
+            "description": "0 to 31"
+          },
+          "tag": {
+            "name": "tag",
+            "type": "string",
+            "description": ""
+          },
+          "components": {
+            "name": "components",
+            "type": "string[]",
+            "description": "The type names of its components"
+          }
+        }
+      },
+      "EditorEntityHeader": {
+        "name": "EditorEntityHeader",
+        "description": "An object's own properties (the protocol's EntityHeader)",
+        "fields": {
+          "id": {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          "parentId": {
+            "name": "parentId",
+            "type": "string",
+            "description": "\"\" for a root"
+          },
+          "index": {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          },
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          "active": {
+            "name": "active",
+            "type": "boolean",
+            "description": ""
+          },
+          "activeInHierarchy": {
+            "name": "activeInHierarchy",
+            "type": "boolean",
+            "description": ""
+          },
+          "layer": {
+            "name": "layer",
+            "type": "integer",
+            "description": ""
+          },
+          "tag": {
+            "name": "tag",
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "EditorEntityComponent": {
+        "name": "EditorEntityComponent",
+        "description": "A component of Editor.Scene.GetEntity",
+        "fields": {
+          "type": {
+            "name": "type",
+            "type": "string",
+            "description": "The component's type name"
+          },
+          "uuid": {
+            "name": "uuid",
+            "type": "EditorComponentId",
+            "description": ""
+          },
+          "values": {
+            "name": "values",
+            "type": "table<string, any>",
+            "description": "The component's saved field values"
+          }
+        }
+      },
+      "EditorEntityDetails": {
+        "name": "EditorEntityDetails",
+        "description": "What Editor.Scene.GetEntity returns (the protocol's EntityDetails)",
+        "fields": {
+          "header": {
+            "name": "header",
+            "type": "EditorEntityHeader",
+            "description": ""
+          },
+          "transform": {
+            "name": "transform?",
+            "type": "EditorLocalTransform",
+            "description": "Absent for an object without a transform"
+          },
+          "components": {
+            "name": "components",
+            "type": "EditorEntityComponent[]",
+            "description": ""
+          }
+        }
+      },
+      "EditorFieldSchema": {
+        "name": "EditorFieldSchema",
+        "description": "One field of a component type or of a form (the protocol's FieldSchema)",
+        "fields": {
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          "displayName": {
+            "name": "displayName",
+            "type": "string",
+            "description": ""
+          },
+          "kind": {
+            "name": "kind",
+            "type": "string",
+            "description": ""
+          },
+          "typeName": {
+            "name": "typeName",
+            "type": "string",
+            "description": ""
+          },
+          "hidden": {
+            "name": "hidden",
+            "type": "boolean",
+            "description": ""
+          },
+          "readOnly": {
+            "name": "readOnly",
+            "type": "boolean",
+            "description": ""
+          },
+          "enumOptions": {
+            "name": "enumOptions?",
+            "type": "string[]",
+            "description": ""
+          },
+          "assetType": {
+            "name": "assetType?",
+            "type": "string",
+            "description": ""
+          },
+          "min": {
+            "name": "min?",
+            "type": "number",
+            "description": ""
+          },
+          "max": {
+            "name": "max?",
+            "type": "number",
+            "description": ""
+          },
+          "tooltip": {
+            "name": "tooltip?",
+            "type": "string",
+            "description": ""
+          },
+          "container": {
+            "name": "container?",
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "EditorComponentSchema": {
+        "name": "EditorComponentSchema",
+        "description": "One component type of Editor.Scene.GetComponentTypes (the protocol's ComponentSchema)",
+        "fields": {
+          "typeName": {
+            "name": "typeName",
+            "type": "string",
+            "description": ""
+          },
+          "singleton": {
+            "name": "singleton",
+            "type": "boolean",
+            "description": ""
+          },
+          "fields": {
+            "name": "fields",
+            "type": "EditorFieldSchema[]",
+            "description": ""
+          },
+          "defaults": {
+            "name": "defaults?",
+            "type": "table<string, any>",
+            "description": ""
+          }
+        }
+      },
+      "EditorSubAsset": {
+        "name": "EditorSubAsset",
+        "description": "",
+        "fields": {
+          "key": {
+            "name": "key",
+            "type": "string",
+            "description": ""
+          },
+          "uuid": {
+            "name": "uuid",
+            "type": "string",
+            "description": ""
+          },
+          "type": {
+            "name": "type",
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "EditorAssetInfo": {
+        "name": "EditorAssetInfo",
+        "description": "One asset of Editor.Assets.List (the protocol's AssetInfo)",
+        "fields": {
+          "path": {
+            "name": "path",
+            "type": "EditorAssetPath",
+            "description": ""
+          },
+          "uuid": {
+            "name": "uuid",
+            "type": "string",
+            "description": ""
+          },
+          "type": {
+            "name": "type",
+            "type": "string",
+            "description": ""
+          },
+          "size": {
+            "name": "size",
+            "type": "number",
+            "description": ""
+          },
+          "modified": {
+            "name": "modified",
+            "type": "number",
+            "description": "Unix milliseconds"
+          },
+          "subAssets": {
+            "name": "subAssets?",
+            "type": "EditorSubAsset[]",
+            "description": ""
+          }
+        }
+      },
+      "EditorAssetListing": {
+        "name": "EditorAssetListing",
+        "description": "What Editor.Assets.List returns: what is directly in the folder",
+        "fields": {
+          "folders": {
+            "name": "folders",
+            "type": "string[]",
+            "description": "res:// paths of the folders in it"
+          },
+          "assets": {
+            "name": "assets",
+            "type": "EditorAssetInfo[]",
+            "description": "The indexed assets in it"
+          }
+        }
+      },
+      "EditorParam": {
+        "name": "EditorParam",
+        "description": "One field of a form: the value of a `params` table, keyed by the field's name (letters, digits and _, at most 64 bytes)",
+        "fields": {
+          "type": {
+            "name": "type",
+            "type": "EditorParamType",
+            "description": ""
+          },
+          "default": {
+            "name": "default?",
+            "type": "any",
+            "description": "Of the type, inside min and max; a GameObject has none. When absent: the type's own (0, \"\", false, a zero vector, the first option), or min if it is above zero, else max if it is below zero"
+          },
+          "min": {
+            "name": "min?",
+            "type": "number",
+            "description": "number and int only; a whole number for an int"
+          },
+          "max": {
+            "name": "max?",
+            "type": "number",
+            "description": "number and int only; a whole number for an int"
+          },
+          "tooltip": {
+            "name": "tooltip?",
+            "type": "string",
+            "description": "At most 200 bytes"
+          },
+          "options": {
+            "name": "options?",
+            "type": "string[]",
+            "description": "enum only: 1 to 64 distinct strings of at most 64 bytes"
+          },
+          "displayName": {
+            "name": "displayName?",
+            "type": "string",
+            "description": "At most 64 bytes"
+          }
+        }
+      },
+      "EditorSectionField": {
+        "name": "EditorSectionField",
+        "description": "A section's field: the shape of a form field without a default (the inspector shows the component's own value)",
+        "fields": {
+          "type": {
+            "name": "type",
+            "type": "EditorParamType",
+            "description": ""
+          },
+          "min": {
+            "name": "min?",
+            "type": "number",
+            "description": ""
+          },
+          "max": {
+            "name": "max?",
+            "type": "number",
+            "description": ""
+          },
+          "tooltip": {
+            "name": "tooltip?",
+            "type": "string",
+            "description": ""
+          },
+          "options": {
+            "name": "options?",
+            "type": "string[]",
+            "description": ""
+          },
+          "displayName": {
+            "name": "displayName?",
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "EditorEnabledWhen": {
+        "name": "EditorEnabledWhen",
+        "description": "",
+        "fields": {
+          "selection": {
+            "name": "selection?",
+            "type": "\"any\"|\"nonEmpty\"|\"one\"|\"none\"",
+            "description": "Checked by the client; \"any\" when absent"
+          },
+          "componentType": {
+            "name": "componentType?",
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "EditorMenuContext": {
+        "name": "EditorMenuContext",
+        "description": "What a menu item's run function receives as `ctx`",
+        "fields": {
+          "itemId": {
+            "name": "itemId",
+            "type": "string",
+            "description": ""
+          },
+          "selection": {
+            "name": "selection",
+            "type": "EditorEntityId[]",
+            "description": "The objects the client had selected (at most 4096)"
+          }
+        }
+      },
+      "EditorInspectorContext": {
+        "name": "EditorInspectorContext",
+        "description": "What an inspector button's run function receives as `ctx`",
+        "fields": {
+          "actionId": {
+            "name": "actionId",
+            "type": "string",
+            "description": ""
+          },
+          "componentId": {
+            "name": "componentId",
+            "type": "EditorComponentId",
+            "description": "The component the inspector shows (the host checked it is of the section's type)"
+          },
+          "entityId": {
+            "name": "entityId",
+            "type": "EditorEntityId",
+            "description": "The object that has it"
+          }
+        }
+      },
+      "EditorResult": {
+        "name": "EditorResult",
+        "description": "What a menu item or an inspector button may return (or return nothing): anything else fails the call",
+        "fields": {
+          "message": {
+            "name": "message?",
+            "type": "string",
+            "description": "Shown to the user; cut to 1024 bytes"
+          },
+          "select": {
+            "name": "select?",
+            "type": "EditorEntityId[]",
+            "description": "Objects the client should select (at most 4096)"
+          },
+          "warnings": {
+            "name": "warnings?",
+            "type": "string[]",
+            "description": "Shown to the user (at most 100, each cut to 1024 bytes)"
+          }
+        }
+      },
+      "EditorHookResult": {
+        "name": "EditorHookResult",
+        "description": "What OnBeforePlay may return (or nothing): no other key",
+        "fields": {
+          "message": {
+            "name": "message?",
+            "type": "string",
+            "description": ""
+          },
+          "warnings": {
+            "name": "warnings?",
+            "type": "string[]",
+            "description": ""
+          }
+        }
+      },
+      "EditorMenuItem": {
+        "name": "EditorMenuItem",
+        "description": "A menu item: an entry of the editor's Tools menu",
+        "fields": {
+          "id": {
+            "name": "id",
+            "type": "string",
+            "description": "Letters, digits, '.', '_' and '-', starting with a letter or digit, at most 64 bytes; unique across the whole host"
+          },
+          "path": {
+            "name": "path",
+            "type": "string",
+            "description": "Segments separated by '/', at most 6, each 1 to 64 bytes; the last is the title unless `title` is given"
+          },
+          "title": {
+            "name": "title?",
+            "type": "string",
+            "description": "At most 100 bytes; also the label of the undo step"
+          },
+          "minRole": {
+            "name": "minRole?",
+            "type": "EditorRole",
+            "description": "\"editor\" when absent"
+          },
+          "enabledWhen": {
+            "name": "enabledWhen?",
+            "type": "EditorEnabledWhen",
+            "description": ""
+          },
+          "confirm": {
+            "name": "confirm?",
+            "type": "string",
+            "description": "A question the client asks first (at most 200 bytes)"
+          },
+          "params": {
+            "name": "params?",
+            "type": "table<string, EditorParam>",
+            "description": "A form: at most 32 fields; the client fills it, the host checks it and clamps it to min and max"
+          },
+          "run": {
+            "name": "run",
+            "type": "fun(ctx: EditorMenuContext, params: table<string, any>):",
+            "description": "EditorResult? Runs on a worker as ONE undo step; a Lua error takes every change back"
+          }
+        }
+      },
+      "EditorInspectorButton": {
+        "name": "EditorInspectorButton",
+        "description": "",
+        "fields": {
+          "id": {
+            "name": "id",
+            "type": "string",
+            "description": "The rules of a menu item's id; unique among the inspector buttons of the whole host"
+          },
+          "label": {
+            "name": "label",
+            "type": "string",
+            "description": "At most 100 bytes; also the label of the undo step"
+          },
+          "minRole": {
+            "name": "minRole?",
+            "type": "EditorRole",
+            "description": ""
+          },
+          "params": {
+            "name": "params?",
+            "type": "table<string, EditorParam>",
+            "description": ""
+          },
+          "run": {
+            "name": "run",
+            "type": "fun(ctx: EditorInspectorContext, params: table<string, any>):",
+            "description": "EditorResult?"
+          }
+        }
+      },
+      "EditorInspectorSection": {
+        "name": "EditorInspectorSection",
+        "description": "",
+        "fields": {
+          "label": {
+            "name": "label",
+            "type": "string",
+            "description": "At most 100 bytes"
+          },
+          "fields": {
+            "name": "fields?",
+            "type": "table<string, EditorSectionField>",
+            "description": "Fields of the component the client shows with their values"
+          },
+          "buttons": {
+            "name": "buttons?",
+            "type": "EditorInspectorButton[]",
+            "description": "At most 16; a section needs fields or buttons"
+          }
+        }
+      },
+      "EditorInspectorSpec": {
+        "name": "EditorInspectorSpec",
+        "description": "",
+        "fields": {
+          "sections": {
+            "name": "sections",
+            "type": "EditorInspectorSection[]",
+            "description": "At least one"
+          }
+        }
+      },
+      "EditorSceneInfo": {
+        "name": "EditorSceneInfo",
+        "description": "What a hook receives for OnSceneOpened, OnSceneSaved and OnBeforePlay",
+        "fields": {
+          "scene": {
+            "name": "scene",
+            "type": "string",
+            "description": "The scene's res:// path (\"\" for a new scene that has no file yet; the scene asked to play, or the open one, for OnBeforePlay)"
+          }
+        }
+      },
+      "EditorHooks": {
+        "name": "EditorHooks",
+        "description": "The hooks a file may declare, each called by the host after the work that caused it, read-only, with a smaller budget",
+        "fields": {
+          "OnSceneOpened": {
+            "name": "OnSceneOpened?",
+            "type": "fun(info: EditorSceneInfo)",
+            "description": "After OpenScene or NewScene made a scene the open one; needs scene.read"
+          },
+          "OnSceneSaved": {
+            "name": "OnSceneSaved?",
+            "type": "fun(info: EditorSceneInfo)",
+            "description": "After SaveSceneToFile wrote the file; needs scene.read"
+          },
+          "OnBeforePlay": {
+            "name": "OnBeforePlay?",
+            "type": "fun(info: EditorSceneInfo):",
+            "description": "EditorHookResult? Called once WritePlaySnapshot accepted the request and wrote the snapshot, before the response; its warnings are shown and never block play; needs scene.read"
+          },
+          "OnAssetsChanged": {
+            "name": "OnAssetsChanged?",
+            "type": "fun(added: string[], removed: string[], modified: string[])",
+            "description": "After assets changed (each list of res:// paths is cut to 1000); needs assets.read"
+          }
+        }
+      },
+      "EditorExtensionDeclaration": {
+        "name": "EditorExtensionDeclaration",
+        "description": "The table a file gives Editor.Extension and returns. A key this API version does not know fails the file.",
+        "fields": {
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": "1 to 64 bytes of text with no path characters ('/', '\\', ':', '..') and no space or '.' at either end"
+          },
+          "apiVersion": {
+            "name": "apiVersion",
+            "type": "integer",
+            "description": "Must be 1"
+          },
+          "capabilities": {
+            "name": "capabilities?",
+            "type": "EditorCapability[]",
+            "description": "At most 8, none twice"
+          },
+          "menu": {
+            "name": "menu?",
+            "type": "EditorMenuItem[]",
+            "description": "At most 64"
+          },
+          "hooks": {
+            "name": "hooks?",
+            "type": "EditorHooks",
+            "description": ""
+          }
+        }
+      },
+      "EditorApi": {
+        "name": "EditorApi",
+        "description": "The only global an extension has besides the libraries. Scene and Assets exist only after the file called\nEditor.Extension with the capabilities that install them.",
+        "fields": {
+          "Log": {
+            "name": "Log",
+            "type": "EditorLogApi",
+            "description": ""
+          },
+          "Inspector": {
+            "name": "Inspector",
+            "type": "EditorInspectorApi",
+            "description": ""
+          },
+          "Scene": {
+            "name": "Scene",
+            "type": "EditorSceneApi",
+            "description": "Declared with scene.read and/or scene.write; absent without either"
+          },
+          "Assets": {
+            "name": "Assets",
+            "type": "EditorAssetsApi",
+            "description": "Declared with assets.read and/or assets.write; absent without either"
+          }
+        }
+      },
+      "EditorLogApi": {
+        "name": "EditorLogApi",
+        "description": "",
+        "fields": {}
+      },
+      "EditorInspectorApi": {
+        "name": "EditorInspectorApi",
+        "description": "",
+        "fields": {}
+      },
+      "EditorSceneApi": {
+        "name": "EditorSceneApi",
+        "description": "Reads and changes the open scene. Every function sends a command of the editor host as the user who invoked the item,\nso what that user may not do is refused. The writers are all part of the one undo step of the item or button.",
+        "fields": {}
+      },
+      "EditorCreateEntitySpec": {
+        "name": "EditorCreateEntitySpec",
+        "description": "What CreateEntity takes; every key is optional and another key is an error",
+        "fields": {
+          "name": {
+            "name": "name?",
+            "type": "string",
+            "description": ""
+          },
+          "parent": {
+            "name": "parent?",
+            "type": "EditorEntityId",
+            "description": "A root of the scene when absent"
+          },
+          "components": {
+            "name": "components?",
+            "type": "(string|{type: string, values?: table<string, any>})[]",
+            "description": "Type names, or a type with the values to set"
+          }
+        }
+      },
+      "EditorEntityProperties": {
+        "name": "EditorEntityProperties",
+        "description": "",
+        "fields": {
+          "name": {
+            "name": "name?",
+            "type": "string",
+            "description": ""
+          },
+          "tag": {
+            "name": "tag?",
+            "type": "string",
+            "description": ""
+          },
+          "layer": {
+            "name": "layer?",
+            "type": "integer",
+            "description": "0 to 31"
+          },
+          "active": {
+            "name": "active?",
+            "type": "boolean",
+            "description": ""
+          }
+        }
+      },
+      "EditorAssetsApi": {
+        "name": "EditorAssetsApi",
+        "description": "Reads and writes the project's text assets, through the editor's own asset commands (res:// paths only, the same size\ncaps and text rules, the same role and read-only checks). A write is a file, not a scene edit: it is not part of the\nundo step and a failed invocation does not take it back.",
+        "fields": {}
+      }
+    },
+    "functions": {
+      "Editor.Extension": {
+        "name": "Editor.Extension",
+        "owner": "Editor",
+        "method": false,
+        "signature": "Editor.Extension(declaration)",
+        "description": "Declares the extension. Call it once, at the top level of the file, and return what it returns: the file must return\nthe very table Editor.Extension gave it. It checks only that it was given a table; the host checks the shape after the\nfile ran, and a wrong shape fails that file alone.",
+        "params": [
+          {
+            "name": "declaration",
+            "type": "EditorExtensionDeclaration",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorExtensionDeclaration",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Log.Info": {
+        "name": "Editor.Log.Info",
+        "owner": "Editor.Log",
+        "method": false,
+        "signature": "Editor.Log.Info(...)",
+        "description": "Writes a line to the host's log and to the clients' console (an extensionOutput event that only an admin receives).\nThe arguments are joined with spaces; a line written while the file loads is dropped. print(...) is the same as Info.",
+        "params": [
+          {
+            "name": "...",
+            "type": "any",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Log.Warn": {
+        "name": "Editor.Log.Warn",
+        "owner": "Editor.Log",
+        "method": false,
+        "signature": "Editor.Log.Warn(...)",
+        "description": "",
+        "params": [
+          {
+            "name": "...",
+            "type": "any",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Log.Error": {
+        "name": "Editor.Log.Error",
+        "owner": "Editor.Log",
+        "method": false,
+        "signature": "Editor.Log.Error(...)",
+        "description": "",
+        "params": [
+          {
+            "name": "...",
+            "type": "any",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Inspector.Register": {
+        "name": "Editor.Inspector.Register",
+        "owner": "Editor.Inspector",
+        "method": false,
+        "signature": "Editor.Inspector.Register(componentType, spec)",
+        "description": "Adds inspector sections for a component type. Can be called only while the file loads (at most 64 times); a call from a\nrunning item, button or hook is a Lua error. The file must declare scene.read.",
+        "params": [
+          {
+            "name": "componentType",
+            "type": "string",
+            "description": "A component type name: letters, digits and '_', not starting with a digit"
+          },
+          {
+            "name": "spec",
+            "type": "EditorInspectorSpec",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.GetHierarchy": {
+        "name": "Editor.Scene.GetHierarchy",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.GetHierarchy()",
+        "description": "Every object of the scene, parents before children. Needs scene.read.",
+        "params": [],
+        "returns": [
+          {
+            "type": "EditorHierarchyNode[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.GetEntity": {
+        "name": "Editor.Scene.GetEntity",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.GetEntity(id)",
+        "description": "One object's properties, transform and components. Needs scene.read.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorEntityDetails",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.GetComponent": {
+        "name": "Editor.Scene.GetComponent",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.GetComponent(entityId, componentId)",
+        "description": "A component's saved field values. Needs scene.read.",
+        "params": [
+          {
+            "name": "entityId",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "componentId",
+            "type": "EditorComponentId",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "table<string, any>",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.GetLocalTransform": {
+        "name": "Editor.Scene.GetLocalTransform",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.GetLocalTransform(id)",
+        "description": "An object's transform relative to its parent; an object without a transform is at the origin with the identity rotation\nand a scale of 1. Needs scene.read.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorLocalTransform",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.FindByName": {
+        "name": "Editor.Scene.FindByName",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.FindByName(name)",
+        "description": "The ids of every object with exactly this name, in hierarchy order. Needs scene.read.",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorEntityId[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.GetComponentTypes": {
+        "name": "Editor.Scene.GetComponentTypes",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.GetComponentTypes()",
+        "description": "The component types the editor knows, sorted by type name. Needs scene.read.",
+        "params": [],
+        "returns": [
+          {
+            "type": "EditorComponentSchema[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.CreateEntity": {
+        "name": "Editor.Scene.CreateEntity",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.CreateEntity(spec)",
+        "description": "Makes an object (with a transform, last among its siblings) and returns its id. A call that fails half-way takes back\nwhat it already did. Needs scene.write.",
+        "params": [
+          {
+            "name": "spec?",
+            "type": "EditorCreateEntitySpec",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.Destroy": {
+        "name": "Editor.Scene.Destroy",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.Destroy(id)",
+        "description": "Destroys an object and everything under it. Needs scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.Duplicate": {
+        "name": "Editor.Scene.Duplicate",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.Duplicate(id)",
+        "description": "Copies an object and everything under it and returns the copy's id. Needs scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorEntityId",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.SetParent": {
+        "name": "Editor.Scene.SetParent",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.SetParent(id, parent, index)",
+        "description": "Moves an object under another (nil: a root of the scene); it keeps its place in the world. Needs scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "parent?",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "index?",
+            "type": "integer",
+            "description": "Its place among the new siblings; last when nil"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.SetProperties": {
+        "name": "Editor.Scene.SetProperties",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.SetProperties(id, properties)",
+        "description": "Changes an object's own properties; only the keys given change. Needs scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "properties",
+            "type": "EditorEntityProperties",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.SetLocalTransform": {
+        "name": "Editor.Scene.SetLocalTransform",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.SetLocalTransform(id, transform)",
+        "description": "Changes an object's transform; a part left out keeps the object's value. Numbers go out as 32-bit floats and a value\nthat is not finite is refused. Needs scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "transform",
+            "type": "EditorLocalTransformChange",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.AddComponent": {
+        "name": "Editor.Scene.AddComponent",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.AddComponent(id, typeName, values)",
+        "description": "Adds a component and, when values are given, sets them right after; returns the new component's id. All or nothing.\nNeeds scene.write.",
+        "params": [
+          {
+            "name": "id",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "typeName",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "values?",
+            "type": "table<string, any>",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorComponentId",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Scene.RemoveComponent": {
+        "name": "Editor.Scene.RemoveComponent",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.RemoveComponent(entityId, componentId)",
+        "description": "Removes a component. Needs scene.write.",
+        "params": [
+          {
+            "name": "entityId",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "componentId",
+            "type": "EditorComponentId",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Scene.SetFields": {
+        "name": "Editor.Scene.SetFields",
+        "owner": "Editor.Scene",
+        "method": false,
+        "signature": "Editor.Scene.SetFields(entityId, componentId, values)",
+        "description": "Sets some fields of a component (only the keys given change) and returns its values as stored. Needs scene.write.",
+        "params": [
+          {
+            "name": "entityId",
+            "type": "EditorEntityId",
+            "description": ""
+          },
+          {
+            "name": "componentId",
+            "type": "EditorComponentId",
+            "description": ""
+          },
+          {
+            "name": "values",
+            "type": "table<string, any>",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "table<string, any>",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Assets.List": {
+        "name": "Editor.Assets.List",
+        "owner": "Editor.Assets",
+        "method": false,
+        "signature": "Editor.Assets.List(folder)",
+        "description": "The folders and the indexed assets directly in a folder (not what is below them). A folder with more than 10000\nentries is an error. Needs assets.read.",
+        "params": [
+          {
+            "name": "folder?",
+            "type": "EditorAssetPath",
+            "description": "\"res://\" when nil"
+          }
+        ],
+        "returns": [
+          {
+            "type": "EditorAssetListing",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Assets.ReadText": {
+        "name": "Editor.Assets.ReadText",
+        "owner": "Editor.Assets",
+        "method": false,
+        "signature": "Editor.Assets.ReadText(path)",
+        "description": "A text asset's text (at most 4 MiB, valid UTF-8). Needs assets.read.",
+        "params": [
+          {
+            "name": "path",
+            "type": "EditorAssetPath",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Editor.Assets.WriteText": {
+        "name": "Editor.Assets.WriteText",
+        "owner": "Editor.Assets",
+        "method": false,
+        "signature": "Editor.Assets.WriteText(path, text)",
+        "description": "Writes a text asset atomically; the host reloads it and tells the clients. Refuses the open scene's own file and a\nfolder that does not exist. Not available to a hook. Needs assets.write.",
+        "params": [
+          {
+            "name": "path",
+            "type": "EditorAssetPath",
+            "description": ""
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Editor.Assets.CreateFolder": {
+        "name": "Editor.Assets.CreateFolder",
+        "owner": "Editor.Assets",
+        "method": false,
+        "signature": "Editor.Assets.CreateFolder(path)",
+        "description": "Makes a folder (missing parents too); one that exists is fine. Not available to a hook. Needs assets.write.",
+        "params": [
+          {
+            "name": "path",
+            "type": "EditorAssetPath",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      }
+    },
+    "globals": {
+      "Editor": {
+        "name": "Editor",
+        "type": "EditorApi",
+        "description": ""
+      },
+      "Editor.Log": {
+        "name": "Editor.Log",
+        "type": "EditorLogApi",
+        "description": ""
+      },
+      "Editor.Inspector": {
+        "name": "Editor.Inspector",
+        "type": "EditorInspectorApi",
+        "description": ""
+      },
+      "Editor.Scene": {
+        "name": "Editor.Scene",
+        "type": "EditorSceneApi",
+        "description": ""
+      },
+      "Editor.Assets": {
+        "name": "Editor.Assets",
+        "type": "EditorAssetsApi",
+        "description": ""
+      }
+    },
+    "aliases": {
+      "Editor": "EditorApi",
+      "Editor.Log": "EditorLogApi",
+      "Editor.Inspector": "EditorInspectorApi",
+      "Editor.Scene": "EditorSceneApi",
+      "Editor.Assets": "EditorAssetsApi"
+    }
   }
 }

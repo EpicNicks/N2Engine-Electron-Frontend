@@ -39,3 +39,19 @@ test("disposed editors ignore late replies and network errors are not Lua syntax
   const failed = new LuaSyntaxScheduler(async () => { throw new Error("offline") }, (diagnostics, error) => { assert.deepEqual(diagnostics, []); if (error) errors.push(error) }, timers)
   failed.update("text", "a.lua"); timers.fire(); await tick(); assert.match(errors[0], /unavailable.*offline/)
 })
+test("a host answer with no line, a line past the end or an empty document still marks something inside the text", () => {
+  assert.deepEqual(syntaxDiagnostic("local x =", { ok: false, line: 0, message: "no line" }),
+    [{ from: 0, to: 9, severity: "error", message: "no line" }])
+  assert.deepEqual(syntaxDiagnostic("", { ok: false, line: 3, message: "empty" }), [{ from: 0, to: 0, severity: "error", message: "empty" }])
+  assert.deepEqual(syntaxDiagnostic("a\nbb", { ok: false, line: 2, message: "last line" })[0], { from: 2, to: 4, severity: "error", message: "last line" })
+})
+test("typing keeps only the newest document: every keystroke restarts the debounce and clears old marks", async () => {
+  const timers = new Timers(), sent: string[] = [], clears: number[] = []
+  const scheduler = new LuaSyntaxScheduler(async text => { sent.push(text); return { ok: true, line: 0, message: "" } },
+    diagnostics => clears.push(diagnostics.length), timers)
+  for (const text of ["l", "lo", "loc", "loca"]) scheduler.update(text, "a.lua")
+  assert.equal(timers.tasks.size, 1, "one timer at a time")
+  timers.fire(); await tick()
+  assert.deepEqual(sent, ["loca"])
+  scheduler.dispose()
+})

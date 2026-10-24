@@ -408,3 +408,119 @@ describe("dragging an asset", () => {
     assert.deepEqual(carried, { uuid: U1, path: "res://hero.png", resourceType: "Texture" })
   })
 })
+
+describe("previews", () => {
+  /** A 2D context that records what is drawn (jsdom has none) */
+  function fakeCanvas() {
+    const drawn: Array<{ width: number; height: number; data: number[] }> = []
+    const proto = Object.getPrototypeOf(document.createElement("canvas")) as { getContext: unknown }
+    const original = proto.getContext
+    proto.getContext = function () {
+      return {
+        createImageData: (width: number, height: number) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+        putImageData: (image: { width: number; height: number; data: Uint8ClampedArray }) =>
+          void drawn.push({ width: image.width, height: image.height, data: [...image.data] }),
+      }
+    } as never
+    return { drawn, restore: () => void (proto.getContext = original) }
+  }
+  const heroPreview = (over: Record<string, unknown> = {}) => ({
+    kind: "texture" as const, uuid: U1, path: "res://hero.png", modified: 1, width: 2, height: 1, sourceWidth: 16, sourceHeight: 8,
+    pixels: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]), ...over,
+  })
+  const thumbOf = (name: string) => rowOf(name).querySelector<HTMLElement>(".asset-thumb")
+
+  async function renderPreviews(setup: (host: FakeAssetHost) => void, enabled = true) {
+    const host = new FakeAssetHost()
+    setup(host)
+    const fake = stubStore()
+    const assets = new AssetsState(host.engine, null, fake.signals.reportError, () => null, () => enabled)
+    await assets.refresh()
+    renderWithApp(<AssetsPanel />, { store: fake.store, assets })
+    return { host, assets }
+  }
+
+  test("a texture shows its thumbnail, drawn from the host's RGBA pixels, in its row", async () => {
+    const canvas = fakeCanvas()
+    try {
+      const h = await renderPreviews((host) => host.previews.set("res://hero.png", heroPreview()))
+      await waitFor(() => assert.ok(thumbOf("hero.png")))
+      const thumb = thumbOf("hero.png")!
+      assert.equal(thumb.getAttribute("data-preview"), "texture")
+      assert.equal(thumb.getAttribute("width"), "2")
+      assert.equal(thumb.getAttribute("height"), "1")
+      assert.equal(thumb.getAttribute("aria-label"), "Preview of hero.png")
+      await waitFor(() => assert.deepEqual(canvas.drawn[0], { width: 2, height: 1, data: [1, 2, 3, 4, 5, 6, 7, 8] }))
+      assert.deepEqual(h.host.previewCalls, [`${U1} 64`])
+      // Other rows (a folder, a scene) are not asked about
+      assert.equal(thumbOf("scenes"), null)
+    } finally {
+      canvas.restore()
+    }
+  })
+
+  test("an audio clip shows a waveform of its peaks", async () => {
+    await renderPreviews((host) => {
+      host.assets.push({ path: "res://boom.wav", uuid: U4, type: "AudioClip", size: 99, modified: 3 })
+      host.previews.set("res://boom.wav", {
+        kind: "audio", uuid: U4, path: "res://boom.wav", modified: 3, durationMs: 500, channels: 2, sampleRate: 44100,
+        peaks: [{ min: -1, max: 1 }, { min: -0.5, max: 0.25 }, { min: 0, max: 0 }],
+      })
+    })
+    await waitFor(() => assert.ok(thumbOf("boom.wav")))
+    const wave = thumbOf("boom.wav")!
+    assert.equal(wave.getAttribute("data-preview"), "audio")
+    assert.equal(wave.getAttribute("viewBox"), "0 0 3 2")
+    assert.equal(wave.querySelectorAll("path").length, 1)
+    assert.equal(wave.querySelector("path")!.getAttribute("d"), "M0.5 0.000V2.000M1.5 0.750V1.500M2.5 1.000V1.040")
+  })
+
+  test("the selected asset also shows a larger preview in its details", async () => {
+    const canvas = fakeCanvas()
+    try {
+      const h = await renderPreviews((host) => host.previews.set("res://hero.png", heroPreview()))
+      await userEvent.setup().click(rowOf("hero.png"))
+      await waitFor(() => assert.ok(document.querySelector(".asset-detail .asset-thumb")))
+      assert.ok(h.host.previewCalls.includes(`${U1} 256`))
+    } finally {
+      canvas.restore()
+    }
+  })
+
+  test("a refused or mismatched preview leaves the row as it was, and a changed file is asked for again", async () => {
+    const canvas = fakeCanvas()
+    try {
+      const h = await renderPreviews((host) => host.previews.set("res://hero.png", heroPreview({ uuid: U4 })))
+      await waitFor(() => assert.equal(h.host.previewCalls.length, 1))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(thumbOf("hero.png"), null, "an answer for another asset is not shown")
+      assert.deepEqual(rowNames(), ["scenes", "scripts", "hero.png"])
+      // The file changed: the host lists it again with a new time, and now answers properly
+      h.host.previews.set("res://hero.png", heroPreview({ modified: 2 }))
+      h.host.assets[0] = { ...h.host.assets[0], modified: 2 }
+      await h.assets.onAssetsChanged({ kind: "assetsChanged", added: [], removed: [], modified: ["res://hero.png"] })
+      await waitFor(() => assert.ok(thumbOf("hero.png")))
+      assert.equal(h.host.previewCalls.length, 2)
+    } finally {
+      canvas.restore()
+    }
+  })
+
+  test("missed events and a lost connection drop the previews; nothing is asked while the host cannot", async () => {
+    const canvas = fakeCanvas()
+    try {
+      const h = await renderPreviews((host) => host.previews.set("res://hero.png", heroPreview()))
+      await waitFor(() => assert.ok(thumbOf("hero.png")))
+      await h.assets.onAssetsChanged(null)
+      await waitFor(() => assert.equal(h.host.previewCalls.length, 2))
+      h.assets.reset()
+      assert.equal(h.assets.previews.size, 0)
+    } finally {
+      canvas.restore()
+    }
+    const off = await renderPreviews((host) => host.previews.set("res://hero.png", heroPreview()), false)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.deepEqual(off.host.previewCalls, [])
+    assert.equal(thumbOf("hero.png"), null)
+  })
+})

@@ -9,6 +9,7 @@ import { batch, computed, signal } from "@preact/signals-core"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
 import type { AssetDetails } from "../protocol/protocol.generated"
 import { errorCodeOf, errorTextOf } from "../shared/api"
+import { AssetPreviewCache, PreviewEngine } from "./asset-previews"
 import type { EngineApi, JsonObject } from "../shared/api"
 import {
   LineEnding,
@@ -116,6 +117,8 @@ const messageOf = (e: unknown): string => errorTextOf(e)
 const isSceneAsset = (type: string, path: string): boolean => type === "Scene" || path.toLowerCase().endsWith(".scene")
 
 export class AssetsState {
+  /** Thumbnails and waveforms (protocol 1.17.0), kept while the connection lasts and dropped when the assets change */
+  readonly previews: AssetPreviewCache
   /** The host's listing; null before the first answer (and while not connected) */
   readonly listing = signal<AssetListing | null>(null)
   /** Why the listing couldn't be read; null when it could */
@@ -157,8 +160,12 @@ export class AssetsState {
     private readonly log: LogMarks | null = null,
     private readonly onError: (what: string, e: unknown) => void = () => {},
     /** Why the assets can't be changed now (a play session: the host refuses its writers); null when they can */
-    private readonly editBlocked: () => string | null = () => null
-  ) {}
+    private readonly editBlocked: () => string | null = () => null,
+    /** Whether the host has GetAssetPreview now (connected, protocol 1.17.0 or later); default: yes */
+    previewsEnabled: () => boolean = () => true
+  ) {
+    this.previews = new AssetPreviewCache(engine as PreviewEngine, { enabled: previewsEnabled })
+  }
 
   private blockedReason(): string | null {
     const reason = this.editBlocked()
@@ -168,6 +175,7 @@ export class AssetsState {
   /** The connection ended (or another host's began): what the host listed is gone, the open files stay with their text */
   reset(): void {
     this.generation++
+    this.previews.clear()
     batch(() => {
       this.listing.value = null
       this.listingError.value = null
@@ -587,7 +595,11 @@ export class AssetsState {
    * edits is flagged, and keeps them.
    */
   async onAssetsChanged(event: AssetsChangedEvent | null): Promise<void> {
-    const refreshed = this.refresh()
+    // A changed file has another picture; events that were missed (null) could have changed any
+    // (the views ask again once the listing, which carries the files' new times, is read)
+    if (event) this.previews.invalidate([...event.modified, ...event.added, ...event.removed], false)
+    else this.previews.clear(false)
+    const refreshed = this.refresh().finally(() => this.previews.notifyChanged())
     const touched = event ? new Set([...event.modified, ...event.added, ...event.removed]) : null
     const removed = new Set(event?.removed ?? [])
     const tabs = this.tabs.value.filter((tab) => touched === null || touched.has(tab.path))

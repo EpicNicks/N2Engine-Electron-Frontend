@@ -5,8 +5,9 @@ import { DefaultOverlays, OverlayOptions } from "./viewport-overlays"
 import type { ViewportController } from "./viewport-controller"
 
 export interface CameraBookmark { camera: SetEditorCameraRequest; distance: number; mode2D: boolean }
-export interface ViewPreferences { overlays: OverlayOptions; bookmarks: Record<string, Array<CameraBookmark | null>> }
-export const DefaultViewPreferences: ViewPreferences = { overlays: DefaultOverlays, bookmarks: {} }
+/** wireframe: the editor view draws wireframe (SetEditorViewOptions, protocol 1.17.0); the host forgets it, so it is sent again on connecting */
+export interface ViewPreferences { overlays: OverlayOptions; bookmarks: Record<string, Array<CameraBookmark | null>>; wireframe: boolean }
+export const DefaultViewPreferences: ViewPreferences = { overlays: DefaultOverlays, bookmarks: {}, wireframe: false }
 function validBookmark(raw:unknown): CameraBookmark | null {
   if(!isRecord(raw) || !isRecord(raw.camera))return null
   const c=raw.camera,p=c.position,q=c.rotation
@@ -27,11 +28,13 @@ export const ViewPreferencesPref=definePref<ViewPreferences,"project">({
     for(const key of Object.keys(overlays) as Array<keyof OverlayOptions>) if(typeof source[key]==="boolean")overlays[key]=source[key] as boolean
     const entries=isRecord(raw.bookmarks)?Object.entries(raw.bookmarks).slice(0,64):[]
     const bookmarks=Object.fromEntries(entries.filter(([key,value])=>key.length>0 && key.length<=512 && Array.isArray(value)).map(([key,value])=>[key,Array.from({length:9},(_,i)=>validBookmark((value as unknown[])[i]))]))
-    return {overlays,bookmarks}
+    return {overlays,bookmarks,wireframe:raw.wireframe===true}
   }
 })
 export function attachViewportViewPrefs(viewport:ViewportController,scope:PrefScopeView<"project">):()=>void {
   viewport.viewPreferences.value=scope.get(ViewPreferencesPref)
+  // The project's wireframe choice reaches a host that is already connected (a connection made it before the project was known)
+  viewport.syncViewOptions()
   let first=true
   return effect(()=>{
     const value=viewport.viewPreferences.value

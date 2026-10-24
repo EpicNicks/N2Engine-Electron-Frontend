@@ -60,7 +60,8 @@ export interface PickBackend {
   bounds(entityIds: string[]): Promise<Map<string, Bounds> | null>
 }
 
-type Engine = Pick<EngineApi, "isConnected" | "setEditorCamera" | "getEditorCamera" | "getEntity" | "setLocalTransform">
+type Engine = Pick<EngineApi, "isConnected" | "setEditorCamera" | "getEditorCamera" | "getEntity" | "setLocalTransform"> &
+  Partial<Pick<EngineApi, "setEditorViewOptions">>
 
 export interface ViewportDeps {
   engine: Engine
@@ -73,6 +74,8 @@ export interface ViewportDeps {
   onError(what: string, error: unknown): void
   /** Something worth a console line, not a banner (an unverified assumption failed) */
   onNote(message: string): void
+  /** Whether the host has SetEditorViewOptions now (protocol 1.17.0 or later; the editor view, not a play session). Default: no. */
+  canViewOptions?(): boolean
   /** Whether the scene can be edited now (connected, not a play session): the gizmo is shown and used only then */
   canEdit(): boolean
   /** The primary selection, or what a click selected */
@@ -179,7 +182,7 @@ interface PickClick {
 
 export class ViewportController {
   readonly camera = new EditorCameraController()
-  readonly viewPreferences = signal<ViewPreferences>({overlays:{...DefaultViewPreferences.overlays},bookmarks:{}})
+  readonly viewPreferences = signal<ViewPreferences>({overlays:{...DefaultViewPreferences.overlays},bookmarks:{},wireframe:false})
   private readonly overlayEntities: OverlayEntityCache
   private allBoundsPending = false
   private allBoundsKey = ""
@@ -236,6 +239,9 @@ export class ViewportController {
   /** Counts target loads, so a slow answer can't replace a newer one */
   private loads = 0
   private connections = 0
+  /** The wireframe state the host was last told on this connection (a host starts without it) */
+  private hostWireframe = false
+  private viewOptionsRunning = false
   private warned = false
   /** Frame pixels per CSS pixel: the gizmo's size, its pick distance and the click slop are CSS pixels */
   private ratio = 1
@@ -358,6 +364,8 @@ export class ViewportController {
   async connected(): Promise<void> {
     const connection = ++this.connections
     this.warned = false
+    this.hostWireframe = false
+    this.syncViewOptions()
     try {
       const host = await this.deps.engine.getEditorCamera()
       if (connection !== this.connections) return
@@ -374,6 +382,7 @@ export class ViewportController {
   /** The connection ended: nothing of the host's is valid */
   disconnected(): void {
     this.connections++
+    this.hostWireframe = false
     this.overlayEntities.clear()
     this.allBoundsGeneration++
     this.allBoundsKey=""
@@ -522,6 +531,47 @@ export class ViewportController {
   setOverlay(key: keyof OverlayOptions, value:boolean):void {
     this.viewPreferences.value={...this.viewPreferences.value,overlays:{...this.viewPreferences.value.overlays,[key]:value}}
     this.redraw()
+  }
+
+  /** Whether the host can be told the view options now: it has the command and this is an editor session */
+  get canViewOptions(): boolean {
+    return typeof this.deps.engine.setEditorViewOptions === "function" && (this.deps.canViewOptions?.() ?? false)
+  }
+
+  /** Wireframe in the editor view (per view; saved with the project's view options, sent to the host while it can take it) */
+  setWireframe(value:boolean):void {
+    if(this.viewPreferences.value.wireframe===value)return
+    this.viewPreferences.value={...this.viewPreferences.value,wireframe:value}
+    this.redraw()
+    this.syncViewOptions()
+  }
+
+  /**
+   * Makes the host's wireframe state the chosen one (one SetEditorViewOptions at a time, the newest choice last; nothing is
+   * sent while the host is at the choice already, or can't take it). The host redraws on a change, so a frame is asked for.
+   */
+  syncViewOptions():void {
+    if(this.viewOptionsRunning || !this.canViewOptions)return
+    const run=async():Promise<void> => {
+      this.viewOptionsRunning=true
+      try {
+        for(;;) {
+          const wanted=this.viewPreferences.value.wireframe,connection=this.connections
+          if(wanted===this.hostWireframe || !this.canViewOptions)return
+          try {
+            await this.deps.engine.setEditorViewOptions!(wanted)
+          } catch(e) {
+            if(connection===this.connections)this.deps.onError("Failed to change the view's wireframe",e)
+            return
+          }
+          // Another connection began while it was on its way: that host starts without wireframe
+          if(connection!==this.connections)return
+          this.hostWireframe=wanted
+          this.frameNeeded()
+        }
+      } finally { this.viewOptionsRunning=false }
+    }
+    void run()
   }
 
   setOrthographic(value:boolean):void { if(this.drag || this.marquee)return;this.camera.setOrthographic(value);this.cameraChanged() }
