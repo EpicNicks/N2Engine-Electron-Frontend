@@ -6,6 +6,10 @@ import { useEffect, useMemo, useState } from "preact/hooks"
 import { NotInTheHistoryNote, ProjectSettingsModel } from "./project-settings-state"
 import { settingsSections, type SectionComponent } from "./project-settings-sections"
 import type { SectionRegistry, SettingsSectionDef } from "./project-settings-registry"
+import { PhysicsBackendsModel } from "./physics-backends-state"
+import { PhysicsBackendsCapability } from "../protocol/physics-backends"
+import { hasCapability } from "../protocol/extensions"
+import { computed } from "@preact/signals-core"
 import { Empty, Panel, confirmDialog, useApp } from "./ui"
 
 /** The registered panel: the model over the editor's store and the host's commands */
@@ -25,6 +29,13 @@ export function ProjectSettingsPanel() {
           confirm: confirmDialog,
           // A remote host is not ours to restart
           restartHost: store.remote.value ? null : () => store.restartHost(),
+          physicsBackends: new PhysicsBackendsModel({
+            getPhysicsBackends: () => window.engine.getPhysicsBackends(),
+            setPhysicsBackend: (backend) => window.engine.setPhysicsBackend(backend),
+            connected: store.connected,
+            supported: computed(() => hasCapability(store.serverInfo.value?.capabilities, PhysicsBackendsCapability)),
+            readOnlyReason: store.readOnlyReason,
+          }),
         },
         settingsSections as SectionRegistry<unknown>
       ),

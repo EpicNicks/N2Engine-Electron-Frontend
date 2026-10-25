@@ -15,6 +15,9 @@ import {
   decodeInstantiateEntitiesRequest,
   decodeInstantiatePrefabRequest,
   decodeUnpackPrefabRequest,
+  decodeSetPhysicsBackendRequest,
+  encodePhysicsBackendsResponse,
+  type PhysicsBackendsInfo,
   encodeAssetCreatedResponse,
   encodeEntityCreatedResponse,
   decodeSerializeEntitiesRequest,
@@ -201,5 +204,73 @@ describe("EngineClient editor tooling commands", () => {
     const client = await connected()
     reply(ResponseType.Error, encodeErrorResponse({ message: "Not available in a play host" }))
     await assert.rejects(client.createPrefab("e1", "res://a.prefab", false), (e) => e instanceof EngineError && /play host/.test(e.message))
+  })
+
+  const backendsInfo: PhysicsBackendsInfo = {
+    current: "physx",
+    configured: false,
+    active: "physx",
+    restartRequired: false,
+    networkPreset: "",
+    backends: [
+      {
+        id: "physx",
+        displayName: "PhysX",
+        compiledIn: true,
+        determinism: "SameBinary",
+        determinismDefault: "None",
+        features: ["layers", "triggers"],
+        missingFeatures: ["events", "queries"],
+        supportsSnapshot: true,
+        supportsSetState: false,
+        deterministicSelectable: false,
+      },
+      {
+        id: "jolt",
+        displayName: "Jolt",
+        compiledIn: false,
+        determinism: "None",
+        determinismDefault: "None",
+        features: [],
+        missingFeatures: ["layers", "triggers", "events", "queries"],
+        supportsSnapshot: false,
+        supportsSetState: false,
+        deterministicSelectable: false,
+        note: "Not compiled into this host; what it declares is unknown",
+      },
+    ],
+  }
+
+  test("getPhysicsBackends sends no fields and answers the described backends (protocol 1.20.0)", async () => {
+    const client = await connected()
+    reply(ResponseType.PhysicsBackends, encodePhysicsBackendsResponse({ info: backendsInfo }))
+    assert.deepEqual(await client.getPhysicsBackends(), backendsInfo)
+    assert.equal(requests[0].type, CommandType.GetPhysicsBackends)
+    assert.equal(requests[0].payload.length, 0)
+  })
+
+  test("setPhysicsBackend sends the backend and answers the new description", async () => {
+    const client = await connected()
+    const after = { ...backendsInfo, current: "jolt", configured: true, restartRequired: true }
+    reply(ResponseType.PhysicsBackends, encodePhysicsBackendsResponse({ info: after }))
+    assert.deepEqual(await client.setPhysicsBackend("jolt"), after)
+    assert.equal(requests[0].type, CommandType.SetPhysicsBackend)
+    assert.deepEqual(decodeSetPhysicsBackendRequest(requests[0].payload), { backend: "jolt" })
+  })
+
+  test("an answer that is not a PhysicsBackendsInfo is rejected", async () => {
+    const client = await connected()
+    reply(ResponseType.PhysicsBackends, encodePhysicsBackendsResponse({ info: { ...backendsInfo, backends: [{ id: "physx" }] } as unknown as PhysicsBackendsInfo }))
+    await assert.rejects(client.getPhysicsBackends(), /backends must be a list/)
+    reply(ResponseType.PhysicsBackends, encodePhysicsBackendsResponse({ info: { ...backendsInfo, restartRequired: "yes" } as unknown as PhysicsBackendsInfo }))
+    await assert.rejects(client.setPhysicsBackend("physx"), /booleans/)
+  })
+
+  test("the host's refusals of SetPhysicsBackend are EngineErrors (play host, not compiled in, not deterministic-selectable)", async () => {
+    const client = await connected()
+    for (const message of ["Not available in a play host", "Backend jolt is not compiled into this host", "Backend physx is not deterministic-selectable"]) {
+      reply(ResponseType.Error, encodeErrorResponse({ message }))
+      await assert.rejects(client.setPhysicsBackend("jolt"), (e) => e instanceof EngineError && e.message.includes(message))
+    }
   })
 })

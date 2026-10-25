@@ -13,6 +13,7 @@ import { computed, effect, signal, type ReadonlySignal } from "@preact/signals-c
 import type { ProjectInfoResponse } from "../protocol/protocol.generated"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { HostRole } from "./store"
+import type { PhysicsBackendsModel } from "./physics-backends-state"
 import type { SectionBuildContext, SectionGate, SectionRegistry, SettingsSectionDef } from "./project-settings-registry"
 import {
   NothingBuilt,
@@ -39,6 +40,8 @@ export interface ProjectSettingsDeps {
   confirm(message: string, okLabel: string): Promise<boolean>
   /** Restarts the local host (asks about unsaved scene changes itself); null for a remote host, which can't be restarted from here */
   restartHost: (() => Promise<void>) | null
+  /** The Physics backend section's state (protocol 1.20.0); read again with the project. Absent: the section is not shown. */
+  physicsBackends?: PhysicsBackendsModel
 }
 
 /** What "restore the previous values" puts back: the edit keys of the last Apply and their text before it */
@@ -86,6 +89,10 @@ export class ProjectSettingsModel {
     isAdmin: this.isAdmin.value,
     determinismDenied: this.determinismDenied.value,
   }))
+  /** The physics backend picker's state, when the page gave one */
+  get backends(): PhysicsBackendsModel | null {
+    return this.deps.physicsBackends ?? null
+  }
   get isConnected(): boolean {
     return this.deps.connected.value
   }
@@ -107,6 +114,7 @@ export class ProjectSettingsModel {
         // A new host starts from the file: nothing waits for a restart any more, and its refusals are its own
         this.restartPending.value = {}
         this.determinismDenied.value = false
+        void this.deps.physicsBackends?.refresh()
         return
       }
       void this.refresh()
@@ -120,6 +128,7 @@ export class ProjectSettingsModel {
 
   /** GetProjectInfo; the newest read wins */
   async refresh(): Promise<void> {
+    void this.deps.physicsBackends?.refresh()
     const read = ++this.reads
     try {
       const info = await this.deps.getProjectInfo()
@@ -276,6 +285,8 @@ export class ProjectSettingsModel {
         }
         this.previous.value = { ...this.previous.value, [id]: before }
       }
+      // The backend, the network preset and the determinism flag decide what the picker offers
+      void this.deps.physicsBackends?.refresh()
       if (built.restart.length > 0) {
         const pending = new Set([...(this.restartPending.value[id] ?? []), ...built.restart])
         this.restartPending.value = { ...this.restartPending.value, [id]: [...pending] }

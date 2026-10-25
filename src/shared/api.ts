@@ -22,6 +22,7 @@ import type {
   HistoryResponse,
   InputEvent,
   LuaSyntaxResult,
+  PhysicsBackendsInfo,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
@@ -161,6 +162,10 @@ export interface EngineCommands {
   applyPrefab(entityId: string): Promise<void>
   /** Protocol 1.19.0: clears the object's link to its prefab (one undo step) */
   unpackPrefab(entityId: string): Promise<void>
+  /** Protocol 1.20.0 (physicsBackends capability): the 3D physics backends the host has, what each declares, and which the project uses (a Read command) */
+  getPhysicsBackends(): Promise<PhysicsBackendsInfo>
+  /** Protocol 1.20.0: sets physics.backend ("physx" or "jolt"); takes effect at the next play session or host start. A Write command: refused in play, on a read-only host and for a viewer */
+  setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -307,6 +312,8 @@ export const EngineCommandArgs = {
   instantiatePrefab: ["string", "string", "int32", "bool", "vec3"],
   applyPrefab: ["string"],
   unpackPrefab: ["string"],
+  getPhysicsBackends: [],
+  setPhysicsBackend: ["string"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],

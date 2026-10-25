@@ -330,7 +330,7 @@ The state machine is `src/main/play-session.ts` and the page's side is `src/rend
 
 ## Read-only hosts
 
-Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.19.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
+Protocol 1.11.0 (engine #126, `N2EditorHost --read-only`). This editor speaks 1.20.0 (`PROTOCOL_VERSION`, generated from the engine commit in `engine-ref.txt`) and still works with a 1.10 or 1.11 host, whose answers end before the newer fields (they decode to their defaults: not read-only, no error codes, no user, no role).
 
 - **What the host says.** A host started with `--read-only` answers every command that is not a read with a refusal (`SetComponentFields`, `OpenScene`, `Undo`, `WritePlaySnapshot`, `Shutdown` and so on; the viewport camera and the viewport size are reads). `ServerInfo.readOnly` (read from Hello) says so up front. The editor asks for error codes in Hello (`errorCodes: true`), so a refusal arrives as `ErrorCoded` (message and code `readOnly` or, for later per-user roles, `forbidden`) and rejects with an `EngineError` whose `code` is set; a 1.10 host, or any other failure, sends a plain `Error` and the `code` is `undefined`. An unknown code is treated like a plain error.
 - **The badge.** While `ServerInfo.readOnly` is true (`EditorStore.hostReadOnly`) the toolbar shows a **Read-only** badge.
@@ -739,6 +739,17 @@ Engine EN3 (PR #246) added prefab assets: `.prefab` files (resource type `Prefab
 - **Inspector.** An object linked to a prefab shows `Prefab` with its path and **Select asset** (selects it in the Assets panel), **Apply** (asks first: the file is overwritten and Undo does not bring it back) and **Unpack** (clears the link; the object and the file stay). Apply and Unpack are disabled while read-only.
 - **Not here.** Updating existing instances when a prefab changes, overrides, nested prefab editing, dropping several assets at once from the assets panel, and any prefab keyboard shortcut (no keymap entries were added).
 - **Not verified in a real Electron window or against a live 1.19.0 host:** real drag and drop between panels (tests use a hand-made `dataTransfer`), the viewport drop position against a real picture, the host's refusal messages as shown, and prefabs near the host's limits. Tests use host stand-ins.
+
+## Physics backend picker (FE-J9, protocol 1.20.0)
+
+Engine J9 (PR #248) added two commands and the `physicsBackends` Hello capability. `engine-ref.txt` pins the engine's merge commit of that PR (c2d156b2); the protocol files and the Lua API index are regenerated from it (re-running gives no diff).
+
+- **Client.** `EngineClient.getPhysicsBackends()` (a Read command) and `setPhysicsBackend(backend)` (a Write command) both answer a `PhysicsBackendsInfo`, which is checked for its shape (`src/protocol/physics-backends.ts`; the generated decoder only parses the JSON). Both are forwarded through the IPC argument table (`window.engine.getPhysicsBackends`, `setPhysicsBackend`).
+- **Project Settings, "Physics backend" section** (between Physics and Rendering). One card per backend the host lists, with its name and id, whether it is compiled in, its determinism level (and the level it declares with `physics.deterministic` off, when different), its missing feature groups, snapshot and set-state support, whether the Deterministic preset can select it, and the host's note. Above the cards: current (`physics.backend`, or the default), configured, active (what this host runs), the network preset, and a restart note when `restartRequired` is true (with Restart host for a local host).
+- **Choosing.** **Use this backend** calls `SetPhysicsBackend` and shows that it takes effect at the next play session or host start: the running host keeps the backend it created. The answer replaces what is shown. A backend is off, with the reason as its tooltip, when it is not compiled in, or when the network preset is `deterministic` and the host says it is not `deterministicSelectable` (the host refuses both too). The host's refusal of anything else is shown as it said it.
+- **Off entirely** while a game runs, on a read-only host and for a viewer (the store's `readOnlyReason`, which is stricter than the host: a play host refuses the setter anyway), and when the host lacks the `physicsBackends` capability (nothing is read; the section explains). The backends are read again with the project (any `projectChanged`, an Apply in another section, a reconnect).
+- **The Physics section keeps its `physics.backend` field** (the raw setting, applied through `SetProjectSettings`); the picker is the way to see what the host can actually run.
+- **Not verified in a real Electron window or against a live 1.20.0 host:** a host that is actually running a different backend than the project names (`restartRequired` true against a real backend), a Jolt-enabled or PhysX-enabled host (the engine's own notes say the values for a compiled-in backend are checked only on CI legs that contain it), and the host's refusal messages as shown. Tests use host stand-ins.
 
 ## Protocol
 

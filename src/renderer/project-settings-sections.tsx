@@ -16,6 +16,8 @@ import {
   StartupSceneKey,
 } from "./project-settings-logic"
 import { ExtensionsSection } from "./extensions-ui"
+import { PhysicsBackendTakesEffectNote, determinismLabel } from "../protocol/physics-backends"
+import type { PhysicsBackendInfo } from "../protocol/protocol.generated"
 import { SectionRegistry, type SettingsSectionDef } from "./project-settings-registry"
 import type { ProjectSettingsModel } from "./project-settings-state"
 import {
@@ -365,6 +367,126 @@ function CollisionMatrixEditor({ model, def, disabled }: SectionProps & { disabl
   )
 }
 
+/** One backend of the picker: what the host says it declares, and the button that chooses it */
+function BackendCard(props: { model: ProjectSettingsModel; backend: PhysicsBackendInfo }) {
+  const { model, backend } = props
+  const picker = model.backends
+  const info = picker?.info.value
+  if (!picker || !info) return null
+  const isCurrent = info.current === backend.id
+  const isActive = info.active === backend.id
+  const block = picker.blockReason(backend)
+  const busy = picker.choosing.value !== null
+  const deterministicPreset = info.networkPreset.toLowerCase() === "deterministic"
+  return (
+    <div class={`ps-backend${isCurrent ? " current" : ""}${backend.compiledIn ? "" : " missing"}`} data-backend={backend.id} role="group" aria-label={backend.displayName}>
+      <div class="ps-backend-head">
+        <b>{backend.displayName}</b> <code>{backend.id}</code>
+        {isCurrent && <span class="ps-badge">project setting</span>}
+        {isActive && <span class="ps-badge">running in this host</span>}
+        {!backend.compiledIn && <span class="ps-badge restart">not compiled in</span>}
+      </div>
+      <dl class="ps-backend-facts">
+        <dt>Compiled in</dt>
+        <dd>{backend.compiledIn ? "Yes" : "No"}</dd>
+        <dt>Determinism</dt>
+        <dd>
+          {determinismLabel(backend.determinism)}
+          {backend.determinism !== backend.determinismDefault && <span class="ps-help"> (default: {determinismLabel(backend.determinismDefault)})</span>}
+        </dd>
+        <dt>Missing features</dt>
+        <dd>{backend.missingFeatures.length === 0 ? "None" : backend.missingFeatures.join(", ")}</dd>
+        <dt>Snapshots</dt>
+        <dd>
+          {backend.supportsSnapshot ? "Snapshot" : "No snapshot"}, {backend.supportsSetState ? "set state" : "no set state"}
+        </dd>
+        <dt>Deterministic preset</dt>
+        <dd>{backend.deterministicSelectable ? "Selectable" : "Not selectable"}</dd>
+      </dl>
+      {backend.note && <p class="ps-help">{backend.note}</p>}
+      {deterministicPreset && !backend.deterministicSelectable && backend.compiledIn && (
+        <p class="ps-warning" role="note">
+          The network preset is Deterministic and this backend is not deterministic-selectable: the host refuses it.
+        </p>
+      )}
+      <div class="ps-buttons">
+        <button type="button" disabled={isCurrent || block !== null || busy} title={block ?? undefined} onClick={() => void picker.choose(backend.id)}>
+          {picker.choosing.value === backend.id ? "Choosing..." : isCurrent ? "Chosen" : "Use this backend"}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** The Physics backend section (protocol 1.20.0): the host's backends as cards, and which the project uses */
+function PhysicsBackendSection(props: SectionProps) {
+  const model = props.model
+  const picker = model.backends
+  if (!picker) return <p class="ps-intro">The backend picker is not available in this panel.</p>
+  const info = picker.info.value
+  const reason = picker.disabledReason
+  const loadError = picker.loadError.value
+  const error = picker.error.value
+  return (
+    <div class="ps-form ps-backends">
+      <p class="ps-intro">
+        The 3D physics backend the project uses (the setting <code>physics.backend</code>). {PhysicsBackendTakesEffectNote}
+      </p>
+      {reason && !picker.supported && (
+        <div class="ps-note" role="status">
+          {reason}
+        </div>
+      )}
+      {loadError && (
+        <p class="ps-field-error" role="alert">
+          Failed to read the physics backends: {loadError}
+        </p>
+      )}
+      {info && (
+        <>
+          <div class="ps-facts">
+            <div>
+              <span>Current</span> <b>{info.current}</b> {!info.configured && <span class="ps-help">(the project does not set it; the default)</span>}
+            </div>
+            <div>
+              <span>Configured</span> <b>{info.configured ? "Yes" : "No"}</b>
+            </div>
+            <div>
+              <span>Active</span> <b>{info.active === "" ? "none" : info.active}</b>
+            </div>
+            <div>
+              <span>Network preset</span> <b>{info.networkPreset === "" ? "(none)" : info.networkPreset}</b>
+            </div>
+          </div>
+          {info.restartRequired && (
+            <div class="ps-restart" role="status">
+              The host runs {info.active === "" ? "no backend" : info.active}, the project names {info.current}: {PhysicsBackendTakesEffectNote}{" "}
+              {model.canRestartHost && (
+                <button type="button" onClick={() => void model.restartHost()}>
+                  Restart host
+                </button>
+              )}
+            </div>
+          )}
+          {info.backends.map((backend) => (
+            <BackendCard key={backend.id} model={model} backend={backend} />
+          ))}
+        </>
+      )}
+      {error && (
+        <div class="ps-host-error" role="alert">
+          <b>The host refused it.</b> <pre>{error}</pre>
+        </div>
+      )}
+      {picker.lastChosen.value && !error && (
+        <div class="ps-restart" role="status">
+          Saved {picker.lastChosen.value}. {PhysicsBackendTakesEffectNote}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function JsonSection(props: SectionProps & { help: string; rows: number }) {
   const { model, def } = props
   const disabled = model.disabledReason(def.id) !== null || model.applying.value !== null
@@ -435,6 +557,7 @@ settingsSections.register({
       : DeterminismAdminReason,
 })
 settingsSections.register({ id: "layers", title: "Layers", order: 60, component: LayersSection, logic: LayersLogic })
+settingsSections.register({ id: "physics-backend", title: "Physics backend", order: 25, component: PhysicsBackendSection })
 // 70 is left for Network (B11)
 settingsSections.register({ id: "extensions", title: "Extensions", order: 80, component: ExtensionsSection })
 settingsSections.register({ id: "input", title: "Input", order: 90, component: InputSection, logic: InputLogic })
