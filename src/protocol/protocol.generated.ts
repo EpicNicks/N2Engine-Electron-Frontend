@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.19.0";
+export const PROTOCOL_VERSION = "1.20.0";
 
 // ==================== Types ====================
 
@@ -261,6 +261,29 @@ export interface ExtensionResultInfo {
   warnings?: string[];
 }
 
+export interface PhysicsBackendInfo {
+  id: string;
+  displayName: string;
+  compiledIn: boolean;
+  determinism: string;
+  determinismDefault: string;
+  features: string[];
+  missingFeatures: string[];
+  supportsSnapshot: boolean;
+  supportsSetState: boolean;
+  deterministicSelectable: boolean;
+  note?: string;
+}
+
+export interface PhysicsBackendsInfo {
+  current: string;
+  configured: boolean;
+  active: string;
+  restartRequired: boolean;
+  networkPreset: string;
+  backends: PhysicsBackendInfo[];
+}
+
 export interface ClipboardPayload {
   format: string;
   version: number;
@@ -378,6 +401,8 @@ export const CommandType = {
   InstantiatePrefab: 0xAA,
   ApplyPrefab: 0xAB,
   UnpackPrefab: 0xAC,
+  GetPhysicsBackends: 0xAD,
+  SetPhysicsBackend: 0xAE,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -425,6 +450,7 @@ export const ResponseType = {
   AssetPreview: 0xA4,
   SerializedEntities: 0x21,
   EntitiesCreated: 0x22,
+  PhysicsBackends: 0x23,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -511,6 +537,8 @@ export const CommandResponse = {
   InstantiatePrefab: "EntityCreated",
   ApplyPrefab: "Ok",
   UnpackPrefab: "Ok",
+  GetPhysicsBackends: "PhysicsBackends",
+  SetPhysicsBackend: "PhysicsBackends",
 } as const;
 
 // ==================== Messages ====================
@@ -793,6 +821,10 @@ export interface UnpackPrefabRequest {
   entityId: string;
 }
 
+export interface SetPhysicsBackendRequest {
+  backend: string;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -1016,6 +1048,10 @@ export interface LuaSyntaxResponse {
 export interface AssetPreviewResponse {
   info: AssetPreviewInfo;
   pixels: Uint8Array;
+}
+
+export interface PhysicsBackendsResponse {
+  info: PhysicsBackendsInfo;
 }
 
 export interface ErrorCodedResponse {
@@ -2195,6 +2231,20 @@ export function decodeUnpackPrefabRequest(payload: Uint8Array): UnpackPrefabRequ
   return { entityId };
 }
 
+/** SetPhysicsBackend's request payload (without the frame header) */
+export function encodeSetPhysicsBackendRequest(value: SetPhysicsBackendRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.backend);
+  return writer.finish();
+}
+
+/** Reads SetPhysicsBackend's request payload; bytes after the last field are ignored */
+export function decodeSetPhysicsBackendRequest(payload: Uint8Array): SetPhysicsBackendRequest {
+  const reader = new ProtocolReader(payload);
+  const backend = reader.string();
+  return { backend };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2884,6 +2934,20 @@ export function decodeAssetPreviewResponse(payload: Uint8Array): AssetPreviewRes
   return { info, pixels };
 }
 
+/** PhysicsBackends's payload (without the frame header) */
+export function encodePhysicsBackendsResponse(value: PhysicsBackendsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads PhysicsBackends's payload; bytes after the last field are ignored */
+export function decodePhysicsBackendsResponse(payload: Uint8Array): PhysicsBackendsResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as PhysicsBackendsInfo;
+  return { info };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2957,6 +3021,7 @@ export const RequestCodecs = {
   InstantiatePrefab: { encode: encodeInstantiatePrefabRequest, decode: decodeInstantiatePrefabRequest },
   ApplyPrefab: { encode: encodeApplyPrefabRequest, decode: decodeApplyPrefabRequest },
   UnpackPrefab: { encode: encodeUnpackPrefabRequest, decode: decodeUnpackPrefabRequest },
+  SetPhysicsBackend: { encode: encodeSetPhysicsBackendRequest, decode: decodeSetPhysicsBackendRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3002,5 +3067,6 @@ export const ResponseCodecs = {
   PlayState: { encode: encodePlayStateResponse, decode: decodePlayStateResponse },
   LuaSyntax: { encode: encodeLuaSyntaxResponse, decode: decodeLuaSyntaxResponse },
   AssetPreview: { encode: encodeAssetPreviewResponse, decode: decodeAssetPreviewResponse },
+  PhysicsBackends: { encode: encodePhysicsBackendsResponse, decode: decodePhysicsBackendsResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

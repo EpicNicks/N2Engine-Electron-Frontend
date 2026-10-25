@@ -23,6 +23,7 @@ import {
   HierarchyResponse,
   HistoryResponse,
   PROTOCOL_VERSION,
+  PhysicsBackendsInfo,
   ProjectInfoResponse,
   ResponseType,
   SceneDataResponse,
@@ -37,6 +38,7 @@ import {
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
+import { validatePhysicsBackendsInfo } from "./physics-backends"
 import { parseAssetDetails, parseAssetList } from "./asset-parse"
 import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
@@ -569,6 +571,22 @@ export class EngineClient {
   /** Sets the scene the host opens first (an existing scene file, or empty for none); answers the project saved */
   setStartupScene(path: string): Promise<ProjectInfoResponse> {
     return this.send(Commands.SetStartupScene, { path })
+  }
+
+  // ==================== Physics backend (protocol 1.20.0) ====================
+
+  /** The 3D physics backends the host was built with, what each declares, and which one the project uses (a Read command; physicsBackends capability) */
+  async getPhysicsBackends(): Promise<PhysicsBackendsInfo> {
+    return validatePhysicsBackendsInfo((await this.send(Commands.GetPhysicsBackends, {})).info)
+  }
+
+  /**
+   * Sets the project's physics.backend ("physx" or "jolt") and answers the new description. Takes effect at the next play
+   * session or host start. A Write command: a play host and a read-only host refuse it, a viewer is forbidden, and the host
+   * refuses an unknown or not compiled-in backend (and, under the Deterministic preset, one that is not deterministicSelectable).
+   */
+  async setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo> {
+    return validatePhysicsBackendsInfo((await this.send(Commands.SetPhysicsBackend, { backend })).info)
   }
 
   // ==================== Entity Management ====================

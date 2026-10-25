@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.19.0",
+  "protocolVersion": "1.20.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -637,6 +637,14 @@
         "entityId": "entityId 0 ✓ é"
       },
       "payload": "11000000656e746974794964203020e29c9320c3a9"
+    },
+    {
+      "command": "SetPhysicsBackend",
+      "id": "0xAE",
+      "fields": {
+        "backend": "backend 0 ✓ é"
+      },
+      "payload": "100000006261636b656e64203020e29c9320c3a9"
     }
   ],
   "responses": [
@@ -2143,6 +2151,60 @@
         "pixels": "01264b7095badf04"
       },
       "payload": "f80000007b226368616e6e656c73223a31312e352c226475726174696f6e4d73223a31302e352c22686569676874223a372e352c226b696e64223a226b696e64203020e29c93222c226d6f646966696564223a352e352c2270617468223a2270617468203220e29c93222c227065616b73223a5b7b226d6178223a31342e352c226d696e223a31332e357d2c7b226d6178223a31352e352c226d696e223a31342e357d5d2c2273616d706c6552617465223a31322e352c22736f75726365486569676874223a392e352c22736f757263655769647468223a382e352c2275756964223a2275756964203120e29c93222c227769647468223a362e357d01264b7095badf04"
+    },
+    {
+      "response": "PhysicsBackends",
+      "id": "0x23",
+      "fields": {
+        "info": {
+          "active": "active 2 ✓",
+          "backends": [
+            {
+              "compiledIn": false,
+              "determinism": "determinism 8 ✓",
+              "determinismDefault": "determinismDefault 9 ✓",
+              "deterministicSelectable": true,
+              "displayName": "displayName 6 ✓",
+              "features": [
+                "features 10 ✓",
+                "features 11 ✓"
+              ],
+              "id": "id 5 ✓",
+              "missingFeatures": [
+                "missingFeatures 11 ✓",
+                "missingFeatures 12 ✓"
+              ],
+              "note": "note 15 ✓",
+              "supportsSetState": false,
+              "supportsSnapshot": true
+            },
+            {
+              "compiledIn": true,
+              "determinism": "determinism 9 ✓",
+              "determinismDefault": "determinismDefault 10 ✓",
+              "deterministicSelectable": false,
+              "displayName": "displayName 7 ✓",
+              "features": [
+                "features 11 ✓",
+                "features 12 ✓"
+              ],
+              "id": "id 6 ✓",
+              "missingFeatures": [
+                "missingFeatures 12 ✓",
+                "missingFeatures 13 ✓"
+              ],
+              "note": "note 16 ✓",
+              "supportsSetState": true,
+              "supportsSnapshot": false
+            }
+          ],
+          "configured": false,
+          "current": "current 0 ✓",
+          "networkPreset": "networkPreset 4 ✓",
+          "restartRequired": false
+        }
+      },
+      "payload": "7c0300007b22616374697665223a22616374697665203220e29c93222c226261636b656e6473223a5b7b22636f6d70696c6564496e223a66616c73652c2264657465726d696e69736d223a2264657465726d696e69736d203820e29c93222c2264657465726d696e69736d44656661756c74223a2264657465726d696e69736d44656661756c74203920e29c93222c2264657465726d696e697374696353656c65637461626c65223a747275652c22646973706c61794e616d65223a22646973706c61794e616d65203620e29c93222c226665617475726573223a5b22666561747572657320313020e29c93222c22666561747572657320313120e29c93225d2c226964223a226964203520e29c93222c226d697373696e674665617475726573223a5b226d697373696e67466561747572657320313120e29c93222c226d697373696e67466561747572657320313220e29c93225d2c226e6f7465223a226e6f746520313520e29c93222c22737570706f7274735365745374617465223a66616c73652c22737570706f727473536e617073686f74223a747275657d2c7b22636f6d70696c6564496e223a747275652c2264657465726d696e69736d223a2264657465726d696e69736d203920e29c93222c2264657465726d696e69736d44656661756c74223a2264657465726d696e69736d44656661756c7420313020e29c93222c2264657465726d696e697374696353656c65637461626c65223a66616c73652c22646973706c61794e616d65223a22646973706c61794e616d65203720e29c93222c226665617475726573223a5b22666561747572657320313120e29c93222c22666561747572657320313220e29c93225d2c226964223a226964203620e29c93222c226d697373696e674665617475726573223a5b226d697373696e67466561747572657320313220e29c93222c226d697373696e67466561747572657320313320e29c93225d2c226e6f7465223a226e6f746520313620e29c93222c22737570706f7274735365745374617465223a747275652c22737570706f727473536e617073686f74223a66616c73657d5d2c22636f6e66696775726564223a66616c73652c2263757272656e74223a2263757272656e74203020e29c93222c226e6574776f726b507265736574223a226e6574776f726b507265736574203420e29c93222c22726573746172745265717569726564223a66616c73657d"
     },
     {
       "response": "ErrorCoded",
