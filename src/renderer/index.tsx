@@ -13,6 +13,7 @@ import { HistoryModel, historyModel } from "./history-state"
 import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
+import { prefabOptions } from "./prefab-options"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
 import { applyMarquee, marqueeCandidatesOf } from "./viewport-marquee"
@@ -108,6 +109,12 @@ const hierarchy = new HierarchyState(window.engine, {
   groups,
   // Copy and paste also go through the system clipboard, so a paste can come from another window or project
   clipboard: navigator.clipboard,
+  // Prefab assets (protocol 1.19.0): offered when the host has the prefabAssets capability
+  prefabs: prefabOptions(store, assets, {
+    // The file systems of Windows and macOS don't tell res:// paths apart by case
+    caseInsensitivePaths: /Windows|Macintosh/i.test(navigator.userAgent),
+    onError: (what, e) => store.reportError(what, e),
+  }),
 })
 // The viewport: the editor camera, the translate gizmo (an edit group per drag), frame selected, click to select and
 // the selection box (the engine's PickEntity and GetEntityBounds)

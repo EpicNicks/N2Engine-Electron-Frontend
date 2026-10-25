@@ -4,13 +4,14 @@
 // logic is in hierarchy-state.ts and hierarchy-tree.ts (tested in Node); this is the DOM around it.
 import { useEffect, useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
-import { EntityDragEffect, EntityDragType } from "./drag-types"
+import { EntityDragEffect, EntityDragType, PrefabDragType, dragHas, parsePrefabDrop } from "./drag-types"
+import { defaultPrefabPath } from "../protocol/prefab-assets"
 import { CreatePresets } from "./hierarchy-state"
 import { MaxQueryLength } from "./hierarchy-filter-prefs"
 import { DropPosition, DropTarget, RootId, canDrop, resolveDrop } from "./hierarchy-tree"
 import { keymap } from "./keymap"
 import { useKeymapActions } from "./keymap-hooks"
-import { Empty, MenuItem, Panel, showContextMenu, useApp } from "./ui"
+import { Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
 
 /** What the drag in progress carries (empty when none, or when it isn't one of ours) */
 const dragging = signal<string[]>([])
@@ -123,7 +124,8 @@ function SearchBar({ input, list }: { input: { current: HTMLInputElement | null 
 }
 
 export function HierarchyPanel() {
-  const { store, hierarchy } = useApp()
+  const app = useApp()
+  const { store, hierarchy } = app
   const list = useRef<HTMLDivElement>(null)
   const search = useRef<HTMLInputElement>(null)
   const createItems = useCreateItems()
@@ -148,6 +150,22 @@ export function HierarchyPanel() {
   const copy = () => hierarchy.copySelected().catch(fail("Failed to copy"))
   const cut = () => hierarchy.cutSelected().catch(fail("Failed to cut"))
   const paste = () => hierarchy.pasteCopied().catch(fail("Failed to paste"))
+  // Prefab assets (protocol 1.19.0): offered when the host has the capability; the writes follow readOnly like the rest
+  const prefabs = hierarchy.canPrefabs
+  const createPrefab = async (id: string) => {
+    const name = tree.nodes.get(id)?.name
+    if (name === undefined) return
+    const typed = await prompt(
+      "Create Prefab at (a copy with a link: changing the prefab later does not update objects already in scenes)",
+      defaultPrefabPath(name)
+    )
+    if (typed === null) return
+    await hierarchy.createPrefab(id, typed)
+  }
+  const prefabAssetPath = (id: string): string | null => {
+    const uuid = hierarchy.prefabOf(id)
+    return uuid === null ? null : (app.assets.listing.value?.assets.find((a) => a.uuid.toLowerCase() === uuid.toLowerCase())?.path ?? null)
+  }
 
   // The keys (the keymap's hierarchy scope: the list has the focus). The name being typed keeps its keys (the keymap
   // doesn't fire these in a text field); the active checkbox, say, doesn't take them from the list.
@@ -205,37 +223,87 @@ export function HierarchyPanel() {
             : []),
           { label: keymap.withChord("Duplicate", "hierarchy.duplicate"), action: duplicate },
           { label: keymap.withChord("Delete", "hierarchy.delete"), action: remove },
+          ...(prefabs
+            ? [
+                { separator: true } as MenuItem,
+                {
+                  label: "Create Prefab...",
+                  action: () => void createPrefab(id).catch(fail("Failed to create the prefab")),
+                },
+                ...(hierarchy.prefabOf(id) !== null
+                  ? [
+                      {
+                        label: "Select Prefab Asset",
+                        action: () => {
+                          const path = prefabAssetPath(id)
+                          if (path === null) return store.reportError("Select Prefab Asset", "The prefab is not in the assets list")
+                          app.assets.reveal(path)
+                          void app.assets.select(path)
+                        },
+                      },
+                      {
+                        label: "Apply to Prefab...",
+                        action: () => void hierarchy.applyPrefab(id).catch(fail("Failed to apply the prefab")),
+                      },
+                      {
+                        label: "Unpack Prefab",
+                        action: () => void hierarchy.unpackPrefab(id).catch(fail("Failed to unpack the prefab")),
+                      },
+                    ]
+                  : []),
+              ]
+            : []),
           { separator: true },
           ...createItems(id),
         ]
 
   /** The drop a drag over a row (or the empty space) means, or null when it isn't allowed or isn't our drag */
-  const dropAt = (overId: string | null, position: DropPosition): DropTarget | null => {
-    if (dragging.value.length === 0 || readOnly || filtering) return null
+  const dropAt = (overId: string | null, position: DropPosition, prefab: boolean): DropTarget | null => {
+    if (readOnly || filtering) return null
+    // A prefab from the assets panel goes anywhere an object can (it is a new object, so nothing can be dropped on itself)
+    if (prefab) return resolveDrop(tree, overId, position, expanded)
+    if (dragging.value.length === 0) return null
     const target = resolveDrop(tree, overId, position, expanded)
     return target && canDrop(tree, dragging.value, target) ? target : null
   }
 
+  /** Whether the drag over the panel is a prefab asset (only the types are readable during a drag) */
+  const isPrefabDrag = (e: DragEvent): boolean => prefabs && dragHas(e, PrefabDragType)
+
   const onDragOver = (e: DragEvent, overId: string | null, position: DropPosition) => {
     // A row's drag doesn't go on to the list behind it, which would take it for the empty space
     if (overId !== null) e.stopPropagation()
-    const target = dropAt(overId, position)
+    const prefab = isPrefabDrag(e)
+    const target = dropAt(overId, position, prefab)
     if (target === null) {
       if (indicator.value !== null) indicator.value = null
       return
     }
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move"
+    if (e.dataTransfer) e.dataTransfer.dropEffect = prefab ? "copy" : "move"
     if (drop?.id !== overId || drop?.position !== position) indicator.value = { id: overId, position }
   }
 
   const onDrop = (e: DragEvent, overId: string | null, position: DropPosition) => {
     if (overId !== null) e.stopPropagation()
-    const target = dropAt(overId, position)
+    const prefab = isPrefabDrag(e)
+    const target = dropAt(overId, position, prefab)
     const ids = dragging.value
     clearDrag()
     if (target === null) return
     e.preventDefault()
+    if (prefab) {
+      // The assets panel's drag: the prefab (or prefabs) as {uuid, path, type}; the drop data is checked
+      const dropped = parsePrefabDrop(e.dataTransfer?.getData(PrefabDragType) ?? "")
+      if (dropped.length === 0) return
+      hierarchy
+        .instantiatePrefabs(
+          dropped.map((asset) => asset.uuid),
+          target
+        )
+        .catch(fail("Failed to add the prefab"))
+      return
+    }
     hierarchy.move(ids, target).catch(fail("Failed to move"))
   }
 
@@ -315,6 +383,15 @@ export function HierarchyPanel() {
               {node.name}
             </span>
           )}
+          {node.prefab && (
+            <span
+              class="hierarchy-prefab"
+              title={`Prefab instance: a copy linked to ${prefabAssetPath(row.id) ?? "a prefab"}. Changing the prefab does not update it.`}
+              aria-label="Prefab instance"
+            >
+              ⧉
+            </span>
+          )}
           {row.path !== undefined && row.path !== node.name && (
             <span class="hierarchy-path" title={row.path}>
               {row.path}
@@ -364,6 +441,10 @@ export function HierarchyPanel() {
           if (canCreate) showContextMenu(e.clientX, e.clientY, createItems(RootId))
         }}
         onDragOver={(e) => onDragOver(e, null, "inside")}
+        onDragLeave={(e) => {
+          // A drag from another panel (a prefab) ends without a dragend here: the line goes when it leaves the list
+          if (!list.current?.contains(e.relatedTarget as Node | null) && indicator.value !== null) indicator.value = null
+        }}
         onDrop={(e) => onDrop(e, null, "inside")}
       >
         {content}

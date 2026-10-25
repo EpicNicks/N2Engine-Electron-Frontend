@@ -86,6 +86,68 @@ const LayerField: FieldSchema = {
   max: MaxLayer,
 }
 
+/**
+ * Protocol 1.19.0: the prefab an object is linked to. An instance is a copy with a link, so changing the prefab does not
+ * update it; Apply writes this object over the prefab file, Unpack clears the link.
+ */
+export function PrefabRow({ id, uuid, disabled }: { id: string; uuid: string; disabled: boolean }) {
+  const { store, assets, hierarchy, inspector } = useApp()
+  const path = assets.listing.value?.assets.find((a) => a.uuid.toLowerCase() === uuid.toLowerCase())?.path ?? null
+  const actions = hierarchy.canPrefabs
+  const fail = (what: string) => (e: unknown) => store.reportError(what, e)
+  const readOnlyHint = disabled ? `Read only: ${inspector.readOnlyReason.value}` : undefined
+  return (
+    <div class="inspector-row prefab-row">
+      <label>Prefab</label>
+      <span class="prefab-name" title={`${path ?? uuid}\nThis object is a copy linked to the prefab. Changing the prefab does not update it.`}>
+        {path ?? "(not in the assets list)"}
+      </span>
+      {actions && (
+        <>
+          <button
+            class="secondary"
+            disabled={path === null}
+            title="Show the prefab in the Assets panel"
+            onClick={() => {
+              if (path === null) return
+              assets.reveal(path)
+              void assets.select(path)
+            }}
+          >
+            Select asset
+          </button>
+          <button
+            class="secondary"
+            disabled={disabled}
+            title={readOnlyHint ?? "Overwrite the prefab file with this object (asks first). Objects already made from the prefab are not updated."}
+            onClick={() =>
+              void hierarchy
+                .applyPrefab(id)
+                .then(() => inspector.refresh())
+                .catch(fail("Failed to apply the prefab"))
+            }
+          >
+            Apply
+          </button>
+          <button
+            class="secondary"
+            disabled={disabled}
+            title={readOnlyHint ?? "Clear the link to the prefab; the object and the file stay"}
+            onClick={() =>
+              void hierarchy
+                .unpackPrefab(id)
+                .then(() => inspector.refresh())
+                .catch(fail("Failed to unpack the prefab"))
+            }
+          >
+            Unpack
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
 function EntitySection() {
   const { store, inspector } = useApp()
   const header = inspector.header.value
@@ -136,6 +198,7 @@ function EntitySection() {
           onInvalid={(message) => store.reportError("Layer", message)}
         />
       </div>
+      {header.prefab && <PrefabRow id={header.id} uuid={header.prefab} disabled={disabled} />}
       {error && <div class="field-error">{error}</div>}
     </div>
   )

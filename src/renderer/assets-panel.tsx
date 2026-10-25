@@ -4,9 +4,12 @@
 import { ScriptEditor } from "./script-editor"
 import { hostHasEditorTooling } from "../protocol/editor-tooling"
 import { useRef } from "preact/hooks"
+import { signal } from "@preact/signals"
 import { AssetThumb, DetailPreviewSize, RowPreviewSize } from "./asset-thumb"
 import { entriesAfter } from "./console-store"
-import { AssetDragEffect, AssetDragType, assetDragData } from "./drag-types"
+import { AssetDragEffect, AssetDragType, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
+import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
+import { RootId } from "./hierarchy-tree"
 import { isTextAssetPath, parseImportSettings } from "./asset-edit"
 import { AssetRow, RootFolder, formatModified, formatSize, isFiltering, nameOf, parentOf, shortUuid } from "./asset-tree"
 import { isDirty, settingsEdited } from "./assets-state"
@@ -33,6 +36,8 @@ function typeIcon(type: string, name: string): string {
       return "🔊"
     case "Font":
       return "🔤"
+    case PrefabResourceType:
+      return "🧩"
     default:
       return isTextAssetPath(name) ? "📄" : "▫️"
   }
@@ -90,9 +95,58 @@ export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" 
       disabled: isScene && app.store.hostReadOnly.peek(),
     })
   }
+  if (row.kind === "asset" && row.asset.type === PrefabResourceType && app.hierarchy.canPrefabs) {
+    // The same as dropping it on the hierarchy's empty space: a copy with a link, as the last root of the scene
+    items.push({
+      label: "Add to Scene",
+      action: () =>
+        void app.hierarchy
+          .instantiatePrefabs([uuid], { parentId: RootId, index: -1 })
+          .catch((e) => app.store.reportError("Failed to add the prefab", e)),
+      disabled: !app.store.canWrite.peek() || app.store.scene.peek() === null,
+    })
+  }
   items.push({ label: "Copy Path", action: () => copyText(app, row.path) })
   items.push({ label: "Copy UUID", action: () => copyText(app, uuid) })
   return items
+}
+
+/** The folder an object being dragged from the hierarchy would be made a prefab in (highlighted); null when none */
+const prefabDropFolder = signal<string | null>(null)
+
+/**
+ * Dropping an object from the hierarchy on a folder makes it a prefab there (CreatePrefab, protocol 1.19.0). Only the
+ * type is readable during the drag, so any hierarchy object is taken; the host and the state check the rest.
+ */
+function folderDrop(app: AppState, folder: string) {
+  const accepts = (e: DragEvent): boolean =>
+    dragHas(e, EntityDragType) && app.hierarchy.canPrefabs && app.store.connected.value && app.store.canWrite.value
+  return {
+    onDragOver: (e: DragEvent) => {
+      if (!accepts(e)) return
+      e.stopPropagation()
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
+      if (prefabDropFolder.value !== folder) prefabDropFolder.value = folder
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (prefabDropFolder.value === folder && !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) {
+        prefabDropFolder.value = null
+      }
+    },
+    onDrop: (e: DragEvent) => {
+      prefabDropFolder.value = null
+      if (!accepts(e)) return
+      e.stopPropagation()
+      e.preventDefault()
+      const id = e.dataTransfer?.getData(EntityDragType) ?? ""
+      const name = app.hierarchy.tree.peek().nodes.get(id)?.name
+      if (name === undefined) return
+      app.hierarchy
+        .createPrefab(id, prefabPathIn(folder, name))
+        .catch((err) => app.store.reportError("Failed to create the prefab", err))
+    },
+  }
 }
 
 function RowView({ row }: { row: AssetRow }) {
@@ -109,9 +163,12 @@ function RowView({ row }: { row: AssetRow }) {
       void assets.select(row.path)
       showContextMenu(e.clientX, e.clientY, folderMenu(app, row.path))
     }
+    const classes = ["asset-row"]
+    if (selected) classes.push("selected")
+    if (prefabDropFolder.value === row.path) classes.push("drop-target")
     return (
       <div
-        class={selected ? "asset-row selected" : "asset-row"}
+        class={classes.join(" ")}
         style={indent}
         title={row.path}
         onClick={() => {
@@ -119,6 +176,7 @@ function RowView({ row }: { row: AssetRow }) {
           assets.toggle(row.path)
         }}
         onContextMenu={onContextMenu}
+        {...folderDrop(app, row.path)}
       >
         <span class="arrow">{row.open ? "▾" : "▸"}</span>
         <span class="icon">📁</span>
@@ -162,8 +220,12 @@ function RowView({ row }: { row: AssetRow }) {
         if (!e.dataTransfer) return
         e.dataTransfer.effectAllowed = AssetDragEffect
         e.dataTransfer.setData(AssetDragType, assetDragData(entry))
+        // A prefab can also be dropped on the hierarchy (a copy with a link is made there)
+        if (type === PrefabResourceType) e.dataTransfer.setData(PrefabDragType, assetDragData(entry))
         e.dataTransfer.setData("text/plain", row.path)
       }}
+      // An object dragged from the hierarchy onto a file makes a prefab in the file's folder
+      {...folderDrop(app, parentOf(row.kind === "sub" ? row.parent.path : row.path))}
     >
       {row.kind === "asset" && row.parts > 0 ? (
         <span
@@ -232,6 +294,11 @@ function AssetDetailView() {
       <DetailLine label="UUID" value={file.uuid} mono />
       <DetailLine label="Size" value={`${formatSize(file.size)} (${file.size} bytes)`} />
       <DetailLine label="Modified" value={formatModified(file.modified)} />
+      {file.type === PrefabResourceType && (
+        <div class="asset-hint">
+          Drag it onto the hierarchy to add a copy to the scene. {PrefabCopyNotice}
+        </div>
+      )}
       {info && <DetailLine label="In memory" value={info.loaded ? "yes" : "no"} />}
       {(file.subAssets?.length ?? 0) > 0 && (
         <DetailLine label="Parts" value={`${file.subAssets!.length} (open the model in the list)`} />
@@ -407,7 +474,12 @@ export function AssetsPanel() {
         </select>
       </div>
       {error && listing && <div class="asset-error">Couldn't refresh: {error}</div>}
-      <div class="asset-list">{content}</div>
+      <div
+        class={prefabDropFolder.value === RootFolder ? "asset-list drop-target" : "asset-list"}
+        {...folderDrop(app, RootFolder)}
+      >
+        {content}
+      </div>
       <AssetDetailView />
     </Panel>
   )

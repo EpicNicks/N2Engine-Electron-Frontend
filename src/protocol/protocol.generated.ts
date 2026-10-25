@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.18.0";
+export const PROTOCOL_VERSION = "1.19.0";
 
 // ==================== Types ====================
 
@@ -127,6 +127,7 @@ export interface HierarchyNode {
   layer: number;
   tag: string;
   components: string[];
+  prefab?: string;
 }
 
 export interface EntityHeader {
@@ -138,6 +139,7 @@ export interface EntityHeader {
   activeInHierarchy: boolean;
   layer: number;
   tag: string;
+  prefab?: string;
 }
 
 export interface JsonVec3 {
@@ -372,6 +374,10 @@ export const CommandType = {
   SetEditorViewOptions: 0x17,
   CheckLuaSyntax: 0xA7,
   GetAssetPreview: 0xA8,
+  CreatePrefab: 0xA9,
+  InstantiatePrefab: 0xAA,
+  ApplyPrefab: 0xAB,
+  UnpackPrefab: 0xAC,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -501,6 +507,10 @@ export const CommandResponse = {
   SetEditorViewOptions: "Ok",
   CheckLuaSyntax: "LuaSyntax",
   GetAssetPreview: "AssetPreview",
+  CreatePrefab: "AssetCreated",
+  InstantiatePrefab: "EntityCreated",
+  ApplyPrefab: "Ok",
+  UnpackPrefab: "Ok",
 } as const;
 
 // ==================== Messages ====================
@@ -759,6 +769,28 @@ export interface CheckLuaSyntaxRequest {
 export interface GetAssetPreviewRequest {
   uuidOrPath: string;
   maxSize: number;
+}
+
+export interface CreatePrefabRequest {
+  entityId: string;
+  path: string;
+  overwrite: boolean;
+}
+
+export interface InstantiatePrefabRequest {
+  uuidOrPath: string;
+  parentId: string;
+  siblingIndex: number;
+  hasPosition: boolean;
+  position: Vec3;
+}
+
+export interface ApplyPrefabRequest {
+  entityId: string;
+}
+
+export interface UnpackPrefabRequest {
+  entityId: string;
 }
 
 /** Ok has no payload */
@@ -2095,6 +2127,74 @@ export function decodeGetAssetPreviewRequest(payload: Uint8Array): GetAssetPrevi
   return { uuidOrPath, maxSize };
 }
 
+/** CreatePrefab's request payload (without the frame header) */
+export function encodeCreatePrefabRequest(value: CreatePrefabRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.string(value.path);
+  writer.bool(value.overwrite);
+  return writer.finish();
+}
+
+/** Reads CreatePrefab's request payload; bytes after the last field are ignored */
+export function decodeCreatePrefabRequest(payload: Uint8Array): CreatePrefabRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const path = reader.string();
+  const overwrite = reader.bool();
+  return { entityId, path, overwrite };
+}
+
+/** InstantiatePrefab's request payload (without the frame header) */
+export function encodeInstantiatePrefabRequest(value: InstantiatePrefabRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  writer.string(value.parentId);
+  writer.i32(value.siblingIndex);
+  writer.bool(value.hasPosition);
+  writeVec3(writer, value.position);
+  return writer.finish();
+}
+
+/** Reads InstantiatePrefab's request payload; bytes after the last field are ignored */
+export function decodeInstantiatePrefabRequest(payload: Uint8Array): InstantiatePrefabRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  const parentId = reader.string();
+  const siblingIndex = reader.i32();
+  const hasPosition = reader.bool();
+  const position = readVec3(reader);
+  return { uuidOrPath, parentId, siblingIndex, hasPosition, position };
+}
+
+/** ApplyPrefab's request payload (without the frame header) */
+export function encodeApplyPrefabRequest(value: ApplyPrefabRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads ApplyPrefab's request payload; bytes after the last field are ignored */
+export function decodeApplyPrefabRequest(payload: Uint8Array): ApplyPrefabRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** UnpackPrefab's request payload (without the frame header) */
+export function encodeUnpackPrefabRequest(value: UnpackPrefabRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads UnpackPrefab's request payload; bytes after the last field are ignored */
+export function decodeUnpackPrefabRequest(payload: Uint8Array): UnpackPrefabRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2853,6 +2953,10 @@ export const RequestCodecs = {
   SetEditorViewOptions: { encode: encodeSetEditorViewOptionsRequest, decode: decodeSetEditorViewOptionsRequest },
   CheckLuaSyntax: { encode: encodeCheckLuaSyntaxRequest, decode: decodeCheckLuaSyntaxRequest },
   GetAssetPreview: { encode: encodeGetAssetPreviewRequest, decode: decodeGetAssetPreviewRequest },
+  CreatePrefab: { encode: encodeCreatePrefabRequest, decode: decodeCreatePrefabRequest },
+  InstantiatePrefab: { encode: encodeInstantiatePrefabRequest, decode: decodeInstantiatePrefabRequest },
+  ApplyPrefab: { encode: encodeApplyPrefabRequest, decode: decodeApplyPrefabRequest },
+  UnpackPrefab: { encode: encodeUnpackPrefabRequest, decode: decodeUnpackPrefabRequest },
 } as const;
 
 /** Each response's codecs */
