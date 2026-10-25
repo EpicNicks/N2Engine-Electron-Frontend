@@ -153,6 +153,14 @@ export interface EngineCommands {
   serializeEntities(ids: string[]): Promise<ClipboardPayload>
   /** Protocol 1.18.0: builds the payload's JSON text (a paste) as one undo step; answers the new roots' ids */
   instantiateEntities(clipboard: string, parentId: string, siblingIndex: number, keepExternalRefs: boolean): Promise<string[]>
+  /** Protocol 1.19.0: writes the object as a .prefab file and links it; overwrite replaces an existing file (a Write command; refused in play) */
+  createPrefab(entityId: string, path: string, overwrite: boolean): Promise<{ path: string; uuid: string }>
+  /** Protocol 1.19.0: builds a prefab (asset UUID or path) under parentId at siblingIndex as one undo step; answers the new root's id */
+  instantiatePrefab(uuidOrPath: string, parentId: string, siblingIndex: number, hasPosition: boolean, position: Vec3): Promise<string>
+  /** Protocol 1.19.0: overwrites the linked prefab file with the object (refused in play) */
+  applyPrefab(entityId: string): Promise<void>
+  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step) */
+  unpackPrefab(entityId: string): Promise<void>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -295,6 +303,10 @@ export const EngineCommandArgs = {
   duplicateEntity: ["string"],
   serializeEntities: ["stringArray"],
   instantiateEntities: ["string", "string", "int32", "bool"],
+  createPrefab: ["string", "string", "bool"],
+  instantiatePrefab: ["string", "string", "int32", "bool", "vec3"],
+  applyPrefab: ["string"],
+  unpackPrefab: ["string"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],

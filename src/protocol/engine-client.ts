@@ -645,6 +645,44 @@ export class EngineClient {
     return (await this.send(Commands.InstantiateEntities, { clipboard, parentId, siblingIndex, keepExternalRefs })).ids
   }
 
+  /**
+   * Protocol 1.19.0 (prefabAssets capability): writes the object with what is under it as a .prefab file at path
+   * (res://..., ends in .prefab) and links the object to it (one undo step). An existing file is refused unless
+   * overwrite. Answers the file's path and UUID. A Write command: a play host refuses it.
+   */
+  async createPrefab(entityId: string, path: string, overwrite: boolean): Promise<{ path: string; uuid: string }> {
+    const created = await this.send(Commands.CreatePrefab, { entityId, path, overwrite })
+    if (typeof created.path !== "string" || typeof created.uuid !== "string") {
+      throw new Error("The created prefab's path and uuid must be strings")
+    }
+    return { path: created.path, uuid: created.uuid }
+  }
+
+  /**
+   * Protocol 1.19.0: builds a prefab file (by asset UUID or res:// path) under parentId at siblingIndex (-1: last) as
+   * one undo step; answers the new root's id. With hasPosition the root is put at position in the world. The new
+   * objects are a copy with a link to the prefab, not a live instance.
+   */
+  async instantiatePrefab(
+    uuidOrPath: string,
+    parentId: string,
+    siblingIndex: number,
+    hasPosition: boolean,
+    position: Vec3
+  ): Promise<string> {
+    return (await this.send(Commands.InstantiatePrefab, { uuidOrPath, parentId, siblingIndex, hasPosition, position })).entityId
+  }
+
+  /** Protocol 1.19.0: overwrites the prefab file the object is linked to with the object. A play host refuses it. */
+  applyPrefab(entityId: string): Promise<void> {
+    return this.send(Commands.ApplyPrefab, { entityId })
+  }
+
+  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step); the object and the file are untouched */
+  unpackPrefab(entityId: string): Promise<void> {
+    return this.send(Commands.UnpackPrefab, { entityId })
+  }
+
   getEntity(entityId: string): Promise<EntityDataResponse> {
     return this.send(Commands.GetEntity, { entityId })
   }

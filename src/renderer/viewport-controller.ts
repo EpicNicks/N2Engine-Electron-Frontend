@@ -44,7 +44,8 @@ import {
   scaleLayout,
   worldAxesOf,
 } from "./viewport-scale"
-import { IdentityMat4, Pixel, sub, scale, quatRotate, quatFromAxes, worldToScreen, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
+import { prefabDropPoint } from "./viewport-drop"
+import { IdentityMat4, Pixel, screenRay, sub, scale, quatRotate, quatFromAxes, worldToScreen, add, mat4Multiply, mat4Translation, projectionMatrix, viewMatrix, ProjectionSettings } from "./viewport-math"
 import type { PixelSize } from "./viewport-size"
 import { ClickSlop, isClick } from "./viewport-input"
 import { selectionKeyOf } from "./viewport-selection"
@@ -1120,6 +1121,30 @@ export class ViewportController {
     const asked = this.hostSize ? remapToHostViewport(pixel, this.size, this.hostSize) : pixel
     if (this.hostSize && !insideFrame(asked, this.hostSize)) return missed()
     this.pickSender.push({ pixel: asked, modifiers, connection: this.connections, generation, selection: this.selectionKey() })
+  }
+
+  /**
+   * The world position for a prefab dropped on the picture at this frame pixel (protocol 1.19.0): where the ray through
+   * the pixel enters the object PickEntity finds there (it gives the object, not the point), else a point in front of
+   * the camera on that ray. A failed pick is a miss. See viewport-drop.ts.
+   */
+  async prefabDropPosition(pixel: Pixel): Promise<Vec3> {
+    const matrices = this.matrices()
+    const size = this.size
+    const ray = matrices && size ? screenRay(matrices.viewProjection, pixel.x, pixel.y, size.width, size.height) : null
+    const camera = { position: { ...this.camera.position }, forward: quatRotate(this.camera.rotation, { x: 0, y: 0, z: -1 }) }
+    let hit: Bounds | null = null
+    const picking = this.deps.picking
+    if (ray && size && picking && this.canPick && this.deps.engine.isConnected() && insideFrame(pixel, size)) {
+      try {
+        const asked = this.hostSize ? remapToHostViewport(pixel, size, this.hostSize) : pixel
+        const id = !this.hostSize || insideFrame(asked, this.hostSize) ? await picking.pick(asked.x, asked.y, false) : null
+        if (id !== null) hit = (await picking.bounds([id]))?.get(id) ?? null
+      } catch (e) {
+        console.debug("Picking for a prefab drop failed:", e)
+      }
+    }
+    return prefabDropPoint(ray, camera, hit)
   }
 
   private async pick(click: PickClick): Promise<void> {

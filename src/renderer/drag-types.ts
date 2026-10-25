@@ -6,6 +6,12 @@ import type { AssetEntry } from "../shared/api"
 /** An asset dragged from the Assets panel: {uuid, path, type} as JSON (see assetDragData) */
 export const AssetDragType = "application/x-n2-asset"
 
+/**
+ * Also set by a drag of a Prefab asset (protocol 1.19.0), with the same {uuid, path, type} data as AssetDragType: a drop
+ * target sees only the types during a drag, so this one tells the hierarchy and the viewport the asset is a prefab
+ */
+export const PrefabDragType = "application/x-n2-prefab"
+
 /** An object dragged from the hierarchy: its id */
 export const EntityDragType = "application/x-n2-entity"
 
@@ -27,6 +33,23 @@ export function parseAssetDrag(data: string): AssetEntry | null {
     return { uuid: uuid.toLowerCase(), path, resourceType: type }
   } catch {
     return null
+  }
+}
+
+/** The prefab assets a drop carried (several may be dragged together), or [] when it carried none that parse */
+export function parsePrefabDrop(data: string): AssetEntry[] {
+  // One asset, or a list of them (the assets panel drags every selected prefab)
+  try {
+    const value: unknown = JSON.parse(data)
+    const items = Array.isArray(value) ? value : [value]
+    const out: AssetEntry[] = []
+    for (const item of items) {
+      const asset = parseAssetDrag(JSON.stringify(item))
+      if (asset && asset.resourceType === "Prefab") out.push(asset)
+    }
+    return out
+  } catch {
+    return []
   }
 }
 

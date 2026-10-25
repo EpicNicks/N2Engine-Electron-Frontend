@@ -10,7 +10,13 @@ import {
   PROTOCOL_VERSION,
   ResponseType,
   decodeCheckLuaSyntaxRequest,
+  decodeApplyPrefabRequest,
+  decodeCreatePrefabRequest,
   decodeInstantiateEntitiesRequest,
+  decodeInstantiatePrefabRequest,
+  decodeUnpackPrefabRequest,
+  encodeAssetCreatedResponse,
+  encodeEntityCreatedResponse,
   decodeSerializeEntitiesRequest,
   encodeEntitiesCreatedResponse,
   encodeSerializedEntitiesResponse,
@@ -157,5 +163,43 @@ describe("EngineClient editor tooling commands", () => {
     const client = await connected()
     reply(ResponseType.Error, encodeErrorResponse({ message: "Clipboard payload is too large" }))
     await assert.rejects(client.instantiateEntities("{}", "", -1, false), (e) => e instanceof EngineError && /too large/.test(e.message))
+  })
+  test("createPrefab sends the object, the path and the flag, and answers the file's path and UUID (protocol 1.19.0)", async () => {
+    const client = await connected()
+    reply(ResponseType.AssetCreated, encodeAssetCreatedResponse({ path: "res://prefabs/A.prefab", uuid: "u-1" }))
+    assert.deepEqual(await client.createPrefab("e1", "res://prefabs/A.prefab", true), { path: "res://prefabs/A.prefab", uuid: "u-1" })
+    assert.equal(requests[0].type, CommandType.CreatePrefab)
+    assert.deepEqual(decodeCreatePrefabRequest(requests[0].payload), { entityId: "e1", path: "res://prefabs/A.prefab", overwrite: true })
+  })
+
+  test("instantiatePrefab sends the prefab, the place and the position, and answers the new root's id", async () => {
+    const client = await connected()
+    reply(ResponseType.EntityCreated, encodeEntityCreatedResponse({ entityId: "new1" }))
+    assert.equal(await client.instantiatePrefab("u-1", "p", 2, true, { x: 1, y: 2, z: 3 }), "new1")
+    assert.equal(requests[0].type, CommandType.InstantiatePrefab)
+    assert.deepEqual(decodeInstantiatePrefabRequest(requests[0].payload), {
+      uuidOrPath: "u-1",
+      parentId: "p",
+      siblingIndex: 2,
+      hasPosition: true,
+      position: { x: 1, y: 2, z: 3 },
+    })
+  })
+
+  test("applyPrefab and unpackPrefab send the object's id", async () => {
+    const client = await connected()
+    reply(ResponseType.Ok, encodeOkResponse({}))
+    await client.applyPrefab("e1")
+    assert.equal(requests[0].type, CommandType.ApplyPrefab)
+    assert.deepEqual(decodeApplyPrefabRequest(requests[0].payload), { entityId: "e1" })
+    await client.unpackPrefab("e2")
+    assert.equal(requests[1].type, CommandType.UnpackPrefab)
+    assert.deepEqual(decodeUnpackPrefabRequest(requests[1].payload), { entityId: "e2" })
+  })
+
+  test("a play host's refusal of CreatePrefab is an EngineError", async () => {
+    const client = await connected()
+    reply(ResponseType.Error, encodeErrorResponse({ message: "Not available in a play host" }))
+    await assert.rejects(client.createPrefab("e1", "res://a.prefab", false), (e) => e instanceof EngineError && /play host/.test(e.message))
   })
 })

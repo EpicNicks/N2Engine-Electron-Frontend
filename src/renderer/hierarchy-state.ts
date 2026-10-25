@@ -4,7 +4,8 @@
 // index shifted are only fresh in GetHierarchy; the failure of an action is thrown for the panel to show.
 import { batch, computed, signal } from "@preact/signals-core"
 import type { EngineApi } from "../shared/api"
-import type { HierarchyResponse } from "../protocol/protocol.generated"
+import type { HierarchyResponse, Vec3 } from "../protocol/protocol.generated"
+import { normalizePrefabPath } from "../protocol/prefab-assets"
 import type { SceneChange } from "../protocol/editor-events"
 import type { EditGroups } from "./edit-groups"
 import { clipboardText, parseClipboardText } from "../protocol/entity-clipboard"
@@ -43,7 +44,21 @@ type Engine = Pick<
   | "destroyEntity"
 > &
   // Protocol 1.18.0: a host before it has neither (the copy and paste actions say so)
-  Partial<Pick<EngineApi, "serializeEntities" | "instantiateEntities">>
+  Partial<Pick<EngineApi, "serializeEntities" | "instantiateEntities">> &
+  // Protocol 1.19.0: a host before it has none of these (the prefab actions are not offered)
+  Partial<Pick<EngineApi, "createPrefab" | "instantiatePrefab" | "applyPrefab" | "unpackPrefab">>
+
+/** What the hierarchy needs to know of prefab assets (protocol 1.19.0); without it no prefab action is offered */
+export interface PrefabOptions {
+  /** Whether the host has the prefabAssets capability (a signal, so the panel follows a reconnect) */
+  readonly enabled: { readonly value: boolean }
+  /** The path of the prefab asset with this UUID in the assets listing; null when it is not listed */
+  pathOf(uuid: string): string | null
+  /** Whether the assets listing has a file at this path (a stale listing is caught by the host, which refuses an overwrite) */
+  exists(path: string): boolean
+  /** A prefab file was made or replaced: the assets panel lists again */
+  changed(): void
+}
 
 /** What the state asks the user, and tells the rest of the page */
 export interface HierarchyOptions {
@@ -58,6 +73,8 @@ export interface HierarchyOptions {
   groups?: Pick<EditGroups, "within">
   /** The system clipboard as text; without it (or when it refuses) copy and paste go through the editor's own copy */
   clipboard?: { readText(): Promise<string>; writeText(text: string): Promise<void> }
+  /** Prefab assets (protocol 1.19.0) */
+  prefabs?: PrefabOptions
 }
 
 /** The objects the Create menu makes: a label and CreateEntityEx's preset */
@@ -568,6 +585,158 @@ export class HierarchyState {
           for (const id of found) this.expandAncestors(id)
           this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
         })
+      }
+      return true
+    })
+  }
+
+  // ==================== Prefabs (protocol 1.19.0) ====================
+
+  /** Whether the host has prefab assets and this editor was given the listing to work with them */
+  get canPrefabs(): boolean {
+    const prefabs = this.options.prefabs
+    return (
+      !!prefabs &&
+      prefabs.enabled.value &&
+      typeof this.engine.createPrefab === "function" &&
+      typeof this.engine.instantiatePrefab === "function" &&
+      typeof this.engine.applyPrefab === "function" &&
+      typeof this.engine.unpackPrefab === "function"
+    )
+  }
+
+  private assertPrefabs(): PrefabOptions {
+    const prefabs = this.options.prefabs
+    if (!prefabs || !this.canPrefabs) throw new Error("This editor host has no prefab assets (it needs protocol 1.19.0)")
+    return prefabs
+  }
+
+  /** The asset UUID of the prefab the object is linked to (an instance's root); null when it is not linked */
+  prefabOf(id: string): string | null {
+    return this.tree.value.nodes.get(id)?.prefab || null
+  }
+
+  /**
+   * Makes prefab instances (copies with a link) under the target: parent and place as a drag's drop names them, the
+   * prefabs one after another in the order given, as one undo step when there are several. With a position (a drop on
+   * the viewport) each root is put there in the world. The new roots are selected. Resolves false when nothing was
+   * made (a search is narrowing the rows, or a place that does not exist); a refusal is thrown.
+   */
+  instantiatePrefabs(uuids: readonly string[], target: DropTarget, position?: Vec3): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      this.assertEditable()
+      this.assertPrefabs()
+      // A drop on the hierarchy names a place among rows a search hides (like a move); a drop on the viewport (with a
+      // position) and the menu go to the end of the scene's roots, which a search does not change
+      if (uuids.length === 0 || (this.filtering && position === undefined && !(target.parentId === RootId && target.index < 0))) {
+        return false
+      }
+      if (target.parentId !== RootId && !this.tree.value.nodes.has(target.parentId)) return false
+      const created: string[] = []
+      try {
+        await this.grouped("Instantiate", uuids.length, async () => {
+          for (let i = 0; i < uuids.length; i++) {
+            // Each root goes right after the one before it; -1 is the last place, which stays the last
+            const index = target.index < 0 ? -1 : target.index + i
+            created.push(
+              await this.engine.instantiatePrefab!(
+                uuids[i],
+                target.parentId,
+                index,
+                position !== undefined,
+                position ?? { x: 0, y: 0, z: 0 }
+              )
+            )
+          }
+        })
+      } finally {
+        await this.refresh()
+        const tree = this.tree.value
+        const found = created.filter((id) => tree.nodes.has(id))
+        if (found.length > 0) {
+          batch(() => {
+            if (target.parentId !== RootId) this.expand(target.parentId)
+            for (const id of found) this.expandAncestors(id)
+            this.setSelection({ ids: new Set(found), anchor: found[0], primary: found[found.length - 1] })
+          })
+        }
+      }
+      return created.length > 0
+    })
+  }
+
+  /**
+   * Writes the object, with what is under it, as a prefab file at the path (a res:// path, or text that becomes one) and
+   * links the object to it. When the listing has a file there the user is asked before it is replaced. Resolves the
+   * file's path and UUID, or null when the user said no. The host refuses it in a play session (and so does this).
+   */
+  createPrefab(id: string, pathText: string): Promise<{ path: string; uuid: string } | null> {
+    return this.exclusive<{ path: string; uuid: string } | null>(null, async () => {
+      this.assertEditable()
+      const prefabs = this.assertPrefabs()
+      const node = this.tree.value.nodes.get(id)
+      if (!node) return null
+      const normal = normalizePrefabPath(pathText)
+      if (normal.path === null) throw new Error(normal.error)
+      const overwrite = prefabs.exists(normal.path)
+      if (
+        overwrite &&
+        !(await this.options.confirm(
+          `Replace ${normal.path} with '${node.name}'? Objects already made from that prefab are not updated.`,
+          "Replace"
+        ))
+      ) {
+        return null
+      }
+      try {
+        return await this.engine.createPrefab!(id, normal.path, overwrite)
+      } finally {
+        // The object is linked to the file now: its row shows it
+        await this.refresh()
+        prefabs.changed()
+      }
+    })
+  }
+
+  /**
+   * Writes the object back to the prefab it is linked to, after the user agrees (the file is overwritten and instances
+   * already in scenes are not updated). Resolves false when the user said no or the object is not linked.
+   */
+  applyPrefab(id: string): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      this.assertEditable()
+      const prefabs = this.assertPrefabs()
+      const uuid = this.prefabOf(id)
+      const node = this.tree.value.nodes.get(id)
+      if (uuid === null || !node) return false
+      const path = prefabs.pathOf(uuid) ?? "the prefab"
+      if (
+        !(await this.options.confirm(
+          `Overwrite ${path} with '${node.name}'? The file is replaced and Undo does not bring it back. Objects already made from the prefab are not updated.`,
+          "Apply"
+        ))
+      ) {
+        return false
+      }
+      try {
+        await this.engine.applyPrefab!(id)
+      } finally {
+        prefabs.changed()
+      }
+      return true
+    })
+  }
+
+  /** Clears the object's link to its prefab (one undo step); the object, what is under it and the file stay */
+  unpackPrefab(id: string): Promise<boolean> {
+    return this.exclusive(false, async () => {
+      this.assertEditable()
+      this.assertPrefabs()
+      if (this.prefabOf(id) === null) return false
+      try {
+        await this.engine.unpackPrefab!(id)
+      } finally {
+        await this.refresh()
       }
       return true
     })

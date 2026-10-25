@@ -3,6 +3,8 @@
 // logic are unit tested. This file is DOM glue only. Controls: viewport-input.ts.
 import { useEffect, useRef } from "preact/hooks"
 import { effect, untracked } from "@preact/signals-core"
+import { PrefabDragType, dragHas, parsePrefabDrop } from "./drag-types"
+import { RootId } from "./hierarchy-tree"
 import { keymap } from "./keymap"
 import { useApp } from "./ui"
 import { GizmoLayout, PlaneAxes } from "./viewport-gizmo"
@@ -431,6 +433,34 @@ export function Viewport() {
     }
     const onContextMenu = (e: Event): void => e.preventDefault()
 
+    // A prefab dragged from the Assets panel (protocol 1.19.0): dropped on the view it is added to the scene there. Only
+    // the editor view takes it, when the scene can be edited and the host has prefab assets.
+    const takesPrefab = (e: DragEvent): boolean =>
+      !play.live.peek() && store.canEdit.peek() && hierarchy.canPrefabs && dragHas(e, PrefabDragType)
+    const onDragOver = (e: DragEvent): void => {
+      if (!takesPrefab(e)) return
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
+    }
+    const onDrop = (e: DragEvent): void => {
+      if (!takesPrefab(e)) return
+      e.preventDefault()
+      const dropped = parsePrefabDrop(e.dataTransfer?.getData(PrefabDragType) ?? "")
+      if (dropped.length === 0) return
+      viewport
+        .prefabDropPosition(framePixel(e))
+        .then((position) =>
+          hierarchy.instantiatePrefabs(
+            dropped.map((asset) => asset.uuid),
+            { parentId: RootId, index: -1 },
+            position
+          )
+        )
+        .catch(reportFailure("Failed to add the prefab"))
+    }
+    host.addEventListener("dragover", onDragOver)
+    host.addEventListener("drop", onDrop)
+
     host.addEventListener("pointerdown", onPointerDown)
     host.addEventListener("pointermove", onPointerMove)
     host.addEventListener("pointerup", onPointerUp)
@@ -519,6 +549,8 @@ export function Viewport() {
       host.removeEventListener("keyup", onKeyUp)
       host.removeEventListener("blur", onBlur)
       host.removeEventListener("contextmenu", onContextMenu)
+      host.removeEventListener("dragover", onDragOver)
+      host.removeEventListener("drop", onDrop)
       host.removeEventListener("pointerleave", onPointerLeave)
       renderer.dispose()
     }
