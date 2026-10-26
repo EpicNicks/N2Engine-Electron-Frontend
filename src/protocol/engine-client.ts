@@ -22,6 +22,8 @@ import {
   FrameUpdateResponse,
   HierarchyResponse,
   HistoryResponse,
+  NetworkSettingsInfo,
+  NetworkValidationReport,
   PROTOCOL_VERSION,
   PhysicsBackendsInfo,
   ProjectInfoResponse,
@@ -39,6 +41,7 @@ import {
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
+import { validateNetworkSettingsInfo, validateNetworkValidationReport } from "./network-panel"
 import { parseAssetDetails, parseAssetList } from "./asset-parse"
 import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
@@ -587,6 +590,28 @@ export class EngineClient {
    */
   async setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo> {
     return validatePhysicsBackendsInfo((await this.send(Commands.SetPhysicsBackend, { backend })).info)
+  }
+
+  // ==================== Network panel (protocol 1.21.0) ====================
+
+  /** The project's network preset, the three preset bundles row by row, the customisation and the nudge (a Read command; networkPanel capability) */
+  async getNetworkSettings(): Promise<NetworkSettingsInfo> {
+    return validateNetworkSettingsInfo((await this.send(Commands.GetNetworkSettings, {})).info)
+  }
+
+  /**
+   * Sets the project's network preset (empty keeps it) and its tunable network settings (a JSON merge patch of the network
+   * block) and answers the new description. Takes effect at the next play session or host start. A Write command: a play host
+   * and a read-only host refuse it, a viewer is forbidden, and the host refuses an unknown preset, a setting that is not
+   * tunable, a value out of its range, and Deterministic when the physics backend can not carry it.
+   */
+  async setNetworkSettings(preset: string, settings: unknown): Promise<NetworkSettingsInfo> {
+    return validateNetworkSettingsInfo((await this.send(Commands.SetNetworkSettings, { preset, settings })).info)
+  }
+
+  /** The startup checks of a preset ("none", "authoritative", "deterministic", or empty for the project's own) run without starting anything (a Read command) */
+  async getNetworkValidation(preset: string): Promise<NetworkValidationReport> {
+    return validateNetworkValidationReport((await this.send(Commands.GetNetworkValidation, { preset })).report)
   }
 
   // ==================== Entity Management ====================

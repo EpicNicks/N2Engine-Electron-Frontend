@@ -14,6 +14,7 @@ import type { ProjectInfoResponse } from "../protocol/protocol.generated"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { HostRole } from "./store"
 import type { PhysicsBackendsModel } from "./physics-backends-state"
+import type { NetworkPanelModel } from "./network-panel-state"
 import type { SectionBuildContext, SectionGate, SectionRegistry, SettingsSectionDef } from "./project-settings-registry"
 import {
   NothingBuilt,
@@ -42,6 +43,8 @@ export interface ProjectSettingsDeps {
   restartHost: (() => Promise<void>) | null
   /** The Physics backend section's state (protocol 1.20.0); read again with the project. Absent: the section is not shown. */
   physicsBackends?: PhysicsBackendsModel
+  /** The Network section's state (protocol 1.21.0); read again with the project. Absent: the section is not shown. */
+  network?: NetworkPanelModel
 }
 
 /** What "restore the previous values" puts back: the edit keys of the last Apply and their text before it */
@@ -93,6 +96,10 @@ export class ProjectSettingsModel {
   get backends(): PhysicsBackendsModel | null {
     return this.deps.physicsBackends ?? null
   }
+  /** The network panel's state, when the page gave one */
+  get network(): NetworkPanelModel | null {
+    return this.deps.network ?? null
+  }
   get isConnected(): boolean {
     return this.deps.connected.value
   }
@@ -115,6 +122,7 @@ export class ProjectSettingsModel {
         this.restartPending.value = {}
         this.determinismDenied.value = false
         void this.deps.physicsBackends?.refresh()
+        void this.deps.network?.refresh()
         return
       }
       void this.refresh()
@@ -129,6 +137,7 @@ export class ProjectSettingsModel {
   /** GetProjectInfo; the newest read wins */
   async refresh(): Promise<void> {
     void this.deps.physicsBackends?.refresh()
+    void this.deps.network?.refresh()
     const read = ++this.reads
     try {
       const info = await this.deps.getProjectInfo()
@@ -287,6 +296,7 @@ export class ProjectSettingsModel {
       }
       // The backend, the network preset and the determinism flag decide what the picker offers
       void this.deps.physicsBackends?.refresh()
+      void this.deps.network?.refresh()
       if (built.restart.length > 0) {
         const pending = new Set([...(this.restartPending.value[id] ?? []), ...built.restart])
         this.restartPending.value = { ...this.restartPending.value, [id]: [...pending] }

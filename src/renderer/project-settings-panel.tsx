@@ -8,6 +8,8 @@ import { settingsSections, type SectionComponent } from "./project-settings-sect
 import type { SectionRegistry, SettingsSectionDef } from "./project-settings-registry"
 import { PhysicsBackendsModel } from "./physics-backends-state"
 import { PhysicsBackendsCapability } from "../protocol/physics-backends"
+import { NetworkPanelModel } from "./network-panel-state"
+import { NetworkPanelCapability } from "../protocol/network-panel"
 import { hasCapability } from "../protocol/extensions"
 import { computed } from "@preact/signals-core"
 import { Empty, Panel, confirmDialog, useApp } from "./ui"
@@ -34,6 +36,15 @@ export function ProjectSettingsPanel() {
             setPhysicsBackend: (backend) => window.engine.setPhysicsBackend(backend),
             connected: store.connected,
             supported: computed(() => hasCapability(store.serverInfo.value?.capabilities, PhysicsBackendsCapability)),
+            readOnlyReason: store.readOnlyReason,
+          }),
+          network: new NetworkPanelModel({
+            getNetworkSettings: () => window.engine.getNetworkSettings(),
+            setNetworkSettings: (preset, settings) => window.engine.setNetworkSettings(preset, settings),
+            getNetworkValidation: (preset) => window.engine.getNetworkValidation(preset),
+            setProjectSettings: (settings) => window.engine.setProjectSettings(settings),
+            connected: store.connected,
+            supported: computed(() => hasCapability(store.serverInfo.value?.capabilities, NetworkPanelCapability)),
             readOnlyReason: store.readOnlyReason,
           }),
         },

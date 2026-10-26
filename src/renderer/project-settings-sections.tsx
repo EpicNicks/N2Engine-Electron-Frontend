@@ -16,6 +16,7 @@ import {
   StartupSceneKey,
 } from "./project-settings-logic"
 import { ExtensionsSection } from "./extensions-ui"
+import { NetworkSection } from "./network-panel-ui"
 import { PhysicsBackendTakesEffectNote, determinismLabel } from "../protocol/physics-backends"
 import type { PhysicsBackendInfo } from "../protocol/protocol.generated"
 import { SectionRegistry, type SettingsSectionDef } from "./project-settings-registry"
@@ -558,7 +559,7 @@ settingsSections.register({
 })
 settingsSections.register({ id: "layers", title: "Layers", order: 60, component: LayersSection, logic: LayersLogic })
 settingsSections.register({ id: "physics-backend", title: "Physics backend", order: 25, component: PhysicsBackendSection })
-// 70 is left for Network (B11)
+settingsSections.register({ id: "network", title: "Network", order: 70, component: NetworkSection })
 settingsSections.register({ id: "extensions", title: "Extensions", order: 80, component: ExtensionsSection })
 settingsSections.register({ id: "input", title: "Input", order: 90, component: InputSection, logic: InputLogic })
 settingsSections.register({ id: "raw", title: "Raw JSON", order: 100, component: RawSection, logic: RawLogic })

@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.20.0";
+export const PROTOCOL_VERSION = "1.21.0";
 
 // ==================== Types ====================
 
@@ -284,6 +284,97 @@ export interface PhysicsBackendsInfo {
   backends: PhysicsBackendInfo[];
 }
 
+export interface NetworkSettingRow {
+  key: string;
+  label: string;
+  governed: boolean;
+  locked: boolean;
+  tunable: boolean;
+  startupChecked: boolean;
+  settingKey?: string;
+  value: unknown;
+  description: string;
+  lostGuarantee?: string;
+  current?: unknown;
+  atPresetValue?: boolean;
+  source: string;
+}
+
+export interface NetworkPresetInfo {
+  id: string;
+  label: string;
+  summary: string;
+  selected: boolean;
+  selectable: boolean;
+  unavailableReason?: string;
+  rows: NetworkSettingRow[];
+}
+
+export interface NetworkNudge {
+  show: boolean;
+  reasons: string[];
+  networkObjects: number;
+  hint: string;
+}
+
+export interface NetworkSettingRange {
+  key: string;
+  min: number;
+  max: number;
+  default: number;
+  integer: boolean;
+}
+
+export interface NetworkLostGuarantee {
+  settingKey: string;
+  rowKey: string;
+  text: string;
+}
+
+export interface NetworkBackendInfo {
+  selected: string;
+  deterministicSelectable: string[];
+}
+
+export interface NetworkSettingsInfo {
+  preset: string;
+  customised: boolean;
+  storedCustomised: boolean;
+  tickRate: number;
+  values: unknown;
+  overrides: unknown;
+  ranges: NetworkSettingRange[];
+  lostGuarantees: NetworkLostGuarantee[];
+  presets: NetworkPresetInfo[];
+  backend: NetworkBackendInfo;
+  nudge: NetworkNudge;
+  problems: string[];
+}
+
+export interface NetworkRequirementFix {
+  label: string;
+  settings: unknown;
+}
+
+export interface NetworkRequirementInfo {
+  id: string;
+  text: string;
+  met: boolean;
+  detail: string;
+  fix?: NetworkRequirementFix;
+}
+
+export interface NetworkValidationReport {
+  preset: string;
+  projectPreset: string;
+  refused: boolean;
+  unmet: number;
+  summary: string;
+  requirements: NetworkRequirementInfo[];
+  warnings: string[];
+  environment: unknown;
+}
+
 export interface ClipboardPayload {
   format: string;
   version: number;
@@ -403,6 +494,9 @@ export const CommandType = {
   UnpackPrefab: 0xAC,
   GetPhysicsBackends: 0xAD,
   SetPhysicsBackend: 0xAE,
+  GetNetworkSettings: 0x51,
+  SetNetworkSettings: 0x52,
+  GetNetworkValidation: 0x53,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -451,6 +545,8 @@ export const ResponseType = {
   SerializedEntities: 0x21,
   EntitiesCreated: 0x22,
   PhysicsBackends: 0x23,
+  NetworkSettings: 0x24,
+  NetworkValidation: 0x25,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -539,6 +635,9 @@ export const CommandResponse = {
   UnpackPrefab: "Ok",
   GetPhysicsBackends: "PhysicsBackends",
   SetPhysicsBackend: "PhysicsBackends",
+  GetNetworkSettings: "NetworkSettings",
+  SetNetworkSettings: "NetworkSettings",
+  GetNetworkValidation: "NetworkValidation",
 } as const;
 
 // ==================== Messages ====================
@@ -825,6 +924,15 @@ export interface SetPhysicsBackendRequest {
   backend: string;
 }
 
+export interface SetNetworkSettingsRequest {
+  preset: string;
+  settings: unknown;
+}
+
+export interface GetNetworkValidationRequest {
+  preset: string;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -1052,6 +1160,14 @@ export interface AssetPreviewResponse {
 
 export interface PhysicsBackendsResponse {
   info: PhysicsBackendsInfo;
+}
+
+export interface NetworkSettingsResponse {
+  info: NetworkSettingsInfo;
+}
+
+export interface NetworkValidationResponse {
+  report: NetworkValidationReport;
 }
 
 export interface ErrorCodedResponse {
@@ -2245,6 +2361,36 @@ export function decodeSetPhysicsBackendRequest(payload: Uint8Array): SetPhysicsB
   return { backend };
 }
 
+/** SetNetworkSettings's request payload (without the frame header) */
+export function encodeSetNetworkSettingsRequest(value: SetNetworkSettingsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.preset);
+  writer.json(value.settings);
+  return writer.finish();
+}
+
+/** Reads SetNetworkSettings's request payload; bytes after the last field are ignored */
+export function decodeSetNetworkSettingsRequest(payload: Uint8Array): SetNetworkSettingsRequest {
+  const reader = new ProtocolReader(payload);
+  const preset = reader.string();
+  const settings = reader.json() as unknown;
+  return { preset, settings };
+}
+
+/** GetNetworkValidation's request payload (without the frame header) */
+export function encodeGetNetworkValidationRequest(value: GetNetworkValidationRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.preset);
+  return writer.finish();
+}
+
+/** Reads GetNetworkValidation's request payload; bytes after the last field are ignored */
+export function decodeGetNetworkValidationRequest(payload: Uint8Array): GetNetworkValidationRequest {
+  const reader = new ProtocolReader(payload);
+  const preset = reader.string();
+  return { preset };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2948,6 +3094,34 @@ export function decodePhysicsBackendsResponse(payload: Uint8Array): PhysicsBacke
   return { info };
 }
 
+/** NetworkSettings's payload (without the frame header) */
+export function encodeNetworkSettingsResponse(value: NetworkSettingsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads NetworkSettings's payload; bytes after the last field are ignored */
+export function decodeNetworkSettingsResponse(payload: Uint8Array): NetworkSettingsResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as NetworkSettingsInfo;
+  return { info };
+}
+
+/** NetworkValidation's payload (without the frame header) */
+export function encodeNetworkValidationResponse(value: NetworkValidationResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.report);
+  return writer.finish();
+}
+
+/** Reads NetworkValidation's payload; bytes after the last field are ignored */
+export function decodeNetworkValidationResponse(payload: Uint8Array): NetworkValidationResponse {
+  const reader = new ProtocolReader(payload);
+  const report = reader.json() as NetworkValidationReport;
+  return { report };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3022,6 +3196,8 @@ export const RequestCodecs = {
   ApplyPrefab: { encode: encodeApplyPrefabRequest, decode: decodeApplyPrefabRequest },
   UnpackPrefab: { encode: encodeUnpackPrefabRequest, decode: decodeUnpackPrefabRequest },
   SetPhysicsBackend: { encode: encodeSetPhysicsBackendRequest, decode: decodeSetPhysicsBackendRequest },
+  SetNetworkSettings: { encode: encodeSetNetworkSettingsRequest, decode: decodeSetNetworkSettingsRequest },
+  GetNetworkValidation: { encode: encodeGetNetworkValidationRequest, decode: decodeGetNetworkValidationRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3068,5 +3244,7 @@ export const ResponseCodecs = {
   LuaSyntax: { encode: encodeLuaSyntaxResponse, decode: decodeLuaSyntaxResponse },
   AssetPreview: { encode: encodeAssetPreviewResponse, decode: decodeAssetPreviewResponse },
   PhysicsBackends: { encode: encodePhysicsBackendsResponse, decode: decodePhysicsBackendsResponse },
+  NetworkSettings: { encode: encodeNetworkSettingsResponse, decode: decodeNetworkSettingsResponse },
+  NetworkValidation: { encode: encodeNetworkValidationResponse, decode: decodeNetworkValidationResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

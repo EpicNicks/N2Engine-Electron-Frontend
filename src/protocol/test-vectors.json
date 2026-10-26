@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.20.0",
+  "protocolVersion": "1.21.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -645,6 +645,33 @@
         "backend": "backend 0 ✓ é"
       },
       "payload": "100000006261636b656e64203020e29c9320c3a9"
+    },
+    {
+      "command": "SetNetworkSettings",
+      "id": "0x52",
+      "fields": {
+        "preset": "preset 0 ✓ é",
+        "settings": {
+          "list": [
+            1,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "0f000000707265736574203020e29c9320c3a9370000007b226c697374223a5b312c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
+    },
+    {
+      "command": "GetNetworkValidation",
+      "id": "0x53",
+      "fields": {
+        "preset": "preset 0 ✓ é"
+      },
+      "payload": "0f000000707265736574203020e29c9320c3a9"
     }
   ],
   "responses": [
@@ -2205,6 +2232,322 @@
         }
       },
       "payload": "7c0300007b22616374697665223a22616374697665203220e29c93222c226261636b656e6473223a5b7b22636f6d70696c6564496e223a66616c73652c2264657465726d696e69736d223a2264657465726d696e69736d203820e29c93222c2264657465726d696e69736d44656661756c74223a2264657465726d696e69736d44656661756c74203920e29c93222c2264657465726d696e697374696353656c65637461626c65223a747275652c22646973706c61794e616d65223a22646973706c61794e616d65203620e29c93222c226665617475726573223a5b22666561747572657320313020e29c93222c22666561747572657320313120e29c93225d2c226964223a226964203520e29c93222c226d697373696e674665617475726573223a5b226d697373696e67466561747572657320313120e29c93222c226d697373696e67466561747572657320313220e29c93225d2c226e6f7465223a226e6f746520313520e29c93222c22737570706f7274735365745374617465223a66616c73652c22737570706f727473536e617073686f74223a747275657d2c7b22636f6d70696c6564496e223a747275652c2264657465726d696e69736d223a2264657465726d696e69736d203920e29c93222c2264657465726d696e69736d44656661756c74223a2264657465726d696e69736d44656661756c7420313020e29c93222c2264657465726d696e697374696353656c65637461626c65223a66616c73652c22646973706c61794e616d65223a22646973706c61794e616d65203720e29c93222c226665617475726573223a5b22666561747572657320313120e29c93222c22666561747572657320313220e29c93225d2c226964223a226964203620e29c93222c226d697373696e674665617475726573223a5b226d697373696e67466561747572657320313220e29c93222c226d697373696e67466561747572657320313320e29c93225d2c226e6f7465223a226e6f746520313620e29c93222c22737570706f7274735365745374617465223a747275652c22737570706f727473536e617073686f74223a66616c73657d5d2c22636f6e66696775726564223a66616c73652c2263757272656e74223a2263757272656e74203020e29c93222c226e6574776f726b507265736574223a226e6574776f726b507265736574203420e29c93222c22726573746172745265717569726564223a66616c73657d"
+    },
+    {
+      "response": "NetworkSettings",
+      "id": "0x24",
+      "fields": {
+        "info": {
+          "backend": {
+            "deterministicSelectable": [
+              "deterministicSelectable 10 ✓",
+              "deterministicSelectable 11 ✓"
+            ],
+            "selected": "selected 9 ✓"
+          },
+          "customised": false,
+          "lostGuarantees": [
+            {
+              "rowKey": "rowKey 8 ✓",
+              "settingKey": "settingKey 7 ✓",
+              "text": "text 9 ✓"
+            },
+            {
+              "rowKey": "rowKey 9 ✓",
+              "settingKey": "settingKey 8 ✓",
+              "text": "text 10 ✓"
+            }
+          ],
+          "nudge": {
+            "hint": "hint 13 ✓",
+            "networkObjects": 14.5,
+            "reasons": [
+              "reasons 11 ✓",
+              "reasons 12 ✓"
+            ],
+            "show": true
+          },
+          "overrides": {
+            "list": [
+              5,
+              "two ✓",
+              true,
+              null
+            ],
+            "nested": {
+              "value": 1.5
+            }
+          },
+          "preset": "preset 0 ✓",
+          "presets": [
+            {
+              "id": "id 8 ✓",
+              "label": "label 9 ✓",
+              "rows": [
+                {
+                  "atPresetValue": false,
+                  "current": {
+                    "list": [
+                      24,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  },
+                  "description": "description 22 ✓",
+                  "governed": true,
+                  "key": "key 14 ✓",
+                  "label": "label 15 ✓",
+                  "locked": false,
+                  "lostGuarantee": "lostGuarantee 23 ✓",
+                  "settingKey": "settingKey 20 ✓",
+                  "source": "source 26 ✓",
+                  "startupChecked": false,
+                  "tunable": true,
+                  "value": {
+                    "list": [
+                      21,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  }
+                },
+                {
+                  "atPresetValue": true,
+                  "current": {
+                    "list": [
+                      25,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  },
+                  "description": "description 23 ✓",
+                  "governed": false,
+                  "key": "key 15 ✓",
+                  "label": "label 16 ✓",
+                  "locked": true,
+                  "lostGuarantee": "lostGuarantee 24 ✓",
+                  "settingKey": "settingKey 21 ✓",
+                  "source": "source 27 ✓",
+                  "startupChecked": true,
+                  "tunable": false,
+                  "value": {
+                    "list": [
+                      22,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  }
+                }
+              ],
+              "selectable": true,
+              "selected": false,
+              "summary": "summary 10 ✓",
+              "unavailableReason": "unavailableReason 13 ✓"
+            },
+            {
+              "id": "id 9 ✓",
+              "label": "label 10 ✓",
+              "rows": [
+                {
+                  "atPresetValue": true,
+                  "current": {
+                    "list": [
+                      25,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  },
+                  "description": "description 23 ✓",
+                  "governed": false,
+                  "key": "key 15 ✓",
+                  "label": "label 16 ✓",
+                  "locked": true,
+                  "lostGuarantee": "lostGuarantee 24 ✓",
+                  "settingKey": "settingKey 21 ✓",
+                  "source": "source 27 ✓",
+                  "startupChecked": true,
+                  "tunable": false,
+                  "value": {
+                    "list": [
+                      22,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  }
+                },
+                {
+                  "atPresetValue": false,
+                  "current": {
+                    "list": [
+                      26,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  },
+                  "description": "description 24 ✓",
+                  "governed": true,
+                  "key": "key 16 ✓",
+                  "label": "label 17 ✓",
+                  "locked": false,
+                  "lostGuarantee": "lostGuarantee 25 ✓",
+                  "settingKey": "settingKey 22 ✓",
+                  "source": "source 28 ✓",
+                  "startupChecked": false,
+                  "tunable": true,
+                  "value": {
+                    "list": [
+                      23,
+                      "two ✓",
+                      true,
+                      null
+                    ],
+                    "nested": {
+                      "value": 1.5
+                    }
+                  }
+                }
+              ],
+              "selectable": false,
+              "selected": true,
+              "summary": "summary 11 ✓",
+              "unavailableReason": "unavailableReason 14 ✓"
+            }
+          ],
+          "problems": [
+            "problems 11 ✓",
+            "problems 12 ✓"
+          ],
+          "ranges": [
+            {
+              "default": 11.5,
+              "integer": true,
+              "key": "key 6 ✓",
+              "max": 10.5,
+              "min": 9.5
+            },
+            {
+              "default": 12.5,
+              "integer": false,
+              "key": "key 7 ✓",
+              "max": 11.5,
+              "min": 10.5
+            }
+          ],
+          "storedCustomised": true,
+          "tickRate": 5.5,
+          "values": {
+            "list": [
+              4,
+              "two ✓",
+              true,
+              null
+            ],
+            "nested": {
+              "value": 1.5
+            }
+          }
+        }
+      },
+      "payload": "cc0a00007b226261636b656e64223a7b2264657465726d696e697374696353656c65637461626c65223a5b2264657465726d696e697374696353656c65637461626c6520313020e29c93222c2264657465726d696e697374696353656c65637461626c6520313120e29c93225d2c2273656c6563746564223a2273656c6563746564203920e29c93227d2c22637573746f6d69736564223a66616c73652c226c6f737447756172616e74656573223a5b7b22726f774b6579223a22726f774b6579203820e29c93222c2273657474696e674b6579223a2273657474696e674b6579203720e29c93222c2274657874223a2274657874203920e29c93227d2c7b22726f774b6579223a22726f774b6579203920e29c93222c2273657474696e674b6579223a2273657474696e674b6579203820e29c93222c2274657874223a227465787420313020e29c93227d5d2c226e75646765223a7b2268696e74223a2268696e7420313320e29c93222c226e6574776f726b4f626a65637473223a31342e352c22726561736f6e73223a5b22726561736f6e7320313120e29c93222c22726561736f6e7320313220e29c93225d2c2273686f77223a747275657d2c226f7665727269646573223a7b226c697374223a5b352c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c22707265736574223a22707265736574203020e29c93222c2270726573657473223a5b7b226964223a226964203820e29c93222c226c6162656c223a226c6162656c203920e29c93222c22726f7773223a5b7b22617450726573657456616c7565223a66616c73652c2263757272656e74223a7b226c697374223a5b32342c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226465736372697074696f6e223a226465736372697074696f6e20323220e29c93222c22676f7665726e6564223a747275652c226b6579223a226b657920313420e29c93222c226c6162656c223a226c6162656c20313520e29c93222c226c6f636b6564223a66616c73652c226c6f737447756172616e746565223a226c6f737447756172616e74656520323320e29c93222c2273657474696e674b6579223a2273657474696e674b657920323020e29c93222c22736f75726365223a22736f7572636520323620e29c93222c2273746172747570436865636b6564223a66616c73652c2274756e61626c65223a747275652c2276616c7565223a7b226c697374223a5b32312c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d2c7b22617450726573657456616c7565223a747275652c2263757272656e74223a7b226c697374223a5b32352c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226465736372697074696f6e223a226465736372697074696f6e20323320e29c93222c22676f7665726e6564223a66616c73652c226b6579223a226b657920313520e29c93222c226c6162656c223a226c6162656c20313620e29c93222c226c6f636b6564223a747275652c226c6f737447756172616e746565223a226c6f737447756172616e74656520323420e29c93222c2273657474696e674b6579223a2273657474696e674b657920323120e29c93222c22736f75726365223a22736f7572636520323720e29c93222c2273746172747570436865636b6564223a747275652c2274756e61626c65223a66616c73652c2276616c7565223a7b226c697374223a5b32322c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d5d2c2273656c65637461626c65223a747275652c2273656c6563746564223a66616c73652c2273756d6d617279223a2273756d6d61727920313020e29c93222c22756e617661696c61626c65526561736f6e223a22756e617661696c61626c65526561736f6e20313320e29c93227d2c7b226964223a226964203920e29c93222c226c6162656c223a226c6162656c20313020e29c93222c22726f7773223a5b7b22617450726573657456616c7565223a747275652c2263757272656e74223a7b226c697374223a5b32352c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226465736372697074696f6e223a226465736372697074696f6e20323320e29c93222c22676f7665726e6564223a66616c73652c226b6579223a226b657920313520e29c93222c226c6162656c223a226c6162656c20313620e29c93222c226c6f636b6564223a747275652c226c6f737447756172616e746565223a226c6f737447756172616e74656520323420e29c93222c2273657474696e674b6579223a2273657474696e674b657920323120e29c93222c22736f75726365223a22736f7572636520323720e29c93222c2273746172747570436865636b6564223a747275652c2274756e61626c65223a66616c73652c2276616c7565223a7b226c697374223a5b32322c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d2c7b22617450726573657456616c7565223a66616c73652c2263757272656e74223a7b226c697374223a5b32362c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c226465736372697074696f6e223a226465736372697074696f6e20323420e29c93222c22676f7665726e6564223a747275652c226b6579223a226b657920313620e29c93222c226c6162656c223a226c6162656c20313720e29c93222c226c6f636b6564223a66616c73652c226c6f737447756172616e746565223a226c6f737447756172616e74656520323520e29c93222c2273657474696e674b6579223a2273657474696e674b657920323220e29c93222c22736f75726365223a22736f7572636520323820e29c93222c2273746172747570436865636b6564223a66616c73652c2274756e61626c65223a747275652c2276616c7565223a7b226c697374223a5b32332c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d5d2c2273656c65637461626c65223a66616c73652c2273656c6563746564223a747275652c2273756d6d617279223a2273756d6d61727920313120e29c93222c22756e617661696c61626c65526561736f6e223a22756e617661696c61626c65526561736f6e20313420e29c93227d5d2c2270726f626c656d73223a5b2270726f626c656d7320313120e29c93222c2270726f626c656d7320313220e29c93225d2c2272616e676573223a5b7b2264656661756c74223a31312e352c22696e7465676572223a747275652c226b6579223a226b6579203620e29c93222c226d6178223a31302e352c226d696e223a392e357d2c7b2264656661756c74223a31322e352c22696e7465676572223a66616c73652c226b6579223a226b6579203720e29c93222c226d6178223a31312e352c226d696e223a31302e357d5d2c2273746f726564437573746f6d69736564223a747275652c227469636b52617465223a352e352c2276616c756573223a7b226c697374223a5b342c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d"
+    },
+    {
+      "response": "NetworkValidation",
+      "id": "0x25",
+      "fields": {
+        "report": {
+          "environment": {
+            "list": [
+              7,
+              "two ✓",
+              true,
+              null
+            ],
+            "nested": {
+              "value": 1.5
+            }
+          },
+          "preset": "preset 0 ✓",
+          "projectPreset": "projectPreset 1 ✓",
+          "refused": true,
+          "requirements": [
+            {
+              "detail": "detail 8 ✓",
+              "fix": {
+                "label": "label 9 ✓",
+                "settings": {
+                  "list": [
+                    10,
+                    "two ✓",
+                    true,
+                    null
+                  ],
+                  "nested": {
+                    "value": 1.5
+                  }
+                }
+              },
+              "id": "id 5 ✓",
+              "met": false,
+              "text": "text 6 ✓"
+            },
+            {
+              "detail": "detail 9 ✓",
+              "fix": {
+                "label": "label 10 ✓",
+                "settings": {
+                  "list": [
+                    11,
+                    "two ✓",
+                    true,
+                    null
+                  ],
+                  "nested": {
+                    "value": 1.5
+                  }
+                }
+              },
+              "id": "id 6 ✓",
+              "met": true,
+              "text": "text 7 ✓"
+            }
+          ],
+          "summary": "summary 4 ✓",
+          "unmet": 5.5,
+          "warnings": [
+            "warnings 6 ✓",
+            "warnings 7 ✓"
+          ]
+        }
+      },
+      "payload": "520200007b22656e7669726f6e6d656e74223a7b226c697374223a5b372c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d2c22707265736574223a22707265736574203020e29c93222c2270726f6a656374507265736574223a2270726f6a656374507265736574203120e29c93222c2272656675736564223a747275652c22726571756972656d656e7473223a5b7b2264657461696c223a2264657461696c203820e29c93222c22666978223a7b226c6162656c223a226c6162656c203920e29c93222c2273657474696e6773223a7b226c697374223a5b31302c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d2c226964223a226964203520e29c93222c226d6574223a66616c73652c2274657874223a2274657874203620e29c93227d2c7b2264657461696c223a2264657461696c203920e29c93222c22666978223a7b226c6162656c223a226c6162656c20313020e29c93222c2273657474696e6773223a7b226c697374223a5b31312c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d7d2c226964223a226964203620e29c93222c226d6574223a747275652c2274657874223a2274657874203720e29c93227d5d2c2273756d6d617279223a2273756d6d617279203420e29c93222c22756e6d6574223a352e352c227761726e696e6773223a5b227761726e696e6773203620e29c93222c227761726e696e6773203720e29c93225d7d"
     },
     {
       "response": "ErrorCoded",

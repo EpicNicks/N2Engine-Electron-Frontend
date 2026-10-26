@@ -22,6 +22,8 @@ import type {
   HistoryResponse,
   InputEvent,
   LuaSyntaxResult,
+  NetworkSettingsInfo,
+  NetworkValidationReport,
   PhysicsBackendsInfo,
   ProjectInfoResponse,
   SceneInfoResponse,
@@ -166,6 +168,12 @@ export interface EngineCommands {
   getPhysicsBackends(): Promise<PhysicsBackendsInfo>
   /** Protocol 1.20.0: sets physics.backend ("physx" or "jolt"); takes effect at the next play session or host start. A Write command: refused in play, on a read-only host and for a viewer */
   setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo>
+  /** Protocol 1.21.0 (networkPanel capability): the network preset, the three preset bundles row by row, the customisation and the nudge (a Read command) */
+  getNetworkSettings(): Promise<NetworkSettingsInfo>
+  /** Protocol 1.21.0: sets the network preset (empty keeps it) and the tunable network settings (a merge patch of the network block); takes effect at the next play session or host start. A Write command */
+  setNetworkSettings(preset: string, settings: JsonObject): Promise<NetworkSettingsInfo>
+  /** Protocol 1.21.0: the startup checks of a preset ("none", "authoritative", "deterministic", or empty for the project's own), without starting anything (a Read command) */
+  getNetworkValidation(preset: string): Promise<NetworkValidationReport>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -314,6 +322,9 @@ export const EngineCommandArgs = {
   unpackPrefab: ["string"],
   getPhysicsBackends: [],
   setPhysicsBackend: ["string"],
+  getNetworkSettings: [],
+  setNetworkSettings: ["string", "jsonObject"],
+  getNetworkValidation: ["string"],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],

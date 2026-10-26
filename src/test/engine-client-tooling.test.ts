@@ -16,6 +16,12 @@ import {
   decodeInstantiatePrefabRequest,
   decodeUnpackPrefabRequest,
   decodeSetPhysicsBackendRequest,
+  decodeSetNetworkSettingsRequest,
+  decodeGetNetworkValidationRequest,
+  encodeNetworkSettingsResponse,
+  encodeNetworkValidationResponse,
+  type NetworkSettingsInfo,
+  type NetworkValidationReport,
   encodePhysicsBackendsResponse,
   type PhysicsBackendsInfo,
   encodeAssetCreatedResponse,
@@ -271,6 +277,95 @@ describe("EngineClient editor tooling commands", () => {
     for (const message of ["Not available in a play host", "Backend jolt is not compiled into this host", "Backend physx is not deterministic-selectable"]) {
       reply(ResponseType.Error, encodeErrorResponse({ message }))
       await assert.rejects(client.setPhysicsBackend("jolt"), (e) => e instanceof EngineError && e.message.includes(message))
+    }
+  })
+  const networkInfo: NetworkSettingsInfo = {
+    preset: "authoritative",
+    customised: false,
+    storedCustomised: false,
+    tickRate: 60,
+    values: {},
+    overrides: {},
+    ranges: [{ key: "network.tickRate", min: 30, max: 120, default: 60, integer: true }],
+    lostGuarantees: [],
+    presets: [
+      {
+        id: "authoritative",
+        label: "Server authoritative",
+        summary: "A server simulates the game",
+        selected: true,
+        selectable: true,
+        rows: [
+          {
+            key: "network.tickRate",
+            label: "Tick rate",
+            governed: true,
+            locked: false,
+            tunable: true,
+            startupChecked: false,
+            settingKey: "network.tickRate",
+            value: 60,
+            description: "30, 60 or 120 Hz",
+            current: 60,
+            atPresetValue: true,
+            source: "default",
+          },
+        ],
+      },
+    ],
+    backend: { selected: "physx", deterministicSelectable: [] },
+    nudge: { show: false, reasons: [], networkObjects: 0, hint: "" },
+    problems: [],
+  }
+  const networkReport: NetworkValidationReport = {
+    preset: "deterministic",
+    projectPreset: "authoritative",
+    refused: true,
+    unmet: 1,
+    summary: "Deterministic: 1 of 1 requirements are unmet; the engine would refuse to start this project.",
+    requirements: [{ id: "simd-scalar", text: "math.simdTier is scalar", met: false, detail: "auto", fix: { label: "Set math.simdTier to scalar", settings: { math: { simdTier: "scalar" } } } }],
+    warnings: [],
+    environment: {},
+  }
+
+  test("getNetworkSettings sends no fields and answers the described settings (protocol 1.21.0)", async () => {
+    const client = await connected()
+    reply(ResponseType.NetworkSettings, encodeNetworkSettingsResponse({ info: networkInfo }))
+    assert.deepEqual(await client.getNetworkSettings(), networkInfo)
+    assert.equal(requests[0].type, CommandType.GetNetworkSettings)
+    assert.equal(requests[0].payload.length, 0)
+  })
+
+  test("setNetworkSettings sends the preset and the patch and answers the new description", async () => {
+    const client = await connected()
+    const after = { ...networkInfo, tickRate: 30 }
+    reply(ResponseType.NetworkSettings, encodeNetworkSettingsResponse({ info: after }))
+    assert.deepEqual(await client.setNetworkSettings("", { tickRate: 30 }), after)
+    assert.equal(requests[0].type, CommandType.SetNetworkSettings)
+    assert.deepEqual(decodeSetNetworkSettingsRequest(requests[0].payload), { preset: "", settings: { tickRate: 30 } })
+  })
+
+  test("getNetworkValidation sends the preset and answers the report, with the fix patch", async () => {
+    const client = await connected()
+    reply(ResponseType.NetworkValidation, encodeNetworkValidationResponse({ report: networkReport }))
+    assert.deepEqual(await client.getNetworkValidation("deterministic"), networkReport)
+    assert.equal(requests[0].type, CommandType.GetNetworkValidation)
+    assert.deepEqual(decodeGetNetworkValidationRequest(requests[0].payload), { preset: "deterministic" })
+  })
+
+  test("a network answer that does not have the documented shape is rejected", async () => {
+    const client = await connected()
+    reply(ResponseType.NetworkSettings, encodeNetworkSettingsResponse({ info: { ...networkInfo, presets: [{ id: "x" }] } as unknown as NetworkSettingsInfo }))
+    await assert.rejects(client.getNetworkSettings(), /presets must be a list/)
+    reply(ResponseType.NetworkValidation, encodeNetworkValidationResponse({ report: { ...networkReport, unmet: "1" } as unknown as NetworkValidationReport }))
+    await assert.rejects(client.getNetworkValidation(""), /unmet a number/)
+  })
+
+  test("the host's refusals of SetNetworkSettings are EngineErrors (play host, not tunable, out of range, Deterministic without a backend)", async () => {
+    const client = await connected()
+    for (const message of ["Not available in a play host", "physics.gpu is not a tunable network setting", "tickRate must be between 30 and 120", "The Deterministic preset can't be chosen: no backend"]) {
+      reply(ResponseType.Error, encodeErrorResponse({ message }))
+      await assert.rejects(client.setNetworkSettings("deterministic", {}), (e) => e instanceof EngineError && e.message.includes(message))
     }
   })
 })

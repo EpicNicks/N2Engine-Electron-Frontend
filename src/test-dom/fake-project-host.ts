@@ -10,6 +10,8 @@ import { applyMergePatch, type Json, type JsonObject } from "../renderer/project
 import { ipcError } from "../shared/api"
 import { DefaultBackends } from "../test/fake-backends"
 import { PhysicsBackendsModel } from "../renderer/physics-backends-state"
+import { NetworkPanelModel } from "../renderer/network-panel-state"
+import { fakeNetworkAnswers, fakeSetNetwork, type FakeNetworkOptions } from "../test/fake-network"
 
 export { DefaultBackends, fakeBackend } from "../test/fake-backends"
 
@@ -28,6 +30,10 @@ export function fakeProjectHost(
     backends?: PhysicsBackendInfo[]
     /** physics.backend as the host has it (undefined: not set) and the backend the host runs */
     active?: string
+    /** The host has the networkPanel capability (default true) */
+    networkSupported?: boolean
+    /** What the build and the open scene look like to the network panel */
+    network?: FakeNetworkOptions
   } = {}
 ) {
   const project = {
@@ -74,6 +80,12 @@ export function fakeProjectHost(
       backends: backendList,
     }
   }
+  /** Every SetNetworkSettings (preset, patch) that reached the host, and how many GetNetworkSettings / GetNetworkValidation */
+  const networkSets: Array<{ preset: string; settings: JsonObject }> = []
+  const networkReads = { settings: 0, validation: 0 }
+  const validationAsked: string[] = []
+  let refuseNetwork: string | null = null
+  const networkSupported = signal(options.networkSupported !== false)
   const info = (): ProjectInfoResponse => ({
     rootPath: "C:/p",
     userDataPath: "C:/p/.n2",
@@ -130,6 +142,33 @@ export function fakeProjectHost(
       supported,
       readOnlyReason,
     }),
+    network: new NetworkPanelModel({
+      getNetworkSettings: async () => {
+        networkReads.settings++
+        return fakeNetworkAnswers(project.settings, options.network).info
+      },
+      getNetworkValidation: async (preset) => {
+        networkReads.validation++
+        validationAsked.push(preset)
+        return fakeNetworkAnswers(project.settings, options.network).report(preset)
+      },
+      setNetworkSettings: async (preset, settings) => {
+        networkSets.push({ preset, settings: JSON.parse(JSON.stringify(settings)) })
+        if (refuseNetwork !== null) {
+          const message = refuseNetwork
+          refuseNetwork = null
+          throw ipcError({ error: message })
+        }
+        const result = fakeSetNetwork(project.settings, preset, settings, options.network)
+        if ("error" in result) throw ipcError({ error: result.error })
+        project.settings = result.settings
+        return fakeNetworkAnswers(project.settings, options.network).info
+      },
+      setProjectSettings: (patch) => deps.setProjectSettings(patch),
+      connected,
+      supported: networkSupported,
+      readOnlyReason,
+    }),
   }
   const model = new ProjectSettingsModel(deps, options.registry ?? (settingsSections as SectionRegistry<unknown>))
   return {
@@ -147,6 +186,11 @@ export function fakeProjectHost(
     chosen,
     backendReads,
     backendsSupported: supported,
+    networkSets,
+    networkReads,
+    validationAsked,
+    networkSupported,
+    refuseNetworkNext: (message: string) => void (refuseNetwork = message),
     refuseBackendNext: (message: string) => void (refuseBackend = message),
     refuseNext: (error: string, code?: string) => void (refuse = { error, code }),
     answerConfirm: (yes: boolean) => void (confirmAnswer = yes),
