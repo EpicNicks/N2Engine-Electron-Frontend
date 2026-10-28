@@ -402,7 +402,7 @@ describe("EngineClient Hello", () => {
     const info = await client.connect()
 
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "" },
+      { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "", yield: false },
     ])
     assert.deepEqual(info, serverInfo())
     assert.deepEqual(client.serverInfo, serverInfo())
@@ -413,7 +413,7 @@ describe("EngineClient Hello", () => {
     const { client, sockets } = connectFake()
     await client.connect("localhost", 9999, { token: "the-access-token", clientName: "Test" })
     assert.deepEqual(sockets[0].hellos, [
-      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token", errorCodes: true, user: "" },
+      { clientName: "Test", protocolVersion: PROTOCOL_VERSION, token: "the-access-token", errorCodes: true, user: "", yield: false },
     ])
   })
 
@@ -427,18 +427,36 @@ describe("EngineClient Hello", () => {
   test("without a user, Hello's payload ends after errorCodes, as a 1.11 host's does", async () => {
     const { client, sockets } = connectFake()
     await client.connect("localhost", 9999, { token: "t" })
-    const request = { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "t", errorCodes: true, user: "" }
+    const request = { clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "t", errorCodes: true, user: "", yield: false }
     const full = encodeHelloRequest(request)
     const sent = sockets[0].helloPayloads[0]
-    assert.equal(sent.length, full.length - 4)
-    assert.deepEqual(Uint8Array.from(sent), Uint8Array.from(full.subarray(0, full.length - 4)))
+    assert.equal(sent.length, full.length - 5)
+    assert.deepEqual(Uint8Array.from(sent), Uint8Array.from(full.subarray(0, full.length - 5)))
     assert.equal(sockets[0].hellos[0].user, "")
+  })
+
+  test("with a user and no yield, Hello's payload ends after the user (nothing a 1.12 host does not know)", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { token: "t", user: "alice" })
+    const full = encodeHelloRequest({ clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "t", errorCodes: true, user: "alice", yield: false })
+    assert.deepEqual(Uint8Array.from(sockets[0].helloPayloads[0]), Uint8Array.from(full.subarray(0, full.length - 1)))
+    assert.equal(sockets[0].hellos[0].yield, false)
+  })
+
+  test("yield: true is sent as the trailing field, after errorCodes and the user (protocol 1.22)", async () => {
+    const { client, sockets } = connectFake()
+    await client.connect("localhost", 9999, { token: "t", yield: true })
+    const full = encodeHelloRequest({ clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "t", errorCodes: true, user: "", yield: true })
+    assert.deepEqual(Uint8Array.from(sockets[0].helloPayloads[0]), Uint8Array.from(full))
+    assert.equal(sockets[0].hellos[0].yield, true)
+    assert.equal(sockets[0].hellos[0].user, "")
+    assert.equal(sockets[0].hellos[0].errorCodes, true)
   })
 
   test("a blank user is no user", async () => {
     const { client, sockets } = connectFake()
     await client.connect("localhost", 9999, { user: "" })
-    assert.equal(sockets[0].helloPayloads[0].length, encodeHelloRequest({ clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "" }).length - 4)
+    assert.equal(sockets[0].helloPayloads[0].length, encodeHelloRequest({ clientName: DefaultClientName, protocolVersion: PROTOCOL_VERSION, token: "", errorCodes: true, user: "", yield: false }).length - 5)
   })
 
   test("nothing else is sent, and the client isn't connected, until Hello succeeds", async () => {

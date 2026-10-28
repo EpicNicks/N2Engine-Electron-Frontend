@@ -93,16 +93,20 @@ export const MaxPayloadBytesBeforeHello = 64 * 1024
 export const HelloTimeoutMilliseconds = 10000
 
 /**
- * Hello without its trailing user when there is none: the field is optional (protocol 1.12), and leaving it out keeps
- * the payload what a 1.11 host has always accepted. An empty string is its u32 length prefix alone (a test checks the
- * cut payload decodes as a Hello without a user).
+ * Hello without the trailing fields that are not set: user (protocol 1.12) and yield (1.22) are optional, and leaving
+ * them out keeps the payload what an older host has always accepted. The yield byte is dropped when false; the user's
+ * empty string (its u32 length prefix alone) is dropped too when there is no user and no yield (a field can only be sent
+ * after the ones before it). A test checks that each cut payload decodes as a Hello without the field.
  */
 const StringLengthPrefixBytes = 4
+const BoolBytes = 1
 const helloSpec: typeof Commands.Hello = {
   ...Commands.Hello,
   encode: (request) => {
     const full = Commands.Hello.encode(request)
-    return request.user === "" ? full.subarray(0, full.length - StringLengthPrefixBytes) : full
+    if (request.yield) return full
+    const withoutYield = full.subarray(0, full.length - BoolBytes)
+    return request.user === "" ? withoutYield.subarray(0, withoutYield.length - StringLengthPrefixBytes) : withoutYield
   },
 }
 
@@ -118,6 +122,12 @@ export interface ConnectOptions {
    * actually gave this connection (ServerInfo.user and role).
    */
   user?: string
+  /**
+   * Protocol 1.22: this client is an agent that gives way to people. The host then accepts it only when no session is
+   * active (else busy), never lets it take over or preempt, and closes its session for any client that does not yield.
+   * Default false, and then not sent at all (an older host never sees the field). The editor itself never sets it.
+   */
+  yield?: boolean
   clientName?: string
   /**
    * Connect with TLS (a host started with --tls) and pin its certificate to this SHA-256 fingerprint: Hello, and the
@@ -1050,6 +1060,8 @@ export class EngineClient {
       errorCodes: true,
       // Protocol 1.12: the user; an empty one is encoded as an empty string, which a host reads as none
       user: options.user ?? "",
+      // Protocol 1.22: an agent yields to people; a human session never sets it
+      yield: options.yield === true,
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined

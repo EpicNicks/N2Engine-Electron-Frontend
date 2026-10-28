@@ -13,13 +13,14 @@ import { FakeHost, type FakeHostOptions } from "./fake-host"
 export const TestToken = "test-token-0123456789abcdef-SECRET"
 
 /** The bridge's connection to a fake host over plain loopback */
-export function plainConnector(host: FakeHost, token: string = TestToken, user: string = LaunchUser): HostConnector & { disposed: number } {
+export function plainConnector(host: FakeHost, token: string = TestToken, user: string = LaunchUser, yields: boolean = true): HostConnector & { disposed: number } {
   const connector = {
     kind: "connect",
+    yields,
     disposed: 0,
     async connect() {
       const client = new EngineClient()
-      const info = await client.connect("127.0.0.1", host.port, { token, user, clientName: ClientName })
+      const info = await client.connect("127.0.0.1", host.port, { token, user, clientName: ClientName, yield: yields })
       return { client, info }
     },
     dispose() {

@@ -51,7 +51,20 @@ export interface FakeHostOptions {
   busy?: boolean
   tls?: TestIdentity
   protocolVersion?: string
+  /**
+   * Model the engine's SessionArbiter (protocol 1.22, SessionArbiter::Decide): one session at a time. No session active:
+   * Accept. The candidate yields: Busy. The active session yields and the candidate does not: Preempt (the active
+   * connection is closed), whatever the roles. Otherwise the same user or a strictly higher role preempts, else Busy.
+   * Off by default: the older tests open several connections at once.
+   */
+  arbiter?: boolean
+  /** A host older than 1.22.0: it reads Hello's fields up to the user and ignores any trailing byte (so never sees `yield`) */
+  ignoresYield?: boolean
+  /** The role the next Hello gets, by user name (arbiter tests: "alice" is a person, a higher role than the bridge's) */
+  roles?: Record<string, string>
 }
+
+const RoleRank: Record<string, number> = { viewer: 1, editor: 2, admin: 3 }
 
 const Frame = (type: number, payload: Uint8Array): Buffer => Buffer.from(encodeFrame(type, payload))
 
@@ -92,6 +105,13 @@ export class FakeHost {
   readonly received: Received[] = []
   readonly helloUsers: string[] = []
   readonly helloTokens: string[] = []
+  /** What each Hello said about `yield` (as the host read it), and its payload length */
+  readonly helloYields: boolean[] = []
+  readonly helloPayloadLengths: number[] = []
+  /** Hello refusals with busy, and sessions closed by a preemption */
+  busyAnswers = 0
+  preemptions = 0
+  private active: { socket: net.Socket; user: string; role: string; yields: boolean } | null = null
   /** Connections opened, and how many are open now */
   connections = 0
   open = 0
@@ -231,6 +251,7 @@ export class FakeHost {
     let helloDone = false
     socket.on("error", () => {})
     socket.on("close", () => {
+      if (this.active?.socket === socket) this.active = null
       this.open--
       this.sockets.delete(socket)
     })
@@ -264,6 +285,9 @@ export class FakeHost {
     const request = RequestCodecs.Hello.decode(payload)
     this.helloUsers.push(request.user)
     this.helloTokens.push(request.token)
+    this.helloPayloadLengths.push(payload.length)
+    const yields = this.options.ignoresYield ? false : request.yield
+    this.helloYields.push(yields)
     if (this.options.busy) {
       socket.write(Frame(ResponseType.ErrorCoded, ResponseCodecs.ErrorCoded.encode({ code: "busy", message: "The host is serving another session (an editor session); try again later" })))
       socket.end()
@@ -274,6 +298,25 @@ export class FakeHost {
       socket.end()
       return false
     }
+    const user = request.user || this.options.user || "token"
+    const role = this.options.roles?.[user] ?? this.options.role ?? "editor"
+    if (this.options.arbiter) {
+      const active = this.active
+      if (active !== null) {
+        const outranks = (RoleRank[role] ?? 0) > (RoleRank[active.role] ?? 0)
+        const preempt = yields ? false : active.yields ? true : user === active.user || outranks
+        if (!preempt) {
+          this.busyAnswers++
+          socket.write(Frame(ResponseType.ErrorCoded, ResponseCodecs.ErrorCoded.encode({ code: "busy", message: `The host is serving another session (${/^[aeiou]/.test(active.role) ? "an" : "a"} ${active.role} session); try again later` })))
+          socket.end()
+          return false
+        }
+        this.preemptions++
+        this.active = null
+        active.socket.destroy()
+      }
+      this.active = { socket, user, role, yields }
+    }
     socket.write(
       Frame(
         ResponseType.ServerInfo,
@@ -283,8 +326,8 @@ export class FakeHost {
           capabilities: [],
           projectLoaded: true,
           readOnly: this.options.readOnly ?? false,
-          user: request.user || this.options.user || "token",
-          role: this.options.role ?? "editor",
+          user,
+          role,
         })
       )
     )

@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.21.0";
+export const PROTOCOL_VERSION = "1.22.0";
 
 // ==================== Types ====================
 
@@ -653,6 +653,7 @@ export interface HelloRequest {
   token: string;
   errorCodes: boolean;
   user: string;
+  yield: boolean;
 }
 
 export interface PollEventsRequest {
@@ -1485,6 +1486,7 @@ export function encodeHelloRequest(value: HelloRequest): Uint8Array {
   writer.string(value.token);
   writer.bool(value.errorCodes);
   writer.string(value.user);
+  writer.bool(value.yield);
   return writer.finish();
 }
 
@@ -1496,7 +1498,8 @@ export function decodeHelloRequest(payload: Uint8Array): HelloRequest {
   const token = reader.string();
   const errorCodes = reader.remaining > 0 ? reader.bool() : false;
   const user = reader.remaining > 0 ? reader.string() : "";
-  return { clientName, protocolVersion, token, errorCodes, user };
+  const yield_ = reader.remaining > 0 ? reader.bool() : false;
+  return { clientName, protocolVersion, token, errorCodes, user, yield: yield_ };
 }
 
 /** PollEvents's request payload (without the frame header) */

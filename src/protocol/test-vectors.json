@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.21.0",
+  "protocolVersion": "1.22.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -19,9 +19,10 @@
         "protocolVersion": "protocolVersion 1 ✓ é",
         "token": "token 2 ✓ é",
         "errorCodes": false,
-        "user": "user 4 ✓ é"
+        "user": "user 4 ✓ é",
+        "yield": false
       },
-      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9000d00000075736572203420e29c9320c3a9"
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9000d00000075736572203420e29c9320c3a900"
     },
     {
       "command": "PollEvents",
@@ -2579,14 +2580,16 @@
       "id": "0x04",
       "omitted": [
         "errorCodes",
-        "user"
+        "user",
+        "yield"
       ],
       "fields": {
         "clientName": "clientName 0 ✓ é",
         "protocolVersion": "protocolVersion 1 ✓ é",
         "token": "token 2 ✓ é",
         "errorCodes": false,
-        "user": ""
+        "user": "",
+        "yield": false
       },
       "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9"
     },
@@ -2594,16 +2597,34 @@
       "request": "Hello",
       "id": "0x04",
       "omitted": [
-        "user"
+        "user",
+        "yield"
       ],
       "fields": {
         "clientName": "clientName 0 ✓ é",
         "protocolVersion": "protocolVersion 1 ✓ é",
         "token": "token 2 ✓ é",
         "errorCodes": false,
-        "user": ""
+        "user": "",
+        "yield": false
       },
       "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a900"
+    },
+    {
+      "request": "Hello",
+      "id": "0x04",
+      "omitted": [
+        "yield"
+      ],
+      "fields": {
+        "clientName": "clientName 0 ✓ é",
+        "protocolVersion": "protocolVersion 1 ✓ é",
+        "token": "token 2 ✓ é",
+        "errorCodes": false,
+        "user": "user 4 ✓ é",
+        "yield": false
+      },
+      "payload": "13000000636c69656e744e616d65203020e29c9320c3a91800000070726f746f636f6c56657273696f6e203120e29c9320c3a90e000000746f6b656e203220e29c9320c3a9000d00000075736572203420e29c9320c3a9"
     },
     {
       "response": "ServerInfo",
