@@ -16,7 +16,7 @@ const refuses = (args: string[], pattern: RegExp, env: NodeJS.ProcessEnv = {}) =
 describe("the command line", () => {
   test("--launch with the host from --host-path or N2ENGINE_HOST", () => {
     const a = parse(["--launch", "C:\\proj", "--host-path", "C:\\h\\N2EditorHost.exe", "--renderer", "software"])
-    assert.deepEqual(a, { mode: "launch", projectPath: "C:\\proj", hostPath: "C:\\h\\N2EditorHost.exe", renderer: "software", readyTimeoutMs: undefined, allowAdmin: false, readOnly: false, allowIrreversible: false, maxWrites: 2000, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 3000, callTimeoutMs: 60000 })
+    assert.deepEqual(a, { mode: "launch", projectPath: "C:\\proj", hostPath: "C:\\h\\N2EditorHost.exe", renderer: "software", readyTimeoutMs: undefined, allowAdmin: false, readOnly: false, allowIrreversible: false, maxWrites: 2000, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 3000, callTimeoutMs: 60000, yield: true })
     const b = parse(["--launch", "/proj"], { N2ENGINE_HOST: "/bin/host" })
     assert.equal(b.mode === "launch" && b.hostPath, "/bin/host")
     refuses(["--launch", "/proj"], /needs the host/)
@@ -25,7 +25,7 @@ describe("the command line", () => {
 
   test("--connect needs host:port, a fingerprint and exactly one token source", () => {
     const a = parse(["--connect", "editor.example.net:9999", "--fingerprint", FP, "--token-env", "N2_AGENT_TOKEN", "--user", "agent-claude", "--allow-admin"])
-    assert.deepEqual(a, { mode: "connect", host: "editor.example.net", port: 9999, fingerprint: FP, user: "agent-claude", tokenEnv: "N2_AGENT_TOKEN", tokenFile: undefined, allowAdmin: true, readOnly: false, allowIrreversible: false, maxWrites: 2000, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 3000, callTimeoutMs: 60000 })
+    assert.deepEqual(a, { mode: "connect", host: "editor.example.net", port: 9999, fingerprint: FP, user: "agent-claude", tokenEnv: "N2_AGENT_TOKEN", tokenFile: undefined, allowAdmin: true, readOnly: false, allowIrreversible: false, maxWrites: 2000, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 3000, callTimeoutMs: 60000, yield: true })
     refuses(["--connect", "h:9999", "--token-env", "T"], /--fingerprint/)
     refuses(["--connect", "h:9999", "--fingerprint", "abcd", "--token-env", "T"], /64 hex digits/)
     refuses(["--connect", "h:9999", "--fingerprint", FP], /exactly one of/)
@@ -86,7 +86,7 @@ describe("the command line", () => {
 })
 
 describe("reading the token", () => {
-  const connect = (extra: Partial<ConnectCli>): ConnectCli => ({ mode: "connect", host: "h", port: 1, fingerprint: FP, allowAdmin: false, readOnly: false, allowIrreversible: false, maxWrites: 1, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 1, callTimeoutMs: 1, ...extra })
+  const connect = (extra: Partial<ConnectCli>): ConnectCli => ({ mode: "connect", host: "h", port: 1, fingerprint: FP, allowAdmin: false, readOnly: false, allowIrreversible: false, maxWrites: 1, writeTools: null, disableTools: [], keepJournal: false, busyWaitMs: 1, callTimeoutMs: 1, yield: true, ...extra })
 
   test("from an environment variable, which is then removed from the environment", () => {
     const env: NodeJS.ProcessEnv = { N2_AGENT_TOKEN: "  tok-123  " }

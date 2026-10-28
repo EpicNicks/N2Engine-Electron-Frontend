@@ -22,6 +22,8 @@ export interface HostLink {
 export interface HostConnector {
   /** "launch", "connect" or a test's name: shown by n2_status */
   readonly kind: string
+  /** Whether this connector's Hello says `yield` (protocol 1.22): the bridge gives way to people. Absent: no. */
+  readonly yields?: boolean
   /** Opens a session. Rejects with HostBusyError, HelloError, FingerprintMismatchError, a BridgeError or a socket error. */
   connect(): Promise<HostLink>
   /** Ends what the connector started (a launched host) and removes what it wrote. Synchronous: it runs as the process exits. */
@@ -40,12 +42,16 @@ export interface ConnectBackendOptions {
   fingerprint: string
   token: string
   user?: string
+  /** Say `yield` in Hello (default true; --no-yield turns it off) */
+  yield?: boolean
 }
 
 /** A host over TLS with a pinned fingerprint */
 export function connectConnector(options: ConnectBackendOptions): HostConnector {
+  const yields = options.yield !== false
   return {
     kind: "connect",
+    yields,
     async connect() {
       const client = new EngineClient()
       const info = await client.connect(options.host, options.port, {
@@ -53,6 +59,7 @@ export function connectConnector(options: ConnectBackendOptions): HostConnector 
         user: options.user,
         clientName: ClientName,
         tlsFingerprint: options.fingerprint,
+        yield: yields,
       })
       return { client, info }
     },
@@ -73,6 +80,8 @@ export interface LaunchBackendOptions {
   log?: (message: string) => void
   /** Where the tokens file goes; defaults to a new folder in the OS temp folder */
   tempRoot?: string
+  /** Say `yield` in Hello (default true; --no-yield turns it off) */
+  yield?: boolean
 }
 
 /** The tokens file's entry for an editor named LaunchUser: the host keeps only the token's SHA-256 (TokenTable) */
@@ -93,6 +102,7 @@ export function launchConnector(options: LaunchBackendOptions): HostConnector {
   let dir: string | null = null
   let token = ""
   let pending: Promise<HostProcess> | null = null
+  const yields = options.yield !== false
 
   const start = async (): Promise<HostProcess> => {
     removeDir()
@@ -145,6 +155,7 @@ export function launchConnector(options: LaunchBackendOptions): HostConnector {
 
   return {
     kind: "launch",
+    yields,
     async connect() {
       if (host && host.exited) host = null
       if (!host) {
@@ -154,7 +165,7 @@ export function launchConnector(options: LaunchBackendOptions): HostConnector {
         host = await pending
       }
       const client = new EngineClient()
-      const info = await client.connect("127.0.0.1", host.port, { token, user: LaunchUser, clientName: ClientName })
+      const info = await client.connect("127.0.0.1", host.port, { token, user: LaunchUser, clientName: ClientName, yield: yields })
       return { client, info }
     },
     dispose() {

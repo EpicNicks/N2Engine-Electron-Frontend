@@ -51,11 +51,12 @@ function main(): void {
         readyTimeoutMs: cli.readyTimeoutMs,
         scrubber,
         log,
+        yield: cli.yield,
       })
     } else {
       const token = readToken(cli, process.env)
       scrubber.addSecret(token)
-      connector = connectConnector({ host: cli.host, port: cli.port, fingerprint: cli.fingerprint, token, user: cli.user })
+      connector = connectConnector({ host: cli.host, port: cli.port, fingerprint: cli.fingerprint, token, user: cli.user, yield: cli.yield })
     }
   } catch (e) {
     return fail(e instanceof CliError ? e.message : "could not start")

@@ -75,6 +75,10 @@ const Advice = {
   forbidden:
     "Inspection tools still work. Changing the project needs an editor token: ask the operator to start the bridge with one. Do not retry.",
   busy: "Another session holds the host. Try again later, or ask the person to close the other editor.",
+  yieldBusy:
+    "The bridge yields to people: it never takes the host from a session or keeps a person out. Try again later, not in a loop: tell the person, and call the tool again later (the bridge reconnects only when the host is free).",
+  yieldPreempted:
+    "A person (or another client that does not yield) connected, so the host ended the bridge's session; the bridge yields to people. Stop, tell the person, and call the tool again later: the bridge reconnects only when the host is free, and it never forces its way back. Anything you had open on the host (a play session, edit state) is gone; check n2_status first.",
   auth: "Check the token and the user name the operator configured for the bridge. Do not retry.",
   fingerprint: "The host's certificate is not the pinned one. Do not retry; ask the operator to check the host and the --fingerprint value.",
   protocol: "The host speaks an incompatible protocol version. Ask the operator to update the bridge or the host.",

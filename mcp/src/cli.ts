@@ -32,6 +32,8 @@ export interface CommonOptions {
   keepJournal: boolean
   busyWaitMs: number
   callTimeoutMs: number
+  /** Hello says `yield` (protocol 1.22: the bridge gives way to people); --no-yield turns it off */
+  yield: boolean
 }
 
 export interface LaunchCli extends CommonOptions {
@@ -88,6 +90,9 @@ Options:
   --write-tools <a,b,...>  List only these write and play tools (names as n2_create_entity; the others are not listed).
   --disable-tools <a,b>    Never list these tools, read or write.
   --keep-journal           Keep the folder with the backups of overwritten files when the bridge exits (default: delete it).
+  --no-yield               Do not say "yield" in Hello (protocol 1.22). By default the bridge yields: it is served only by an idle
+                           host and is dropped when a person's editor connects. Without it the bridge can preempt or take over
+                           a session by the host's usual rules, so use it only for a host no person shares.
   --busy-wait <ms>         How long to wait before one more try when the host is busy (default ${DefaultBusyWaitMs}, at most ${MaxBusyWaitMs}).
   --call-timeout <ms>      How long one tool call may wait for the host (default ${DefaultCallTimeoutMs}).
   --ready-timeout <ms>     How long a launched host may take to be ready (default 30000).
@@ -145,6 +150,7 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
   let busyWaitMs = DefaultBusyWaitMs
   let callTimeoutMs = DefaultCallTimeoutMs
   let readyTimeoutMs: number | undefined
+  let yieldToPeople = true
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -165,6 +171,9 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
         continue
       case "--keep-journal":
         keepJournal = true
+        continue
+      case "--no-yield":
+        yieldToPeople = false
         continue
       case "--max-writes": {
         const text = takeValue(args, i++, arg)
@@ -216,7 +225,7 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
     }
   }
 
-  const common: CommonOptions = { allowAdmin, readOnly, allowIrreversible, maxWrites, writeTools, disableTools, keepJournal, busyWaitMs, callTimeoutMs }
+  const common: CommonOptions = { allowAdmin, readOnly, allowIrreversible, maxWrites, writeTools, disableTools, keepJournal, busyWaitMs, callTimeoutMs, yield: yieldToPeople }
   if (launch !== undefined && connect !== undefined) throw new CliError("--launch and --connect can't be combined")
   if (launch === undefined && connect === undefined) throw new CliError("give --launch <projectPath> or --connect <host:port>")
 

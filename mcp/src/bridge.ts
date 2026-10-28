@@ -75,8 +75,12 @@ export interface SessionState {
 }
 
 export class Bridge {
-  private link: (HostLink & { project: ProjectInfoResponse | null; types: ComponentSchema[] | null; session: SessionState }) | null = null
+  private link: (HostLink & { closedByHost: boolean; project: ProjectInfoResponse | null; types: ComponentSchema[] | null; session: SessionState }) | null = null
   private refused: BridgeError | null = null
+  /** The host closed the last session by itself (not the bridge): with `yield`, a person took the host. Cleared on connect. */
+  private endedByHost = false
+  /** Consecutive busy answers, for the growing wait before a retry; cleared on connect */
+  private busyStreak = 0
   private tail: Promise<unknown> = Promise.resolve()
   private readonly limiter: RateLimiter
   readonly scrubber: Scrubber
@@ -187,6 +191,11 @@ export class Bridge {
       work = fn(context)
       return await Promise.race([work, timeout])
     } catch (e) {
+      // The host closed the session under a yielding bridge: a person arrived. Say so, not "connection dropped".
+      if (this.options.connector.yields === true && link.closedByHost && !(e instanceof BridgeError)) {
+        this.log("the host ended the session (a person or another client that does not yield connected); the bridge yields")
+        throw new BridgeError("busy", "The host ended the bridge's session (most likely a person, or another client that does not yield, took the host).", BridgeAdvice.yieldPreempted, undefined, e)
+      }
       throw mapError(e, { role: safeRole(link.info.role), command }, this.scrubber)
     } finally {
       clearTimeout(timer)
@@ -207,16 +216,22 @@ export class Bridge {
       opened = await this.connectOnce()
     } catch (e) {
       if (!(e instanceof HostBusyError)) throw this.logged(e)
-      // Busy: the person's editor (or another agent) holds the host. Wait once, then say so.
-      const wait = Math.min(this.options.busyWaitMs ?? DefaultBusyWaitMs, MaxBusyWaitMs)
+      // Busy: the person's editor (or another agent) holds the host. Wait once, then say so. The wait doubles with each
+      // busy answer in a row (up to MaxBusyWaitMs), so a bridge that yields does not knock on a busy host at a steady pace.
+      const base = Math.min(this.options.busyWaitMs ?? DefaultBusyWaitMs, MaxBusyWaitMs)
+      const wait = Math.min(base * 2 ** Math.min(this.busyStreak, 10), MaxBusyWaitMs)
+      this.busyStreak++
       this.log(`the host is busy; waiting ${wait} ms for one more try`)
       await this.sleep(wait)
       try {
         opened = await this.connectOnce()
       } catch (again) {
+        if (again instanceof HostBusyError) this.busyStreak++
         throw this.logged(again)
       }
     }
+    this.busyStreak = 0
+    this.endedByHost = false
     // Only a viewer or an editor is served. An admin (every right, and it would preempt a person's session) is refused, and
     // so is a host that reports no known role: its rights can't be known, so they are taken to be an admin's.
     const role = safeRole(opened.info.role)
@@ -252,9 +267,14 @@ export class Bridge {
       }
       // A host without a project has none to describe; the tools say so
     }
-    const link = Object.assign(opened, { project, types: null as ComponentSchema[] | null, session: { viewport: null } as SessionState })
+    const link = Object.assign(opened, { project, types: null as ComponentSchema[] | null, session: { viewport: null } as SessionState, closedByHost: false })
     opened.client.onClose(() => {
-      if (this.link === link) this.link = null
+      if (this.link === link) {
+        // Not closed by the bridge (dropLink and dispose clear this.link first): the host or the network ended it
+        this.link = null
+        link.closedByHost = true
+        this.endedByHost = true
+      }
     })
     this.link = link
     this.access = { role: safeRole(opened.info.role), readOnly: opened.info.readOnly }
@@ -275,10 +295,26 @@ export class Bridge {
 
   /** Logs a failure's cause (scrubbed) and returns its BridgeError */
   private logged(error: unknown): BridgeError {
-    const mapped = mapError(error, {}, this.scrubber)
+    const mapped = this.mapConnectError(error)
     const cause = mapped.cause instanceof Error ? mapped.cause.message : mapped.cause === undefined ? "" : String(mapped.cause)
     this.log(`connecting failed: ${mapped.code}${cause ? ` (${cause})` : ""}`)
     return mapped
+  }
+
+  /** A failure to open a session; a busy host reads differently to a bridge that yields */
+  private mapConnectError(error: unknown): BridgeError {
+    if (error instanceof HostBusyError && this.options.connector.yields === true) {
+      const holder = error.holderRole ? ` (${/^[aeiou]/.test(error.holderRole) ? "an" : "a"} ${error.holderRole} session)` : ""
+      const earlier = this.endedByHost ? " The host ended the bridge's earlier session for it." : ""
+      return new BridgeError(
+        "busy",
+        `The host is serving a human or another session${holder}; the bridge yields to humans and does not take the host.${earlier}`,
+        BridgeAdvice.yieldBusy,
+        undefined,
+        error
+      )
+    }
+    return mapError(error, {}, this.scrubber)
   }
 
   /** Closes the session and ends what the connector started. Safe to call twice. */
