@@ -21,7 +21,6 @@ export class PrepareChannel {
         this.waiting.delete(id)
         reject(new Error("the editor window did not settle in time"))
       }, this.timeoutMs)
-      timer.unref?.()
       this.waiting.set(id, { resolve, reject, timer })
       if (!this.send(id)) {
         clearTimeout(timer)

@@ -111,7 +111,6 @@ export class Multiplexer {
         this.agentQueue.splice(at, 1)
         reject(new MuxError("busy", "The editor stayed busy with the person's own work"))
       }, this.options.waitMs ?? 30000)
-      job.timer.unref?.()
       this.agentQueue.push(job)
       this.clearIdle()
       this.pump()
@@ -195,7 +194,6 @@ export class Multiplexer {
         void this.expireNow()
       }
     }, this.options.leaseIdleMs ?? 5000)
-    this.idleTimer.unref?.()
   }
 
   private async expireNow(): Promise<void> {
