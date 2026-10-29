@@ -7,6 +7,7 @@ import { DefaultBusyWaitMs, DefaultCallTimeoutMs, MaxBusyWaitMs, MaxWritesPerSes
 import { ReadTools } from "./tools"
 import { WriteToolNames } from "./tools-write"
 import { PlayToolNames } from "./play"
+import { EditorUserDataEnv } from "./electron-backend"
 import { BridgeName, BridgeVersion } from "./version"
 
 export class CliError extends Error {
@@ -57,7 +58,17 @@ export interface ConnectCli extends CommonOptions {
   tokenFile?: string
 }
 
-export type Cli = LaunchCli | ConnectCli | { mode: "help" } | { mode: "version" }
+export interface ElectronCli extends CommonOptions {
+  mode: "electron"
+  /** --project: the project folder whose editor endpoint to use; omitted: the only project that has one */
+  projectPath?: string
+  /** --user-data: the editor's user data folder, where its discovery files are */
+  userData?: string
+  /** --allow-irreversible was given: it has no effect with --electron (the editor's own dialog decides) */
+  ignoredAllowIrreversible: boolean
+}
+
+export type Cli = LaunchCli | ConnectCli | ElectronCli | { mode: "help" } | { mode: "version" }
 
 /** The environment variable that names the host executable (the editor's setting too) */
 export const HostPathEnv = "N2ENGINE_HOST"
@@ -67,6 +78,7 @@ export const Usage = `${BridgeName} ${BridgeVersion}: an MCP server (stdio) for 
 Usage:
   ${BridgeName} --launch <projectPath> [--host-path <N2EditorHost>] [--renderer opengl|software] [options]
   ${BridgeName} --connect <host:port> --fingerprint <sha256> (--token-env <VAR> | --token-file <path>) [--user <name>] [options]
+  ${BridgeName} --electron [--project <projectPath>] [--user-data <editorUserDataFolder>] [options]
 
 Backends:
   --launch <projectPath>   Start a host of this bridge's own for the project (loopback, a throwaway editor-role token).
@@ -76,6 +88,19 @@ Backends:
                            is required: there is no trust on first use. The token comes from the environment variable
                            named by --token-env, or from the file --token-file (on POSIX not readable by group or others).
                            Tokens are never accepted as command line arguments.
+
+  --electron               Work in the project the person has open in the N2Engine editor, at the same time as they do. The editor
+                           must have "Allow AI agent for this project" turned on (a switch in its toolbar, off by default); it
+                           then listens on a named pipe or Unix socket and puts a per-launch secret in a file in its user data
+                           folder, which this reads. Your changes are undo steps labelled "AI: ...", the person's own edits come
+                           first, and anything irreversible (save, open or create a scene, project settings, import settings,
+                           overwriting a file, undoing the person's steps) asks the person in the editor's own dialog:
+                           --allow-irreversible does not replace that, and --allow-admin does not apply (the role is an
+                           editor's at most). The play tools are not available (the game would be a second host).
+  --project <path>         The project folder, for --electron (default: the only project with an endpoint).
+  --user-data <path>       The editor's user data folder, for --electron (default: $${EditorUserDataEnv}, else where Electron puts the
+                           app's data: %APPDATA%\n2enginewebfrontend, ~/Library/Application Support/n2enginewebfrontend,
+                           ~/.config/n2enginewebfrontend).
 
 Options:
   --user <name>            The token's user in the host's tokens file (--connect).
@@ -134,6 +159,9 @@ export function parseHostPort(text: string): { host: string; port: number } {
 export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
   let launch: string | undefined
   let connect: string | undefined
+  let electron = false
+  let project: string | undefined
+  let userData: string | undefined
   let hostPath: string | undefined
   let renderer: string | undefined
   let fingerprint: string | undefined
@@ -193,6 +221,15 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
       case "--connect":
         connect = takeValue(args, i++, arg)
         continue
+      case "--electron":
+        electron = true
+        continue
+      case "--project":
+        project = takeValue(args, i++, arg)
+        continue
+      case "--user-data":
+        userData = takeValue(args, i++, arg)
+        continue
       case "--host-path":
         hostPath = takeValue(args, i++, arg)
         continue
@@ -226,8 +263,22 @@ export function parseArgs(args: string[], env: NodeJS.ProcessEnv): Cli {
   }
 
   const common: CommonOptions = { allowAdmin, readOnly, allowIrreversible, maxWrites, writeTools, disableTools, keepJournal, busyWaitMs, callTimeoutMs, yield: yieldToPeople }
-  if (launch !== undefined && connect !== undefined) throw new CliError("--launch and --connect can't be combined")
-  if (launch === undefined && connect === undefined) throw new CliError("give --launch <projectPath> or --connect <host:port>")
+  const chosen = [launch !== undefined, connect !== undefined, electron].filter(Boolean).length
+  if (chosen > 1) throw new CliError("--launch, --connect and --electron can't be combined")
+  if (chosen === 0) throw new CliError("give --launch <projectPath>, --connect <host:port> or --electron")
+  if (!electron && (project !== undefined || userData !== undefined)) throw new CliError("--project and --user-data belong to --electron")
+
+  if (electron) {
+    if (fingerprint !== undefined || tokenEnv !== undefined || tokenFile !== undefined || user !== undefined) {
+      throw new CliError("--fingerprint, --token-env, --token-file and --user belong to --connect: --electron uses the editor's own secret file")
+    }
+    if (hostPath !== undefined || renderer !== undefined || readyTimeoutMs !== undefined) {
+      throw new CliError("--host-path, --renderer and --ready-timeout belong to --launch")
+    }
+    if (allowAdmin) throw new CliError("--allow-admin does not apply to --electron: the agent's role in the editor is an editor's at most")
+    // The editor's own dialog is the only consent; the flag changes nothing, so it is not kept
+    return { mode: "electron", projectPath: project, userData, ignoredAllowIrreversible: allowIrreversible, ...common, allowIrreversible: false }
+  }
 
   if (launch !== undefined) {
     if (fingerprint !== undefined || tokenEnv !== undefined || tokenFile !== undefined || user !== undefined) {

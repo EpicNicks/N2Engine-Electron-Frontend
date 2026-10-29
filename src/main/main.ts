@@ -2,14 +2,17 @@ import { app, BrowserWindow, dialog, Menu, screen, ipcMain, session } from "elec
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
-import { Channels, HostState, PlayState } from "../shared/api"
+import { AgentState, Channels, EditMenuLabels, HostState, PlayState } from "../shared/api"
+import { AgentController, AgentProjectStore } from "./agent-controller"
+import { confirmAgentOperation, registerAgentIpc } from "./agent-ipc"
+import { PrepareChannel } from "./agent-prepare"
 import { buildAppMenuTemplate } from "./app-menu"
 import { EngineHost } from "./engine-ipc"
 import { askTrust } from "./extension-prompt"
 import { ExtensionTrust, ExtensionTrustStore } from "./extension-trust"
 import { TokenEnvVariable } from "./host-launcher"
 import { HostSettings } from "./host-settings"
-import { EditorPage } from "./ipc"
+import { EditorPage, handleResult } from "./ipc"
 import { PlaySession } from "./play-session"
 import { registerPlayIpc } from "./play-ipc"
 import { registerPreferencesIpc } from "./preferences-ipc"
@@ -45,6 +48,8 @@ const page: EditorPage = {
 function publishHostState(state: HostState): void {
   const editor = page.getEditor()
   if (editor && !editor.isDestroyed()) editor.send(Channels.hostState, state)
+  // The agent endpoint follows the project and the connection (the switch may now be possible, or not)
+  void agent?.refresh()
 }
 
 function publishPlayState(state: PlayState): void {
@@ -59,14 +64,33 @@ const recentRemotes = new RecentRemotes(path.join(userData, "recent-remotes.json
 const pins = new PinStore(path.join(userData, "pinned-fingerprints.json"))
 const settings = new HostSettings(path.join(userData, "settings.json"))
 
+// The size the page last set the editor view to: the agent endpoint puts it back after an agent's picture (risk R4)
+let humanViewport: { width: number; height: number } | null = null
+
 const engine = new EngineHost(new EngineClient(), page, {
   // A page that (re)loads starts at the welcome screen: no project, no host
   onAttach: () => {
+    prepareChannel.cancelAll("the editor window reloaded")
     play.stop().catch((e) => console.error("Failed to stop the game:", e))
     projectSession.reset().catch((e) => console.error("Failed to close the project:", e))
   },
+  // The person's requests wait while an AI agent's call is in progress (the agent endpoint, agent-mux.ts)
+  gate: async (name, args, run) => {
+    const result = await (agent ? agent.multiplexer.human(run) : run())
+    if (name === "setViewportSize" && typeof args[0] === "number" && typeof args[1] === "number") humanViewport = { width: args[0], height: args[1] }
+    return result
+  },
 })
 engine.register(ipcMain)
+
+// "Allow AI agent for this project" (MCP6): a local endpoint for ONE agent, working through this editor's own engine connection
+const prepareChannel = new PrepareChannel((id) => {
+  const editor = page.getEditor()
+  if (!editor || editor.isDestroyed()) return false
+  editor.send(Channels.agentPrepare, id)
+  return true
+})
+let agent: AgentController | null = null
 
 // Editor extensions (editor/*.lua) run code on the host: the editor passes --editor-extensions only for a local folder
 // the user trusted (extension-trust.ts). The record is in the user data folder, which no project can write.
@@ -95,7 +119,7 @@ const play = new PlaySession({
     get isConnected() {
       return engine.client.isConnected
     },
-    writePlaySnapshot: (scenePath) => engine.client.writePlaySnapshot(scenePath),
+    writePlaySnapshot: (scenePath) => (agent ? agent.multiplexer.human(() => engine.client.writePlaySnapshot(scenePath)) : engine.client.writePlaySnapshot(scenePath)),
   },
   // Play launches a local host process of the project's folder: a remote engine has neither
   unavailable: () =>
@@ -116,6 +140,53 @@ engine.client.onClose(() => {
   play.stop("The editor host's connection ended").catch((e) => console.error("Failed to stop the game:", e))
 })
 registerPlayIpc(ipcMain, { page, session: play })
+
+agent = new AgentController({
+  store: new AgentProjectStore(path.join(userData, "agent-projects.json")),
+  userData,
+  engine: engine.client,
+  projectPath: () => projectSession.projectPath,
+  isRemote: () => projectSession.isRemote,
+  prepare: () => prepareChannel.request(),
+  changed: () => {
+    const editor = page.getEditor()
+    if (editor && !editor.isDestroyed()) editor.send(Channels.agentDone)
+  },
+  confirm: (request, signal) => confirmAgentOperation(getWindow(), request, signal),
+  publish: (state: AgentState) => {
+    const editor = page.getEditor()
+    if (editor && !editor.isDestroyed()) editor.send(Channels.agentState, state)
+  },
+  humanViewport: () => humanViewport,
+  log: (message) => console.log(`[agent] ${message}`),
+})
+registerAgentIpc(ipcMain, { page, getWindow, controller: agent, prepare: prepareChannel })
+// The endpoint follows the connection: a host that ended takes the agent's endpoint with it
+engine.client.onClose(() => void agent?.refresh())
+
+// macOS: the Edit menu names the steps Undo and Redo would take, so an agent's steps ("AI: ...") are visible there
+let menuLabels: EditMenuLabels = { undo: "", redo: "" }
+function applyAppMenu(): void {
+  if (process.platform !== "darwin") return
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildAppMenuTemplate(
+        app.name,
+        (command) => {
+          const editor = page.getEditor()
+          if (editor && !editor.isDestroyed()) editor.send(Channels.editCommand, command)
+        },
+        menuLabels
+      )
+    )
+  )
+}
+handleResult(ipcMain, Channels.editMenuLabels, page, (labels) => {
+  const l = labels as Partial<EditMenuLabels> | null
+  if (typeof l?.undo !== "string" || typeof l.redo !== "string") throw new Error("labels must be {undo, redo} strings")
+  menuLabels = { undo: l.undo.slice(0, 200), redo: l.redo.slice(0, 200) }
+  applyAppMenu()
+})
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
 registerPreferencesIpc(ipcMain, { page, settings, chooseHostPath: async () => {
@@ -196,21 +267,13 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
   // macOS: the menu bar's Edit items drive the editor's undo and redo (Windows and Linux have no menu bar)
-  if (process.platform === "darwin") {
-    Menu.setApplicationMenu(
-      Menu.buildFromTemplate(
-        buildAppMenuTemplate(app.name, (command) => {
-          const editor = page.getEditor()
-          if (editor && !editor.isDestroyed()) editor.send(Channels.editCommand, command)
-        })
-      )
-    )
-  }
+  applyAppMenu()
   createWindow()
 })
 
 /** Kills the game and the editor host, synchronously (the game first: it is the one that depends on the other) */
 function shutdownAll(): void {
+  agent?.dispose()
   play.shutdown()
   projectSession.shutdown()
 }

@@ -158,7 +158,11 @@ export async function callTool(bridge: Bridge, def: ToolDef, args: unknown, opti
       if (def.irreversible) {
         const sentence = await def.irreversible(context, args as never)
         if (sentence !== null) {
-          if (bridge.policy.allowIrreversible) {
+          if (bridge.confirmsNatively) {
+            // --electron: the editor shows its own native dialog for the command and refuses without a yes; neither the client's
+            // elicitation nor --allow-irreversible stands in for it
+            context.consent = "native"
+          } else if (bridge.policy.allowIrreversible) {
             context.consent = "operator"
           } else if (env?.canElicit === true) {
             const key = confirmKey(def.name, sentence)

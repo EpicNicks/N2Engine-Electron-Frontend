@@ -164,7 +164,7 @@ const statusData = z.object({
   bridge: z.object({
     name: z.string(),
     version: z.string(),
-    backend: z.string().describe("launch (a host of the bridge's own) or connect (an existing host)."),
+    backend: z.string().describe("launch (a host of the bridge's own), connect (an existing host) or electron (the person's open editor)."),
     specRevisions: z.array(z.string()),
   }),
   policy: z.object({
@@ -962,7 +962,9 @@ const screenshot = tool({
     const wanted = { width: args.width ?? limits.ScreenshotDefaultWidth, height: args.height ?? limits.ScreenshotDefaultHeight }
     const fit = fitSize(wanted.width, wanted.height, limits.ScreenshotMaxSide)
     const current = ctx.session.viewport
-    if (!current || current.width !== fit.width || current.height !== fit.height) {
+    // --electron: the editor puts the person's view back after each picture, so the size set last time does not hold
+    const sticky = ctx.backend !== "electron"
+    if (!sticky || !current || current.width !== fit.width || current.height !== fit.height) {
       await ctx.client.setViewportSize(fit.width, fit.height)
       ctx.session.viewport = { width: fit.width, height: fit.height }
     }

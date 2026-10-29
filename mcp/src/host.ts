@@ -1,7 +1,7 @@
 // How the bridge reaches a host. A HostConnector opens one session (a connected EngineClient whose Hello succeeded);
 // the bridge asks for a new one whenever the last one is gone. Two real connectors: `launch` (a host of its own, on a
 // free loopback port, with a throwaway editor-role token) and `connect` (a remote or local host over TLS with a pinned
-// fingerprint). Tests pass their own.
+// fingerprint); `electron` (electron-backend.ts) is the person's open editor. Tests pass their own.
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -24,6 +24,11 @@ export interface HostConnector {
   readonly kind: string
   /** Whether this connector's Hello says `yield` (protocol 1.22): the bridge gives way to people. Absent: no. */
   readonly yields?: boolean
+  /**
+   * The host puts irreversible operations to the person itself, in a dialog of its own (the --electron backend: the editor's
+   * native dialog), so the bridge neither elicits nor takes --allow-irreversible for them: it only lets the command through
+   */
+  readonly confirmsNatively?: boolean
   /** Opens a session. Rejects with HostBusyError, HelloError, FingerprintMismatchError, a BridgeError or a socket error. */
   connect(): Promise<HostLink>
   /** Ends what the connector started (a launched host) and removes what it wrote. Synchronous: it runs as the process exits. */

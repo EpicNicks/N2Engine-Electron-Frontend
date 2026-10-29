@@ -728,6 +728,51 @@ export type EditCommand = "undo" | "redo"
 export interface EditMenuApi {
   /** Called when the application menu's Undo or Redo is chosen (macOS: Cmd+Z, Cmd+Shift+Z) */
   onCommand(listener: (command: EditCommand) => void): void
+  /** Tells the application menu (macOS) which step Undo and Redo would take ("" for none), so an AI agent's steps show there */
+  setLabels(labels: EditMenuLabels): Promise<void>
+}
+
+/** What the application menu's Undo and Redo name: the steps of the history */
+export interface EditMenuLabels {
+  undo: string
+  redo: string
+}
+
+// ==================== AI agent (MCP6) ====================
+
+/**
+ * The editor's agent endpoint for the open project (src/main/agent-controller.ts):
+ * - available: the switch can be turned on now; when not, reason says why (no project, a remote engine, read-only, viewer)
+ * - enabled: the switch is on for this project (kept per project)
+ * - listening: the endpoint is up (enabled and available)
+ * - connected: an AI agent is attached
+ */
+export interface AgentState {
+  available: boolean
+  reason: string | null
+  enabled: boolean
+  listening: boolean
+  connected: boolean
+}
+
+export const InitialAgentState: AgentState = Object.freeze({ available: false, reason: "Open a project first", enabled: false, listening: false, connected: false })
+
+/** window.agent: "Allow AI agent for this project" */
+export interface AgentApi {
+  /** The last known state (pushed by the main process, so it's synchronous) */
+  state(): AgentState
+  onStateChange(listener: (state: AgentState) => void): void
+  /** The switch. Off closes the endpoint and the agent's connection at once and deletes the secret file. */
+  setEnabled(enabled: boolean): Promise<AgentState>
+  /** Drops the attached agent, revokes its secret and turns the switch off */
+  disconnect(): Promise<AgentState>
+  /**
+   * The page's part of an agent's call: before the first call of a turn the main process asks the page to send its pending
+   * edits and end its edit groups; the handler resolves when that is done
+   */
+  onBeforeCall(handler: () => Promise<void>): void
+  /** The agent changed the scene and the editor is the person's again: look at the host once more */
+  onAfterCall(handler: () => void): void
 }
 
 /**
@@ -820,4 +865,21 @@ export const Channels = {
   projectEnableExtensions: "project:enableExtensions",
   /** () → IpcResult: forgets the open local folder's trust */
   projectForgetExtensionTrust: "project:forgetExtensionTrust",
+
+  /** () → IpcResult<AgentState> */
+  agentGetState: "agent:getState",
+  /** main → page: AgentState */
+  agentState: "agent:state",
+  /** (enabled: boolean) → IpcResult<AgentState> */
+  agentSetEnabled: "agent:setEnabled",
+  /** () → IpcResult<AgentState> */
+  agentDisconnect: "agent:disconnect",
+  /** main → page: (id: number): settle the pending edits and end the edit groups, then answer with agentPrepared */
+  agentPrepare: "agent:prepare",
+  /** (id: number, error: string | null) → IpcResult */
+  agentPrepared: "agent:prepared",
+  /** main → page: the agent changed the scene and the lane is the person's again */
+  agentDone: "agent:done",
+  /** (labels: EditMenuLabels) → IpcResult */
+  editMenuLabels: "edit:menuLabels",
 } as const

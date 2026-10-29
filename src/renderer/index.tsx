@@ -5,6 +5,7 @@ import { PreferencesDialog } from "./preferences-dialog"
 import { render } from "preact"
 import { computed, effect, untracked } from "@preact/signals-core"
 import { AudioController } from "./audio-controller"
+import { AgentModel, agentModel } from "./agent-state"
 import { AssetsState, isDirty } from "./assets-state"
 import { assetEntriesOf, nameOf } from "./asset-tree"
 import { EditController } from "./edit-controller"
@@ -257,6 +258,22 @@ historyModel.value = new HistoryModel({
   revisions: computed(() => store.scene.value),
   jump: (target, options) => editController.jumpTo(target, options),
   timers: window,
+})
+// An AI agent working through the editor (MCP6): before its first call the page settles as for Undo, and after its changes
+// it looks at the host again; the switch and the banner are in the toolbar. The Edit menu (macOS) names the steps.
+agentModel.value = new AgentModel(window.agent, (what, e) => store.reportError(what, e))
+window.agent.onBeforeCall(async () => {
+  await settleEdits()
+  await groups.closeAll()
+})
+window.agent.onAfterCall(() => {
+  store.syncAfterEdit().catch((e) => store.reportError("Failed to look at the AI agent's changes", e))
+})
+effect(() => {
+  const status = store.history.value
+  window.editMenu
+    .setLabels({ undo: status.canUndo ? status.label : "", redo: status.canRedo ? status.redoLabel : "" })
+    .catch((e) => console.error("Failed to update the Edit menu:", e))
 })
 // A play session, or a read-only host, makes the inspector and the hierarchy read-only (the host refuses edits)
 followWriteGuard(store, { inspector: app.inspector, hierarchy })
