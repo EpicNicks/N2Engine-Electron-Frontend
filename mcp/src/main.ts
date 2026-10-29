@@ -4,6 +4,7 @@
 // nor starts a host.
 import { Bridge } from "./bridge"
 import { CliError, parseArgs, readToken, Usage, type Cli } from "./cli"
+import { electronConnector } from "./electron-backend"
 import { connectConnector, launchConnector, type HostConnector } from "./host"
 import type { Policy } from "./policy"
 import { Scrubber } from "./scrub"
@@ -53,6 +54,9 @@ function main(): void {
         log,
         yield: cli.yield,
       })
+    } else if (cli.mode === "electron") {
+      if (cli.ignoredAllowIrreversible) log("--allow-irreversible has no effect with --electron: the editor asks the person in its own dialog")
+      connector = electronConnector({ projectPath: cli.projectPath, userData: cli.userData, scrubber, log })
     } else {
       const token = readToken(cli, process.env)
       scrubber.addSecret(token)

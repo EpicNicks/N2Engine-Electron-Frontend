@@ -49,7 +49,7 @@ export interface HostContext {
   client: EngineClient
   info: ServerInfoResponse
   scrubber: Scrubber
-  /** "launch" or "connect" */
+  /** "launch", "connect" or "electron" */
   backend: string
   /** The project as the host reported it at connect (null when the host has none) */
   project: ProjectInfoResponse | null
@@ -62,7 +62,7 @@ export interface HostContext {
   sessions: SessionManager
   allowAdmin: boolean
   /** Set by the server when an irreversible operation was allowed, for the journal */
-  consent: "elicited" | "operator" | null
+  consent: "elicited" | "operator" | "native" | null
   /** The bridge's game (the --launch backend only), else null */
   play: PlayController | null
   /** Aborted when the bridge gives up on this call (callTimeoutMs): a long handler stops at its next check */
@@ -104,6 +104,11 @@ export class Bridge {
 
   get backend(): string {
     return this.options.connector.kind
+  }
+
+  /** The host asks the person about irreversible operations itself (the --electron backend) */
+  get confirmsNatively(): boolean {
+    return this.options.connector.confirmsNatively === true
   }
 
   get allowAdmin(): boolean {

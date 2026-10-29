@@ -779,7 +779,7 @@ const journalItem = z.object({
   scene: z.string().optional(),
   saved: z.boolean().optional(),
   settings: z.boolean().optional(),
-  confirmed: z.string().optional().describe("How an irreversible operation was allowed: elicited (the person said yes) or operator (--allow-irreversible)."),
+  confirmed: z.string().optional().describe("How an irreversible operation was allowed: elicited (the person said yes), operator (--allow-irreversible) or native (the editor asked the person in its own dialog)."),
 })
 
 function journalView(ctx: HostContext, e: JournalEntry): z.infer<typeof journalItem> {

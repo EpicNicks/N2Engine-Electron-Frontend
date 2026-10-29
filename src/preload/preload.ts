@@ -3,6 +3,8 @@
 // (scripts/bundle.js) and can require only "electron".
 import { contextBridge, ipcRenderer } from "electron"
 import {
+  AgentApi,
+  AgentState,
   Channels,
   ConnectionState,
   EditCommand,
@@ -12,6 +14,7 @@ import {
   EngineCommands,
   HostApi,
   HostState,
+  InitialAgentState,
   InitialPlayState,
   IpcResult,
   ipcError,
@@ -192,10 +195,67 @@ const editMenu: EditMenuApi = {
   onCommand: (listener) => {
     editListeners.push(listener)
   },
+  setLabels: (labels) => invoke(Channels.editMenuLabels, labels),
+}
+
+// ==================== window.agent ====================
+
+let agentState: AgentState = InitialAgentState
+let agentPushed = false
+const agentListeners: Array<(state: AgentState) => void> = []
+let beforeCall: (() => Promise<void>) | null = null
+let afterCall: (() => void) | null = null
+
+function applyAgentState(state: AgentState): void {
+  agentState = state
+  notify(agentListeners, state, "Agent state")
+}
+
+ipcRenderer.on(Channels.agentState, (_event, state: AgentState) => {
+  agentPushed = true
+  applyAgentState(state)
+})
+invoke<AgentState>(Channels.agentGetState).then(
+  (state) => {
+    if (!agentPushed) applyAgentState(state)
+  },
+  (e) => console.error("Failed to get the agent state:", e)
+)
+
+// The main process asks the page to settle before an AI agent's call; the answer says whether it did
+ipcRenderer.on(Channels.agentPrepare, (_event, id: number) => {
+  const run = beforeCall ?? (async () => undefined)
+  run().then(
+    () => invoke(Channels.agentPrepared, id, null),
+    (e) => invoke(Channels.agentPrepared, id, e instanceof Error ? e.message : String(e))
+  ).catch((e) => console.error("Failed to answer the agent's settle request:", e))
+})
+ipcRenderer.on(Channels.agentDone, () => {
+  try {
+    afterCall?.()
+  } catch (e) {
+    console.error("Agent done handler failed:", e)
+  }
+})
+
+const agent: AgentApi = {
+  state: () => agentState,
+  onStateChange(listener) {
+    agentListeners.push(listener)
+  },
+  setEnabled: (enabled) => invoke(Channels.agentSetEnabled, enabled),
+  disconnect: () => invoke(Channels.agentDisconnect),
+  onBeforeCall(handler) {
+    beforeCall = handler
+  },
+  onAfterCall(handler) {
+    afterCall = handler
+  },
 }
 
 contextBridge.exposeInMainWorld("engine", engine)
 contextBridge.exposeInMainWorld("editMenu", editMenu)
+contextBridge.exposeInMainWorld("agent", agent)
 contextBridge.exposeInMainWorld("host", hostApi)
 contextBridge.exposeInMainWorld("play", play)
 contextBridge.exposeInMainWorld("project", project)

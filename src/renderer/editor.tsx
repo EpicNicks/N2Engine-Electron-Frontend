@@ -1,6 +1,7 @@
 // The editor once a project is open: the toolbar, then the panels in their regions (layout/layout-view.tsx), by default
 // assets | viewport over the console and text files | hierarchy, inspector and engine, with splitters between them.
 import { useEffect, useMemo } from "preact/hooks"
+import { AgentBanner, AgentToggle } from "./agent-ui"
 import { ConnectionLostNotice } from "./connection-notices"
 import { TextEditor } from "./assets-panel"
 import { editActions, editMenuItems, isMacPlatform, isTextEntry, runEditAction } from "./edit-actions"
@@ -239,6 +240,7 @@ function Toolbar({ layout }: { layout: LayoutController }) {
       <div class="separator" />
       <SceneButtons />
       <EditButton />
+      <AgentToggle />
       <ToolsButton />
       <WindowButton controller={layout} />
       <div class="separator" />
@@ -389,6 +391,7 @@ export function Editor() {
     <div class="editor">
       <Toolbar layout={layout} />
       <ConnectionLostNotice />
+      <AgentBanner />
       <ExtensionTrustBanner />
       <ExtensionNotice />
       <EditorLayout controller={layout} dynamic={new Map(dynamic.map((t) => [t.id, t]))} />

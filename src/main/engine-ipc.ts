@@ -175,6 +175,11 @@ export function ownedViews<T>(value: T): T {
 export interface EngineHostOptions {
   /** Called when a page (re)loads, after its connection is closed: a new page starts with no project or host */
   onAttach?: () => void
+  /**
+   * Every command the page sends goes through this when it is given, with its name and checked arguments, and run to
+   * send it: the agent endpoint's multiplexer (MCP6) holds the run while an AI agent's call is in progress
+   */
+  gate?: (name: string, args: unknown[], run: () => Promise<unknown>) => Promise<unknown>
 }
 
 export class EngineHost {
@@ -251,7 +256,8 @@ export class EngineHost {
     const checked = kinds.map((kind, i) => checkArg(kind, args[i], `${name} argument ${i + 1}`))
     const method = this.commands[name as EngineCommandName] as (...a: unknown[]) => Promise<unknown>
     // The result goes over IPC: never as a view onto a larger buffer
-    return ownedViews(await method.apply(this.client, checked))
+    const run = async (): Promise<unknown> => ownedViews(await method.apply(this.client, checked))
+    return this.options.gate ? this.options.gate(name, checked, run) : run()
   }
 
   private bump(): ConnectionState {

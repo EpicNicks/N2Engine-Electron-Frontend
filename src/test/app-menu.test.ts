@@ -27,3 +27,25 @@ describe("the macOS application menu", () => {
     assert.equal(template[0].label, "N2 Editor")
   })
 })
+
+describe("the macOS application menu names the steps (so an AI agent's steps show in the Edit menu)", () => {
+  const itemsFor = (labels: { undo: string; redo: string }) => {
+    const template = buildAppMenuTemplate("N2 Editor", () => undefined, labels)
+    return (template.find((item) => item.label === "Edit")!.submenu as MenuItemConstructorOptions[]).map((item) => item.label)
+  }
+
+  test("Undo and Redo carry the history's labels", () => {
+    const labels = itemsFor({ undo: "AI: n2_set_transform #3", redo: "AI: n2_create_entity #4" })
+    assert.ok(labels.includes("Undo AI: n2_set_transform #3"))
+    assert.ok(labels.includes("Redo AI: n2_create_entity #4"))
+  })
+
+  test("with no step they are plain Undo and Redo, and a label is one short line", () => {
+    const plain = itemsFor({ undo: "", redo: "" })
+    assert.ok(plain.includes("Undo") && plain.includes("Redo"))
+    const odd = itemsFor({ undo: "a\nb" + "x".repeat(200), redo: "" }).find((l) => l?.startsWith("Undo "))!
+    assert.ok(!odd.includes("\n"))
+    assert.ok(odd.length < 80)
+  })
+})
+

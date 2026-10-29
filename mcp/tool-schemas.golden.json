@@ -171,7 +171,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "backend": {
-                    "description": "launch (a host of the bridge's own) or connect (an existing host).",
+                    "description": "launch (a host of the bridge's own), connect (an existing host) or electron (the person's open editor).",
                     "type": "string"
                   },
                   "name": {
@@ -2110,7 +2110,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "confirmed": {
-                      "description": "How an irreversible operation was allowed: elicited (the person said yes) or operator (--allow-irreversible).",
+                      "description": "How an irreversible operation was allowed: elicited (the person said yes), operator (--allow-irreversible) or native (the editor asked the person in its own dialog).",
                       "type": "string"
                     },
                     "created": {

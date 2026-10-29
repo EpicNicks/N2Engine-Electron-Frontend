@@ -49,8 +49,8 @@ export interface JournalEntry {
   saved?: boolean
   scene?: "open" | "new"
   settings?: boolean
-  /** An irreversible operation was allowed: "elicited" (the person said yes) or "operator" (--allow-irreversible) */
-  confirmed?: "elicited" | "operator"
+  /** An irreversible operation was allowed: "elicited" (the person said yes), "operator" (--allow-irreversible) or "native" (the editor asks the person itself) */
+  confirmed?: "elicited" | "operator" | "native"
   /** n2_undo / n2_redo / the revert moved this many of the session's steps */
   undid?: number
   redid?: number
