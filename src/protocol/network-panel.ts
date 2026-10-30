@@ -185,6 +185,41 @@ export function rangeOf(info: NetworkSettingsInfo, row: NetworkSettingRow): Netw
   return row.settingKey === undefined ? undefined : info.ranges.find((r) => r.key === row.settingKey)
 }
 
+/**
+ * Time dilation (protocol 1.23.0): network.authoritative.timeDilation, the opt-in client clock dilation of Server
+ * authoritative. GetNetworkSettings reports it as values.authoritative.timeDilation; it is not a row of the preset table
+ * and has no entry in ranges, so its ranges are the engine's read (NetworkSettings: minScale 0.5 to 1, maxScale 1 to 2).
+ */
+export const TimeDilationKey = "network.authoritative.timeDilation"
+
+/** The three fields SetNetworkSettings accepts under authoritative.timeDilation (any other is refused) */
+export const TimeDilationFields = ["enabled", "minScale", "maxScale"] as const
+export type TimeDilationField = (typeof TimeDilationFields)[number]
+
+export interface TimeDilationValues {
+  enabled: boolean
+  minScale: number
+  maxScale: number
+}
+
+/** The engine's defaults: off, 0.9 and 1.1 */
+export const TimeDilationDefaults: TimeDilationValues = { enabled: false, minScale: 0.9, maxScale: 1.1 }
+
+/** The engine's ranges of the two scales, in the shape checkNumber takes */
+export const TimeDilationRanges: Record<"minScale" | "maxScale", NetworkSettingRange> = {
+  minScale: { key: `${TimeDilationKey}.minScale`, min: 0.5, max: 1, default: TimeDilationDefaults.minScale, integer: false },
+  maxScale: { key: `${TimeDilationKey}.maxScale`, min: 1, max: 2, default: TimeDilationDefaults.maxScale, integer: false },
+}
+
+/** The time dilation the host reports (values.authoritative.timeDilation), or null for a host before 1.23.0 or a malformed answer */
+export function timeDilationOf(info: NetworkSettingsInfo): TimeDilationValues | null {
+  const values = info.values
+  if (!isObject(values) || !isObject(values.authoritative)) return null
+  const dilation = values.authoritative.timeDilation
+  if (!isObject(dilation) || !isBool(dilation.enabled) || !isNumber(dilation.minScale) || !isNumber(dilation.maxScale)) return null
+  return { enabled: dilation.enabled, minScale: dilation.minScale, maxScale: dilation.maxScale }
+}
+
 /** The checked value of a typed number, or the problem in words (the host refuses an out-of-range value too) */
 export function checkNumber(text: string, range: NetworkSettingRange): { value: number } | { error: string } {
   const trimmed = text.trim()

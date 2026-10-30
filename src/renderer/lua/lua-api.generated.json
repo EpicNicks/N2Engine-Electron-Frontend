@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "78afa288feddaa472e77c8eb0d293f379e334778",
+  "engineRef": "53d4be399b3f8c2dd639208ea0f13d4ba29ba3e1",
   "runtime": {
     "available": true,
     "classes": {
@@ -837,6 +837,98 @@
         "name": "Network",
         "description": "",
         "fields": {}
+      },
+      "PredictionTuning": {
+        "name": "PredictionTuning",
+        "description": "",
+        "fields": {
+          "positionEpsilon": {
+            "name": "positionEpsilon",
+            "type": "number",
+            "description": "Server and predicted position agree within this many units (default 0.01)"
+          },
+          "velocityEpsilon": {
+            "name": "velocityEpsilon",
+            "type": "number",
+            "description": "... and vertical speed within this (default 0.05)"
+          },
+          "snapDistance": {
+            "name": "snapDistance",
+            "type": "number",
+            "description": "A correction over this many units snaps instead of sliding (default 1)"
+          },
+          "smoothingMs": {
+            "name": "smoothingMs",
+            "type": "number",
+            "description": "A smaller correction fades out over this many milliseconds (default 100; 0 to 5000)"
+          },
+          "applySmoothing": {
+            "name": "applySmoothing",
+            "type": "boolean",
+            "description": "true: the engine shows the smoothed position; false: read the offset yourself"
+          }
+        }
+      },
+      "TimeDilation": {
+        "name": "TimeDilation",
+        "description": "",
+        "fields": {
+          "enabled": {
+            "name": "enabled",
+            "type": "boolean",
+            "description": "Opt-in; off by default. When on, the engine runs the client's fixed-step clock a little fast or slow to keep input stamps at the suggested tick (Authoritative mode only; the server and lockstep/rollback are never touched)"
+          },
+          "minScale": {
+            "name": "minScale",
+            "type": "number",
+            "description": "Slowest the fixed-step clock may run (0.5 to 1, default 0.9)"
+          },
+          "maxScale": {
+            "name": "maxScale",
+            "type": "number",
+            "description": "Fastest (1 to 2, default 1.1)"
+          },
+          "deadZoneTicks": {
+            "name": "deadZoneTicks",
+            "type": "number",
+            "description": "A lead error within this many ticks is left alone (0 to 10, default 0.5)"
+          },
+          "gainPerTick": {
+            "name": "gainPerTick",
+            "type": "number",
+            "description": "Scale change per tick of error beyond the dead zone (default 0.02)"
+          },
+          "smoothingMs": {
+            "name": "smoothingMs",
+            "type": "number",
+            "description": "Time constant of the low-pass filter on the error (default 250)"
+          },
+          "maxSlewPerSecond": {
+            "name": "maxSlewPerSecond",
+            "type": "number",
+            "description": "The scale moves at most this much a second (default 0.25)"
+          },
+          "resyncTicks": {
+            "name": "resyncTicks",
+            "type": "number",
+            "description": "An error over this many ticks holds or skips that many ticks at once instead (default 10)"
+          },
+          "resyncCooldownMs": {
+            "name": "resyncCooldownMs",
+            "type": "number",
+            "description": "After a resync the controller waits this long (default 1000)"
+          },
+          "scale": {
+            "name": "scale",
+            "type": "number",
+            "description": "(read-only) the fixed-step factor in force now"
+          },
+          "leadTicks": {
+            "name": "leadTicks",
+            "type": "number?",
+            "description": "(read-only) how many ticks the client's newest input stamp is ahead of the suggested tick; nil until known"
+          }
+        }
       },
       "Application": {
         "name": "Application",
@@ -10534,6 +10626,93 @@
           {
             "type": "number?",
             "description": "seconds"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetPredictionTuning": {
+        "name": "Network.GetPredictionTuning",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetPredictionTuning()",
+        "description": "The client prediction tuning in force, for tuning the feel live. nil on a process that runs no client or whose prediction is off.",
+        "params": [],
+        "returns": [
+          {
+            "type": "PredictionTuning?",
+            "description": "tuning"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.SetPredictionTuning": {
+        "name": "Network.SetPredictionTuning",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.SetPredictionTuning(tuning)",
+        "description": "Changes the fields present in `tuning` (the others keep their value) on the running client; takes effect at the next frame.\nAn unknown field, a value that is not a number of 0 or more (applySmoothing: a boolean) is an error and changes nothing.\nReturns false when there is no client with prediction on.",
+        "params": [
+          {
+            "name": "tuning",
+            "type": "PredictionTuning|table",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "applied"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetSuggestedInputTick": {
+        "name": "Network.GetSuggestedInputTick",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetSuggestedInputTick()",
+        "description": "The tick to stamp the client's input with now so that it reaches the server just in time:\nfloor(server tick) + ceil((RTT / 2 + jitter allowance) * tick rate) - the server's input delay (the server applies a frame stamped T on\ntick T + delay, so the delay is slack that lets the stamp be earlier). nil on a process that runs no client and before the clock has synced.",
+        "params": [],
+        "returns": [
+          {
+            "type": "number?",
+            "description": "tick"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.GetTimeDilation": {
+        "name": "Network.GetTimeDilation",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.GetTimeDilation()",
+        "description": "The client's time dilation setting and state. nil on a process that runs no client.",
+        "params": [],
+        "returns": [
+          {
+            "type": "TimeDilation?",
+            "description": "dilation"
+          }
+        ],
+        "overloads": []
+      },
+      "Network.SetTimeDilation": {
+        "name": "Network.SetTimeDilation",
+        "owner": "Network",
+        "method": false,
+        "signature": "Network.SetTimeDilation(dilation)",
+        "description": "Changes the fields present in `dilation` (the others keep their value) on the running client. Values are clamped. An unknown or\nread-only field, or a value of the wrong type (enabled: a boolean; the rest: a number of 0 or more) is an error and changes nothing.\nReturns false when there is no client.",
+        "params": [
+          {
+            "name": "dilation",
+            "type": "TimeDilation|table",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "applied"
           }
         ],
         "overloads": []
