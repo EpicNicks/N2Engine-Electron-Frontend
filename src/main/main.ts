@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, Menu, screen, ipcMain, session } from "electron"
+import { app, BrowserWindow, clipboard, dialog, Menu, screen, ipcMain, session } from "electron"
 import * as path from "path"
 import { pathToFileURL } from "url"
 import { EngineClient } from "../protocol/engine-client"
 import { AgentState, Channels, EditMenuLabels, HostState, PlayState } from "../shared/api"
 import { AgentController, AgentProjectStore } from "./agent-controller"
+import { registerClipboardIpc } from "./clipboard-ipc"
 import { confirmAgentOperation, registerAgentIpc } from "./agent-ipc"
 import { PrepareChannel } from "./agent-prepare"
 import { buildAppMenuTemplate } from "./app-menu"
@@ -197,6 +198,8 @@ registerPreferencesIpc(ipcMain, { page, settings, chooseHostPath: async () => {
   return result.canceled ? null : result.filePaths[0] ?? null
 } })
 registerRemoteIpc(ipcMain, { page, session: projectSession, recent: recentRemotes, pins })
+// Copy and paste: the page's navigator.clipboard needs permissions the editor refuses (below), so it uses Electron's
+registerClipboardIpc(ipcMain, { page, clipboard })
 
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay()
@@ -263,7 +266,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // The editor needs no permission (camera, microphone, notifications, ...): refuse every request and check
+  // The editor needs no permission (camera, microphone, notifications, clipboard, ...): refuse every request and check.
+  // Copy and paste use Electron's clipboard through the main process (clipboard-ipc.ts), which needs none.
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
   session.defaultSession.setPermissionCheckHandler(() => false)
   // macOS: the menu bar's Edit items drive the editor's undo and redo (Windows and Linux have no menu bar)

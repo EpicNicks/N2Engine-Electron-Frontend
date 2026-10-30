@@ -33,6 +33,8 @@ export function prefabOptions(
     pathOf: (uuid) => assets.listing.value?.assets.find((asset) => asset.uuid.toLowerCase() === uuid.toLowerCase())?.path ?? null,
     exists: (path) =>
       assets.listing.value?.assets.some((asset) => samePath(asset.path, path, options.caseInsensitivePaths)) ?? false,
+    // Before Create Prefab decides whether it replaces a file: the listing may be from before the file was made
+    refreshListing: () => assets.refresh().catch((e) => options.onError("Failed to list the assets", e)),
     changed: () => void assets.refresh().catch((e) => options.onError("Failed to list the assets", e)),
   }
 }

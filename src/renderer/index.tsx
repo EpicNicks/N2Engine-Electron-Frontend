@@ -15,6 +15,7 @@ import { EditGroups } from "./edit-groups"
 import { Editor } from "./editor"
 import { HierarchyState } from "./hierarchy-state"
 import { prefabOptions } from "./prefab-options"
+import { systemClipboardOf } from "./system-clipboard"
 import { emptySelection } from "./hierarchy-tree"
 import { moveIdsOf } from "./viewport-selection"
 import { applyMarquee, marqueeCandidatesOf } from "./viewport-marquee"
@@ -108,8 +109,9 @@ const hierarchy = new HierarchyState(window.engine, {
   // The hierarchy's primary selection is the inspector's object (and the viewport's gizmo)
   onPrimaryChange: (id) => scene.select(id).catch((e) => store.reportError("Failed to select the object", e)),
   groups,
-  // Copy and paste also go through the system clipboard, so a paste can come from another window or project
-  clipboard: navigator.clipboard,
+  // Copy and paste also go through the system clipboard, so a paste can come from another window or project (in Electron
+  // through the main process: the page's navigator.clipboard is refused there)
+  clipboard: systemClipboardOf(window),
   // Prefab assets (protocol 1.19.0): offered when the host has the prefabAssets capability
   prefabs: prefabOptions(store, assets, {
     // The file systems of Windows and macOS don't tell res:// paths apart by case

@@ -16,6 +16,7 @@ import { isDirty, settingsEdited } from "./assets-state"
 import { ImportSettingsForm } from "./assets-import-form"
 import { ImportCheck, ImportSchema, checkImportSettings, firstImportError, importSchemaFor } from "./assets-import-schema"
 import { useKeymapActions } from "./keymap-hooks"
+import { systemClipboardOf } from "./system-clipboard"
 import { AppState, Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
 
 /** A glyph for a resource type (the host's names) */
@@ -71,7 +72,9 @@ async function newScene(app: AppState, parent: string): Promise<void> {
 }
 
 function copyText(app: AppState, text: string): void {
-  navigator.clipboard?.writeText(text).catch((e) => app.store.reportError("Failed to copy", e))
+  const clipboard = systemClipboardOf(window)
+  if (!clipboard) return app.store.reportError("Failed to copy", "There is no clipboard to copy to")
+  clipboard.writeText(text).catch((e) => app.store.reportError("Failed to copy", e))
 }
 
 function folderMenu(app: AppState, folder: string): MenuItem[] {

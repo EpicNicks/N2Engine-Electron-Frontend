@@ -6,6 +6,7 @@ import { effect, untracked } from "@preact/signals-core"
 import { PrefabDragType, dragHas, parsePrefabDrop } from "./drag-types"
 import { RootId } from "./hierarchy-tree"
 import { keymap } from "./keymap"
+import { selectionKeyHandlers } from "./selection-keys"
 import { useApp } from "./ui"
 import { GizmoLayout, PlaneAxes } from "./viewport-gizmo"
 import type { AnyHandle } from "./viewport-controller"
@@ -466,7 +467,20 @@ export function Viewport() {
     host.addEventListener("pointerup", onPointerUp)
     host.addEventListener("pointercancel", onBlur)
     host.addEventListener("wheel", onWheel, { passive: false })
-    const unregisterKeys = kb.register(keymap, host)
+    const unregisterViewKeys = kb.register(keymap, host)
+    // Delete, duplicate, copy, cut and paste act on the selection from the view too (the hierarchy's actions,
+    // selection-keys.ts); a live game's keys are the game's
+    const selectionHandlers = selectionKeyHandlers("viewport", hierarchy, {
+      report: (what, e) => store.reportError(what, e),
+      passThrough: () => play.live.peek(),
+    })
+    const unregisterSelectionKeys = Object.entries(selectionHandlers).map(([id, handler]) =>
+      keymap.handle(id, handler, { within: host })
+    )
+    const unregisterKeys = (): void => {
+      unregisterViewKeys()
+      unregisterSelectionKeys.forEach((off) => off())
+    }
     host.addEventListener("keydown", onKeyDown)
     host.addEventListener("keyup", onKeyUp)
     host.addEventListener("blur", onBlur)
