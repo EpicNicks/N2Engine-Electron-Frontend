@@ -13,15 +13,26 @@
 //  - a fix button applies the requirement's patch through SetProjectSettings, not SetNetworkSettings: the host's fix is
 //    "a merge patch for SetProjectSettings" (it sets physics.gpu, math.simdTier, physics.backend and so on, which
 //    SetNetworkSettings refuses by design);
+//  - time dilation (network.authoritative.timeDilation, protocol 1.23.0) is not a row of the table: it is shown under the
+//    Server authoritative bundle when the host reports it (values.authoritative.timeDilation), edited like a tunable row
+//    (its drafts are in drafts, keyed network.authoritative.timeDilation.<field>; the key itself drafted null removes the
+//    whole object) and checked against the engine's scale ranges before it is sent;
 //  - the newest read wins.
 import { signal, type ReadonlySignal } from "@preact/signals-core"
 import {
   NetworkPresetIds,
+  TimeDilationDefaults,
+  TimeDilationFields,
+  TimeDilationKey,
+  TimeDilationRanges,
   checkNumber,
   mergePatches,
   networkPatchOf,
   rangeOf,
+  timeDilationOf,
   tunableKind,
+  type TimeDilationField,
+  type TimeDilationValues,
 } from "../protocol/network-panel"
 import type {
   NetworkPresetInfo,
@@ -230,6 +241,103 @@ export class NetworkPanelModel {
     this.drafts.value = {}
   }
 
+  get hasDrafts(): boolean {
+    return Object.keys(this.drafts.value).length > 0
+  }
+
+  /** The host's time dilation (values.authoritative.timeDilation); null before 1.23.0 or before the first read */
+  get timeDilation(): TimeDilationValues | null {
+    const info = this.info.value
+    return info === null ? null : timeDilationOf(info)
+  }
+
+  /** Whether the time dilation group is shown: the host reports it and the shown bundle is Server authoritative */
+  get timeDilationShown(): boolean {
+    return this.timeDilation !== null && this.viewedId === "authoritative"
+  }
+
+  /** Whether it can be edited now: shown, the project's own preset, writes working (as a tunable row) */
+  get timeDilationEditable(): boolean {
+    return this.timeDilationShown && this.viewingProjectPreset && this.disabledReason === null
+  }
+
+  /** Whether the whole object is drafted to be removed from the project (null for authoritative.timeDilation) */
+  get timeDilationRemoved(): boolean {
+    return TimeDilationKey in this.drafts.value
+  }
+
+  /** Whether a field has an unsent draft (a value, or back to its default) */
+  timeDilationDirty(field: TimeDilationField): boolean {
+    return `${TimeDilationKey}.${field}` in this.drafts.value
+  }
+
+  /** The text a time dilation input holds: the draft, the default when reset or removed, else the host's value */
+  timeDilationText(field: TimeDilationField): string {
+    const key = `${TimeDilationKey}.${field}`
+    if (this.timeDilationRemoved) return String(TimeDilationDefaults[field])
+    if (key in this.drafts.value) {
+      const draft = this.drafts.value[key]
+      return draft === null ? String(TimeDilationDefaults[field]) : draft
+    }
+    const current = this.timeDilation
+    return current === null ? "" : String(current[field])
+  }
+
+  setTimeDilationDraft(field: TimeDilationField, text: string): void {
+    const { [TimeDilationKey]: _removed, ...rest } = this.drafts.value
+    this.drafts.value = { ...rest, [`${TimeDilationKey}.${field}`]: text }
+  }
+
+  /** Marks one field to go back to its default (null for it) */
+  resetTimeDilationDraft(field: TimeDilationField): void {
+    const { [TimeDilationKey]: _removed, ...rest } = this.drafts.value
+    this.drafts.value = { ...rest, [`${TimeDilationKey}.${field}`]: null }
+  }
+
+  /** Marks the whole object to be removed (null for authoritative.timeDilation): every field back to its default */
+  removeTimeDilation(): void {
+    const rest: NetworkDrafts = {}
+    for (const [key, value] of Object.entries(this.drafts.value)) {
+      if (!key.startsWith(`${TimeDilationKey}.`)) rest[key] = value
+    }
+    this.drafts.value = { ...rest, [TimeDilationKey]: null }
+  }
+
+  /** The problem with a scale's draft (not a number, out of the engine's range), or null */
+  timeDilationDraftError(field: TimeDilationField): string | null {
+    if (field === "enabled") return null
+    const draft = this.drafts.value[`${TimeDilationKey}.${field}`]
+    if (draft === undefined || draft === null) return null
+    const checked = checkNumber(draft, TimeDilationRanges[field])
+    return "error" in checked ? checked.error : null
+  }
+
+  /** The time dilation part of the patch and its problems */
+  private buildTimeDilation(): { patch: Record<string, unknown> | null; errors: string[] } {
+    const drafts = this.drafts.value
+    if (TimeDilationKey in drafts) return { patch: networkPatchOf(TimeDilationKey, null), errors: [] }
+    const errors: string[] = []
+    const dilation: Record<string, unknown> = {}
+    for (const field of TimeDilationFields) {
+      const key = `${TimeDilationKey}.${field}`
+      if (!(key in drafts)) continue
+      const draft = drafts[key]
+      if (draft === null) {
+        dilation[field] = null
+      } else if (field === "enabled") {
+        dilation[field] = draft === "true"
+      } else {
+        const checked = checkNumber(draft, TimeDilationRanges[field])
+        if ("error" in checked) {
+          errors.push(`Time dilation ${field === "minScale" ? "minimum" : "maximum"} scale: ${checked.error}`)
+          continue
+        }
+        dilation[field] = checked.value
+      }
+    }
+    return { patch: Object.keys(dilation).length === 0 ? null : networkPatchOf(TimeDilationKey, dilation), errors }
+  }
+
   /** The problem with a row's draft (a number out of its range), or null */
   draftError(row: NetworkSettingRow): string | null {
     const key = row.settingKey
@@ -277,6 +385,11 @@ export class NetworkPanelModel {
         continue
       }
       patch = mergePatches(patch, piece)
+    }
+    if (this.timeDilationShown) {
+      const dilation = this.buildTimeDilation()
+      errors.push(...dilation.errors)
+      if (dilation.patch !== null) patch = mergePatches(patch, dilation.patch)
     }
     return { patch, errors }
   }
