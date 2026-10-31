@@ -16,6 +16,8 @@ import {
   groupComponentTypes,
   visibleFields,
 } from "./inspector-fields"
+import type { ComponentChildren } from "preact"
+import { AssetDragType, EntityDragType, FieldDropEffect, ScriptDragType, dragHas, parseScriptDrop } from "./drag-types"
 import { endWhenReleased } from "./edit-groups"
 import { clean } from "./extension-menu"
 import { formatFieldValue } from "./extension-inspector"
@@ -286,8 +288,13 @@ function FieldRow({ view, field }: { view: ComponentView; field: FieldSchema }) 
     if (inspector.beginGesture(`Edit ${field.displayName}`)) endWhenReleased(document, window, () => void inspector.endGesture())
   }
   const tip = [field.tooltip, field.readOnly ? "Read only" : null].filter(Boolean).join(". ")
+  // A drag over a field is the field's: a field that takes it has handled it already, and one that does not (a number,
+  // a text) must not hand it on to the panel's script drop, which would add a component. So it stops here, unaccepted.
+  const keep = (e: DragEvent) => {
+    if ([AssetDragType, ScriptDragType, EntityDragType].some((type) => dragHas(e, type))) e.stopPropagation()
+  }
   return (
-    <div class="field-row">
+    <div class="field-row" onDragOver={keep} onDrop={keep}>
       <label title={tip || undefined}>{field.displayName}</label>
       <div class="field-editor" onPointerDownCapture={onPointerDown}>
         <FieldEditor field={field} value={value} disabled={disabled} commit={commit} invalid={setError} />
@@ -761,15 +768,22 @@ function MultiInspector() {
 
 export function InspectorPanel() {
   const { store, scene, hierarchy, inspector } = useApp()
-  const selected = scene.selectedId.value
+  const pinned = inspector.pinned.value
+  const locked = inspector.locked.value
+  // Locked (or still on the object it was locked to): that object, whatever is selected
+  const selected = pinned ?? scene.selectedId.value
   const readOnlyReason = inspector.readOnlyReason.value
 
-  const selectedCount = hierarchy.selection.value.ids.size
+  const selectedCount = pinned !== null ? 1 : hierarchy.selection.value.ids.size
   const deleteButton = (
     <button
       class="danger"
       disabled={inspector.readOnly.value}
-      onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
+      onClick={() =>
+        hierarchy
+          .deleteSelected(pinned !== null ? [pinned] : undefined)
+          .catch((e) => store.reportError("Failed to delete the entity", e))
+      }
     >
       {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
     </button>
@@ -810,8 +824,67 @@ export function InspectorPanel() {
     )
   }
   return (
-    <Panel title="Inspector" icon="⚙️" class="inspector-panel">
-      {content}
+    <Panel
+      title="Inspector"
+      icon="⚙️"
+      class="inspector-panel"
+      actions={
+        <button
+          class={locked ? "secondary inspector-lock locked" : "secondary inspector-lock"}
+          aria-pressed={locked}
+          aria-label={locked ? "Unlock the inspector" : "Lock the inspector"}
+          title={
+            locked
+              ? "Unlock: the inspector stays on this object until the selection changes"
+              : "Lock: keep showing this object whatever is selected"
+          }
+          disabled={!locked && (inspector.entityId.value === null || (pinned === null && selectedCount > 1))}
+          onClick={() => (locked ? inspector.unlock() : inspector.lock())}
+        >
+          {locked ? "🔒" : "🔓"}
+        </button>
+      }
+    >
+      <ScriptDropZone single={selectedCount <= 1}>{content}</ScriptDropZone>
     </Panel>
+  )
+}
+
+/**
+ * A script (or several selected ones) dragged from the Assets panel and dropped on the inspector, outside a field,
+ * adds a LuaComponent running each to the inspected object. A field that takes the drag (a script field of a
+ * LuaComponent) handles its own drop first. With several objects selected nothing is added: it says to select one.
+ */
+function ScriptDropZone(props: { single: boolean; children: ComponentChildren }) {
+  const { store, inspector } = useApp()
+  const [over, setOver] = useState(false)
+  const accepts = (e: DragEvent): boolean =>
+    dragHas(e, ScriptDragType) && store.connected.peek() && !inspector.readOnly.peek()
+  return (
+    <div
+      class={over ? "inspector-drop script-over" : "inspector-drop"}
+      onDragOver={(e) => {
+        if (!accepts(e)) return
+        e.preventDefault() // allows the drop
+        if (e.dataTransfer) e.dataTransfer.dropEffect = FieldDropEffect
+        if (!over) setOver(true)
+      }}
+      onDragLeave={(e) => {
+        if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setOver(false)
+      }}
+      onDrop={(e) => {
+        setOver(false)
+        if (!accepts(e)) return
+        e.preventDefault()
+        const scripts = parseScriptDrop(e.dataTransfer?.getData(ScriptDragType) ?? "")
+        const fail = (error: unknown) => store.reportError("Failed to add the script", error)
+        if (scripts.length === 0) return fail("That isn't a script")
+        if (!props.single) return fail("Select one object to add a script to it")
+        if (inspector.entityId.peek() === null) return fail("Select an object to add the script to")
+        inspector.addScripts(scripts).catch(fail)
+      }}
+    >
+      {props.children}
+    </div>
   )
 }

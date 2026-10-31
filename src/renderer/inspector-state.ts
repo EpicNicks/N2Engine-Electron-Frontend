@@ -14,6 +14,7 @@ import type { SceneChange } from "../protocol/editor-events"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { AssetEntry, EngineApi, JsonObject } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
+import { ScriptResourceType } from "./drag-types"
 import type { EditGroups, GroupHandle } from "./edit-groups"
 import { eulerToQuat, quatToEuler, quatsEquivalent, stableEuler, vecEqual } from "./euler"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
@@ -85,6 +86,16 @@ export class InspectorState {
   /** Why the types couldn't be read (a host before protocol 1.5, say), or null */
   readonly typesProblem = signal<string | null>(null)
   readonly assets = signal<AssetLookup>(new AssetLookup([], false))
+
+  /** Whether the lock is on: the inspector keeps showing the object it was locked to, whatever the selection does */
+  readonly locked = signal(false)
+  /**
+   * The object the inspector holds on to instead of following the selection: while locked, and after unlocking until
+   * the selection next changes. Null when it follows the selection.
+   */
+  readonly pinned = signal<string | null>(null)
+  /** The selection as last told (follow), kept while the inspector holds on to an object, for when it lets go */
+  private focus: { key: string; primary: string | null; ids: string[] } = { key: "\0", primary: null, ids: [] }
 
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
@@ -209,6 +220,9 @@ export class InspectorState {
       this.types.value = null
       this.typesProblem.value = null
       this.clearEntity()
+      this.locked.value = false
+      this.pinned.value = null
+      this.focus = { key: "\0", primary: null, ids: [] }
       this.known.value = new Map()
       this.scanned.clear()
       this.multi.reset()
@@ -284,6 +298,54 @@ export class InspectorState {
 
   // ==================== The inspected object ====================
 
+  /**
+   * The selection changed (or was first read): the inspector shows the primary object, or the fields the ids share when
+   * there are several. Locked, it only notes the selection. After an unlock it is still on the object it was locked to,
+   * and the first change of the selection after that lets go and follows it again. The same selection twice is no change.
+   */
+  follow(primary: string | null, ids: readonly string[]): Promise<void> {
+    const key = `${primary ?? ""}|${[...ids].sort().join(",")}`
+    if (key === this.focus.key) return Promise.resolve()
+    this.focus = { key, primary, ids: [...ids] }
+    if (this.locked.value) return Promise.resolve()
+    this.pinned.value = null
+    return this.showSelection()
+  }
+
+  private async showSelection(): Promise<void> {
+    const { primary, ids } = this.focus
+    const multi = this.multi.select(ids.length > 1 ? ids : [])
+    await Promise.all([this.select(primary), multi])
+  }
+
+  /**
+   * Locks the inspector to the object it shows. False when there is nothing to lock (no object is shown, or several
+   * are selected and the shared fields are).
+   */
+  lock(): boolean {
+    const id = this.entityId.value
+    if (id === null || this.focus.ids.length > 1) return false
+    batch(() => {
+      this.pinned.value = id
+      this.locked.value = true
+    })
+    return true
+  }
+
+  /** Unlocks: the inspector stays on the object until the selection next changes, then follows it again */
+  unlock(): void {
+    this.locked.value = false
+  }
+
+  /** Lets go of the object (it is gone): the inspector follows the selection again at once */
+  private releasePin(): void {
+    batch(() => {
+      this.locked.value = false
+      this.pinned.value = null
+    })
+    void this.showSelection().catch((e) => this.options.onError?.("Failed to read the object", e))
+  }
+
   /** Inspects another object (or none): what was edited and not yet sent is sent to the object it was edited on first */
   async select(entityId: string | null): Promise<void> {
     if (entityId === this.entityId.value) return
@@ -336,6 +398,8 @@ export class InspectorState {
           this.components.value = []
           this.header.value = null
         })
+        // The object it was locked to is gone (deleted, its scene closed, an undo took it away): unlock, follow the selection
+        if (this.pinned.peek() !== null) this.releasePin()
       }
       return
     }
@@ -649,6 +713,44 @@ export class InspectorState {
         ]
       }
     })
+    await this.syncLua(false)
+  }
+
+  /**
+   * Scripts dropped on the inspector: adds a LuaComponent running each to the inspected object, one component per
+   * script (the engine allows several, so an object that already has one gets another), all as one edit group so
+   * one Undo takes them back. Each is AddComponent then SetComponentFields {scriptUUID}; nothing new in the protocol.
+   * A refusal stops the rest and is thrown; what was added stays (one undo step).
+   */
+  async addScripts(scripts: readonly AssetEntry[]): Promise<void> {
+    this.requireEditable()
+    const entityId = this.entityId.value
+    if (entityId === null) throw new Error("No object is inspected")
+    const chosen = scripts.filter((script) => script.resourceType === ScriptResourceType)
+    if (chosen.length === 0) throw new Error("That isn't a script")
+    const type = this.types.value?.find((schema) => schema.typeName === LuaComponentType)
+    if (type?.singleton && (this.presentTypes.value.has(LuaComponentType) || chosen.length > 1)) {
+      throw new Error(`An object can have only one ${LuaComponentType}`)
+    }
+    const handle = this.options.groups ? await this.options.groups.begin(chosen.length > 1 ? "Add scripts" : "Add script") : null
+    try {
+      for (const script of chosen) {
+        const added = await this.engine.addComponent(entityId, LuaComponentType)
+        let values: unknown = added.values
+        try {
+          values = await this.engine.setComponentFields(entityId, added.componentId, { scriptUUID: script.uuid.toLowerCase() })
+        } finally {
+          if (this.entityId.value === entityId) {
+            const view = { id: added.componentId, type: LuaComponentType, values: isObject(values) ? values : {} }
+            this.components.value = [...this.components.value.filter((v) => v.id !== view.id), view]
+          }
+        }
+      }
+    } finally {
+      if (this.options.groups) await this.options.groups.end(handle)
+      // What the host has is the truth (its change events read the object again too)
+      if (this.entityId.value === entityId) await this.refresh()
+    }
     await this.syncLua(false)
   }
 

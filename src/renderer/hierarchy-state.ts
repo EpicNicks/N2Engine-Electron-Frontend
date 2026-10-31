@@ -759,13 +759,14 @@ export class HierarchyState {
 
   /**
    * Destroys the selected objects with what is under them, as one undo step. Asks first when that is more than one
-   * object; resolves false when the user said no.
+   * object; resolves false when the user said no. objects: delete these instead of the selection (the inspector, locked
+   * on an object that is not the selected one, deletes the one it shows).
    */
-  deleteSelected(): Promise<boolean> {
+  deleteSelected(objects?: readonly string[]): Promise<boolean> {
     return this.exclusive(false, async () => {
       this.assertEditable()
       const tree = this.tree.value
-      const ids = topLevel(tree, this.actingIds())
+      const ids = topLevel(tree, objects ? new Set(objects.filter((id) => tree.nodes.has(id))) : this.actingIds())
       if (ids.length === 0) return false
       const count = tree.order.filter(
         (id) => ids.includes(id) || ancestorsOf(tree, id).some((a) => ids.includes(a))

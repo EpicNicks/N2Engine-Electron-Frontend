@@ -7,7 +7,16 @@ import { useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { AssetThumb, DetailPreviewSize, RowPreviewSize } from "./asset-thumb"
 import { entriesAfter } from "./console-store"
-import { AssetDragEffect, AssetDragType, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
+import {
+  AssetDragEffect,
+  AssetDragType,
+  EntityDragType,
+  PrefabDragType,
+  ScriptDragType,
+  ScriptResourceType,
+  assetDragData,
+  dragHas,
+} from "./drag-types"
 import type { AssetEntry } from "../shared/api"
 import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
 import { RootId } from "./hierarchy-tree"
@@ -92,11 +101,20 @@ function folderMenu(app: AppState, folder: string): MenuItem[] {
  * row is one of several selected (Ctrl/Cmd+click, Shift+click), else just the row's own
  */
 export function prefabsOfUse(app: AppState, path: string, own: AssetEntry): AssetEntry[] {
+  return assetsOfUse(app, path, own, PrefabResourceType)
+}
+
+/** The same for Lua scripts: the selected scripts when the dragged row is one of several selected, else the row's own */
+export function scriptsOfUse(app: AppState, path: string, own: AssetEntry): AssetEntry[] {
+  return assetsOfUse(app, path, own, ScriptResourceType)
+}
+
+function assetsOfUse(app: AppState, path: string, own: AssetEntry, type: string): AssetEntry[] {
   const paths = new Set(app.assets.selectedPaths())
   if (!paths.has(path) || paths.size < 2) return [own]
   const chosen: AssetEntry[] = []
   for (const row of app.assets.rows.peek()) {
-    if (row.kind !== "asset" || !paths.has(row.path) || row.asset.type !== PrefabResourceType) continue
+    if (row.kind !== "asset" || !paths.has(row.path) || row.asset.type !== type) continue
     chosen.push({ uuid: row.asset.uuid, path: row.asset.path, resourceType: row.asset.type })
   }
   return chosen.length > 0 ? chosen : [own]
@@ -256,6 +274,14 @@ function RowView({ row }: { row: AssetRow }) {
           e.dataTransfer.setData(
             PrefabDragType,
             prefabs.length > 1 ? JSON.stringify(prefabs.map((p) => JSON.parse(assetDragData(p)))) : assetDragData(entry)
+          )
+        }
+        // A script can also be dropped on the inspector (a LuaComponent running it is added); several selected go together
+        if (type === ScriptResourceType) {
+          const scripts = scriptsOfUse(app, row.path, entry)
+          e.dataTransfer.setData(
+            ScriptDragType,
+            scripts.length > 1 ? JSON.stringify(scripts.map((s) => JSON.parse(assetDragData(s)))) : assetDragData(entry)
           )
         }
         e.dataTransfer.setData("text/plain", row.path)

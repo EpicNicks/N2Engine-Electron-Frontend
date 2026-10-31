@@ -65,10 +65,9 @@ describe("followScene", () => {
         reset: () => void log.push("inspector.reset"),
         loadTypes: async () => void log.push("loadTypes"),
         loadAssets: async () => void log.push("loadAssets"),
-        select: async (id) => void log.push("select " + id),
+        follow: async (id, ids) => void log.push(`follow ${id} ${ids.join(",")}`),
         applyChange: async () => void log.push("applyChange"),
         refreshLuaFields: async () => void log.push("refreshLua"),
-        multi: { select: async (ids) => void log.push("multi.select " + ids.join(",")) },
       },
     }
     return {
@@ -116,7 +115,7 @@ describe("followScene", () => {
     log.length = 0
     selectedId.value = "e1"
     await tick()
-    assert.deepEqual(log, ["select e1"])
+    assert.deepEqual(log, ["follow e1 "])
     log.length = 0
     assetsChangeCount.value++
     await tick()
@@ -128,18 +127,18 @@ describe("followScene", () => {
     stop()
   })
 
-  test("the inspector shows the shared fields when two or more objects are selected, and none otherwise", async () => {
+  test("the selection's ids reach the inspector with its primary object", async () => {
     const { deps, log } = setup()
     const stop = followScene(deps)
     await tick()
     log.length = 0
     deps.hierarchy.selection.value = { ids: new Set(["e1", "e2"]), anchor: "e1", primary: "e2" }
     await tick()
-    assert.deepEqual(log, ["multi.select e1,e2"])
+    assert.deepEqual(log, ["follow null e1,e2"])
     log.length = 0
     deps.hierarchy.selection.value = { ids: new Set(["e1"]), anchor: "e1", primary: "e1" }
     await tick()
-    assert.deepEqual(log, ["multi.select "])
+    assert.deepEqual(log, ["follow null e1"])
     stop()
   })
 

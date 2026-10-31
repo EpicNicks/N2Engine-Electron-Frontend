@@ -25,10 +25,7 @@ export interface FollowDeps {
   scene: Pick<SceneState, "selectedId" | "reset">
   hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree" | "selection">
   assets: Pick<AssetsState, "reset" | "refresh" | "onAssetsChanged">
-  inspector: Pick<
-    InspectorState,
-    "reset" | "loadTypes" | "loadAssets" | "select" | "applyChange" | "refreshLuaFields"
-  > & { multi: Pick<InspectorState["multi"], "select"> }
+  inspector: Pick<InspectorState, "reset" | "loadTypes" | "loadAssets" | "follow" | "applyChange" | "refreshLuaFields">
 }
 
 /** Starts the effects; returns what stops them */
@@ -58,20 +55,13 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
       }
     }),
 
-    // The inspector shows the selected object (the hierarchy's primary selection)
+    // The inspector shows the selected object (the hierarchy's primary selection), or the fields several selected objects
+    // share (fewer than two: none); unless it is locked, or still on the object it was locked to (see InspectorState.follow)
     effect(() => {
       const id = scene.selectedId.value
-      if (!store.connected.peek()) return
-      untracked(() => inspector.select(id)).catch((e) => store.reportError("Failed to read the object", e))
-    }),
-
-    // Several objects selected: the inspector shows the fields they share (fewer than two: none)
-    effect(() => {
       const ids = hierarchy.selection.value.ids
       if (!store.connected.peek()) return
-      untracked(() => inspector.multi.select(ids.size > 1 ? [...ids] : [])).catch((e) =>
-        store.reportError("Failed to read the objects", e)
-      )
+      untracked(() => inspector.follow(id, [...ids])).catch((e) => store.reportError("Failed to read the object", e))
     }),
 
     // Assets were added, changed or removed: the asset names, a script's fields, the assets panel and the open files

@@ -323,7 +323,8 @@ export function HierarchyPanel() {
             showContextMenu(e.clientX, e.clientY, rowMenu(row.id))
           }}
           onDragStart={(e) => {
-            if (!selection.ids.has(row.id)) hierarchy.click(row.id)
+            // Starting a drag does not select: the inspector would switch away from the object being edited before the
+            // drop on one of its fields. The selection changes on click (dragIds handles a row that is not selected)
             dragging.value = hierarchy.dragIds(row.id)
             if (e.dataTransfer) {
               e.dataTransfer.effectAllowed = EntityDragEffect
