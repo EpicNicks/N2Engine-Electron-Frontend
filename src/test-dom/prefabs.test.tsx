@@ -26,6 +26,7 @@ beforeEach(() => {
 
 const Reason = "a game is running"
 const PU = "55555555-5555-5555-5555-555555555555"
+const PU2 = "66666666-6666-6666-6666-666666666666"
 
 /** A dataTransfer that keeps what is set on it, and answers getData like a drop's */
 const makeTransfer = () => {
@@ -46,10 +47,13 @@ const makeTransfer = () => {
 }
 
 /** Both panels over real states and fake hosts: a scene "A,B(B1)" and an asset list with a prefab at PU */
-async function renderBoth(options: { capability?: boolean; spec?: string; linked?: Record<string, string> } = {}) {
+async function renderBoth(options: { capability?: boolean; second?: boolean; spec?: string; linked?: Record<string, string> } = {}) {
   const sceneHost = new FakeSceneHost(options.spec ?? "A,B(B1)")
   const assetHost = new FakeAssetHost()
   assetHost.assets.push({ path: "res://Hero.prefab", uuid: PU, type: "Prefab", size: 99, modified: 1 })
+  if (options.second) {
+    assetHost.assets.push({ path: "res://Villain.prefab", uuid: PU2, type: "Prefab", size: 98, modified: 1 })
+  }
   const fake = stubStore()
   const caps = signal<unknown>(options.capability === false ? ["entityClipboard"] : [PrefabAssetsCapability])
   fake.signals.serverInfo.value = { protocolVersion: "1.19.0", capabilities: caps.value } as never
@@ -211,6 +215,114 @@ describe("prefabs in the assets panel", () => {
     assert.ok(!assetRow("scripts").classList.contains("drop-target"))
     fireEvent.drop(assetRow("scripts"), { dataTransfer: transfer })
     assert.deepEqual(ro.prefabCalls, [])
+  })
+})
+
+describe("several prefabs at once (multi-prefab drag)", () => {
+  const selectedNames = (): string[] =>
+    Array.from(document.querySelectorAll(".asset-list .asset-row.selected .asset-name")).map((el) => el.textContent ?? "")
+
+  test("Ctrl+click adds a file to the selection and takes it out again; a plain click goes back to one", async () => {
+    const user = userEvent.setup()
+    const h = await renderBoth({ second: true })
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    assert.deepEqual(selectedNames().sort(), ["Hero.prefab", "Villain.prefab"])
+    assert.equal(h.assets.selected.value, "res://Hero.prefab")
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    assert.deepEqual(selectedNames(), ["Hero.prefab"])
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    await user.click(assetRow("hero.png"))
+    assert.deepEqual(selectedNames(), ["hero.png"])
+  })
+
+  test("Shift+click selects the files between, skipping folders", async () => {
+    const user = userEvent.setup()
+    const h = await renderBoth({ second: true })
+    // Rows of files have a type column, folders do not
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".asset-list .asset-row"))
+    const index = (name: string) => rows.findIndex((r) => r.querySelector(".asset-name")?.textContent === name)
+    const [lo, hi] = [index("Hero.prefab"), index("Villain.prefab")].sort((x, y) => x - y)
+    const files = rows.slice(lo, hi + 1).filter((r) => r.querySelector(".asset-type")).length
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{Shift>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Shift}")
+    assert.equal(selectedNames().length, files)
+    assert.ok(selectedNames().includes("Villain.prefab"))
+    assert.equal(h.assets.selected.value, "res://Hero.prefab")
+  })
+
+  test("dragging one of several selected prefabs carries all of them, in the order of the rows", async () => {
+    const user = userEvent.setup()
+    await renderBoth({ second: true })
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{/Control}")
+    const transfer = makeTransfer()
+    fireEvent.dragStart(assetRow("Hero.prefab"), { dataTransfer: transfer })
+    const carried = JSON.parse(transfer.data.get(PrefabDragType)!) as { uuid: string }[]
+    assert.deepEqual(carried.map((c) => c.uuid).sort(), [PU, PU2].sort())
+    // The asset type stays the dragged row's own, for the inspector's asset fields
+    assert.equal(JSON.parse(transfer.data.get(AssetDragType)!).uuid, PU)
+  })
+
+  test("a drag of a prefab outside the selection carries only that prefab", async () => {
+    const user = userEvent.setup()
+    await renderBoth({ second: true })
+    await user.click(assetRow("Villain.prefab"))
+    const transfer = makeTransfer()
+    fireEvent.dragStart(assetRow("Hero.prefab"), { dataTransfer: transfer })
+    assert.equal(JSON.parse(transfer.data.get(PrefabDragType)!).uuid, PU)
+  })
+
+  test("dropping the several on the hierarchy adds them all as one edit group", async () => {
+    const user = userEvent.setup()
+    const h = await renderBoth({ second: true })
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    const transfer = makeTransfer()
+    fireEvent.dragStart(assetRow("Hero.prefab"), { dataTransfer: transfer })
+    const list = screen.getByRole("tree")
+    fireEvent.dragOver(list, { dataTransfer: transfer })
+    fireEvent.drop(list, { dataTransfer: transfer })
+    await waitFor(() => assert.equal(h.prefabCalls.filter((c) => c.startsWith("instantiatePrefab")).length, 2))
+    const uuids = h.prefabCalls.filter((c) => c.startsWith("instantiatePrefab")).map((c) => c.split(" ")[1].split("|")[0])
+    assert.deepEqual(uuids.sort(), [PU, PU2].sort())
+  })
+
+  test("the row menu adds all the selected prefabs, and right-clicking a selected row keeps the selection", async () => {
+    const user = userEvent.setup()
+    const h = await renderBoth({ second: true })
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    await user.pointer({ keys: "[MouseRight]", target: assetRow("Villain.prefab") })
+    assert.deepEqual(selectedNames().sort(), ["Hero.prefab", "Villain.prefab"])
+    await user.click(menuItem("Add 2 Prefabs to Scene"))
+    await waitFor(() => assert.equal(h.prefabCalls.filter((c) => c.startsWith("instantiatePrefab")).length, 2))
+  })
+
+  test("a file that leaves the listing leaves the selection", async () => {
+    const user = userEvent.setup()
+    const h = await renderBoth({ second: true })
+    await user.click(assetRow("Hero.prefab"))
+    await user.keyboard("{Control>}")
+    await user.click(assetRow("Villain.prefab"))
+    await user.keyboard("{/Control}")
+    h.assetHost.assets.splice(h.assetHost.assets.findIndex((a) => a.uuid === PU2), 1)
+    await act(() => h.assets.refresh())
+    assert.deepEqual([...h.assets.marked.value], [])
   })
 })
 

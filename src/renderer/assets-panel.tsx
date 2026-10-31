@@ -8,6 +8,7 @@ import { signal } from "@preact/signals"
 import { AssetThumb, DetailPreviewSize, RowPreviewSize } from "./asset-thumb"
 import { entriesAfter } from "./console-store"
 import { AssetDragEffect, AssetDragType, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
+import type { AssetEntry } from "../shared/api"
 import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
 import { RootId } from "./hierarchy-tree"
 import { isTextAssetPath, parseImportSettings } from "./asset-edit"
@@ -86,6 +87,21 @@ function folderMenu(app: AppState, folder: string): MenuItem[] {
   ]
 }
 
+/**
+ * The prefabs to drag or add when a prefab row is used: every selected prefab file in the order of the rows shown when the
+ * row is one of several selected (Ctrl/Cmd+click, Shift+click), else just the row's own
+ */
+export function prefabsOfUse(app: AppState, path: string, own: AssetEntry): AssetEntry[] {
+  const paths = new Set(app.assets.selectedPaths())
+  if (!paths.has(path) || paths.size < 2) return [own]
+  const chosen: AssetEntry[] = []
+  for (const row of app.assets.rows.peek()) {
+    if (row.kind !== "asset" || !paths.has(row.path) || row.asset.type !== PrefabResourceType) continue
+    chosen.push({ uuid: row.asset.uuid, path: row.asset.path, resourceType: row.asset.type })
+  }
+  return chosen.length > 0 ? chosen : [own]
+}
+
 export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
   const uuid = row.kind === "asset" ? row.asset.uuid : row.sub.uuid
   const items: MenuItem[] = []
@@ -100,11 +116,15 @@ export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" 
   }
   if (row.kind === "asset" && row.asset.type === PrefabResourceType && app.hierarchy.canPrefabs) {
     // The same as dropping it on the hierarchy's empty space: a copy with a link, as the last root of the scene
+    const prefabs = prefabsOfUse(app, row.path, { uuid, path: row.path, resourceType: PrefabResourceType })
     items.push({
-      label: "Add to Scene",
+      label: prefabs.length > 1 ? `Add ${prefabs.length} Prefabs to Scene` : "Add to Scene",
       action: () =>
         void app.hierarchy
-          .instantiatePrefabs([uuid], { parentId: RootId, index: -1 })
+          .instantiatePrefabs(
+            prefabs.map((p) => p.uuid),
+            { parentId: RootId, index: -1 }
+          )
           .catch((e) => app.store.reportError("Failed to add the prefab", e)),
       disabled: !app.store.canWrite.peek() || app.store.scene.peek() === null,
     })
@@ -155,7 +175,7 @@ function folderDrop(app: AppState, folder: string) {
 function RowView({ row }: { row: AssetRow }) {
   const app = useApp()
   const { store, assets } = app
-  const selected = assets.selected.value === row.path
+  const selected = assets.selected.value === row.path || assets.marked.value.has(row.path)
   const indent = { paddingLeft: `${row.depth * 12 + 4}px` }
   const fail = (what: string) => (e: unknown) => store.reportError(what, e)
 
@@ -209,12 +229,18 @@ function RowView({ row }: { row: AssetRow }) {
       class={selected ? "asset-row selected" : "asset-row"}
       style={indent}
       title={`${row.path}\n${type || "Unknown"}\n${entry.uuid}`}
-      onClick={() => void assets.select(row.path)}
+      onClick={(e) => {
+        // Ctrl/Cmd+click and Shift+click select several files (to drag several prefabs at once); a part of a model is one
+        if (row.kind === "asset" && (e.ctrlKey || e.metaKey)) void assets.toggleMarked(row.path)
+        else if (row.kind === "asset" && e.shiftKey) void assets.selectRange(row.path)
+        else void assets.select(row.path)
+      }}
       onDblClick={open}
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        void assets.select(row.path)
+        // A row that is one of several selected keeps the selection, so the menu acts on all of them
+        if (!(assets.marked.peek().size > 0 && assets.selectedPaths().includes(row.path))) void assets.select(row.path)
         showContextMenu(e.clientX, e.clientY, assetMenu(app, row, open))
       }}
       // An asset field of the inspector takes it, if it holds that type
@@ -224,7 +250,14 @@ function RowView({ row }: { row: AssetRow }) {
         e.dataTransfer.effectAllowed = AssetDragEffect
         e.dataTransfer.setData(AssetDragType, assetDragData(entry))
         // A prefab can also be dropped on the hierarchy (a copy with a link is made there)
-        if (type === PrefabResourceType) e.dataTransfer.setData(PrefabDragType, assetDragData(entry))
+        // Dragging one of several selected prefabs carries all of them, as a list (the drop adds them as one edit group)
+        if (type === PrefabResourceType) {
+          const prefabs = prefabsOfUse(app, row.path, entry)
+          e.dataTransfer.setData(
+            PrefabDragType,
+            prefabs.length > 1 ? JSON.stringify(prefabs.map((p) => JSON.parse(assetDragData(p)))) : assetDragData(entry)
+          )
+        }
         e.dataTransfer.setData("text/plain", row.path)
       }}
       // An object dragged from the hierarchy onto a file makes a prefab in the file's folder

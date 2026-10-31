@@ -128,6 +128,11 @@ export class AssetsState {
   readonly filter = signal<AssetFilter>(noFilter)
   /** The selected row's path: a file, a folder or a model's part (path#key) */
   readonly selected = signal<string | null>(null)
+  /**
+   * Files selected besides `selected` (Ctrl/Cmd+click, Shift+click): only files, so several prefabs can be dragged
+   * together. Selecting a row without a modifier, and a listing that loses the file, clears them.
+   */
+  readonly marked = signal<ReadonlySet<string>>(new Set())
   readonly detail = signal<AssetDetail | null>(null)
   /** The import settings editor's view, for the types that have a form (the others are always JSON) */
   readonly settingsView = signal<SettingsView>("form")
@@ -180,6 +185,7 @@ export class AssetsState {
       this.listing.value = null
       this.listingError.value = null
       this.selected.value = null
+      this.marked.value = new Set()
       this.detail.value = null
     })
   }
@@ -244,6 +250,10 @@ export class AssetsState {
   private async reconcileSelection(): Promise<void> {
     const selected = this.selected.value
     const listing = this.listing.value
+    if (listing && this.marked.value.size > 0) {
+      const kept = [...this.marked.value].filter((path) => this.fileOf(listing, path))
+      if (kept.length !== this.marked.value.size) this.marked.value = new Set(kept)
+    }
     if (selected === null || !listing) return
     if (this.hasPath(listing, selected)) {
       if (this.fileOf(listing, selected)) await this.readDetail(selected)
@@ -290,6 +300,7 @@ export class AssetsState {
 
   /** Selects a row; a file's detail is read from the host */
   async select(path: string | null): Promise<void> {
+    if (this.marked.value.size > 0) this.marked.value = new Set()
     if (path === this.selected.value) return
     batch(() => {
       this.selected.value = path
@@ -297,6 +308,61 @@ export class AssetsState {
     })
     const listing = this.listing.value
     if (path !== null && listing && this.fileOf(listing, path)) await this.readDetail(path)
+  }
+
+  /** Every selected path: the primary one and the marked files, in no particular order */
+  selectedPaths(): string[] {
+    const primary = this.selected.peek()
+    return [...(primary === null ? [] : [primary]), ...this.marked.peek()]
+  }
+
+  /**
+   * Ctrl/Cmd+click on a file: adds it to the selection, or takes it out when it is in. The first file clicked stays the
+   * primary one (its detail is shown); when the primary one is taken out, another selected file becomes primary.
+   */
+  async toggleMarked(path: string): Promise<void> {
+    const primary = this.selected.peek()
+    if (primary === null || !this.isFile(primary)) return this.select(path)
+    if (path === primary) {
+      const [next, ...rest] = this.marked.peek()
+      if (next === undefined) return
+      this.marked.value = new Set(rest)
+      await this.selectPrimary(next)
+      return
+    }
+    const next = new Set(this.marked.peek())
+    if (!next.delete(path)) next.add(path)
+    this.marked.value = next
+  }
+
+  /** Shift+click on a file: selects the files from the primary one to it, in the order of the rows shown */
+  async selectRange(path: string): Promise<void> {
+    const primary = this.selected.peek()
+    const rows = this.rows.peek()
+    const from = rows.findIndex((r) => r.path === primary)
+    const to = rows.findIndex((r) => r.path === path)
+    if (primary === null || from < 0 || to < 0 || !this.isFile(primary)) return this.select(path)
+    const [lo, hi] = from < to ? [from, to] : [to, from]
+    this.marked.value = new Set(
+      rows
+        .slice(lo, hi + 1)
+        .filter((r) => r.kind === "asset" && r.path !== primary)
+        .map((r) => r.path)
+    )
+  }
+
+  private isFile(path: string): boolean {
+    const listing = this.listing.peek()
+    return !!listing && this.fileOf(listing, path) !== undefined
+  }
+
+  /** Makes a path the primary one without clearing the marked files */
+  private async selectPrimary(path: string): Promise<void> {
+    batch(() => {
+      this.selected.value = path
+      this.detail.value = null
+    })
+    await this.readDetail(path)
   }
 
   /**
