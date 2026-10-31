@@ -6,6 +6,7 @@ import { ComponentChildren } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { TextPass } from "./inspector-fields"
 import type { FieldSchema } from "../protocol/protocol.generated"
+import type { AssetEntry } from "../shared/api"
 import { assetName } from "./asset-lookup"
 import { AssetDragType, EntityDragType, FieldDropEffect, dragHas, parseAssetDrag } from "./drag-types"
 import {
@@ -658,6 +659,13 @@ function AssetSlot(props: {
   )
 }
 
+/** Why a field that holds no asset refuses an asset dropped on it, in the field's own words */
+function refusedFor(field: FieldSchema, dragged: AssetEntry | null, expects: string, hint: string): string {
+  if (!dragged) return `That isn't an asset; ${field.displayName} expects ${expects} (${hint})`
+  const type = dragged.resourceType || "Unknown"
+  return `${assetName(dragged)} is ${/^[AEIOU]/i.test(type) ? "an" : "a"} ${type}; ${field.displayName} expects ${expects} (${hint})`
+}
+
 /** One object reference (a GameObjectRef, or an item of a GameObjectRefList) */
 function ObjectSlot(props: {
   field: FieldSchema
@@ -681,8 +689,13 @@ function ObjectSlot(props: {
       empty={props.uuid === null}
       title={props.uuid ?? "Drop an object from the hierarchy here"}
       disabled={props.disabled}
-      accepts={(e) => dragHas(e, EntityDragType)}
+      // An asset is taken too, to refuse it here with this field's name (it is never checked against another field)
+      accepts={(e) => dragHas(e, EntityDragType) || dragHas(e, AssetDragType)}
       onDrop={(e) => {
+        if (!dragHas(e, EntityDragType)) {
+          const dragged = parseAssetDrag(e.dataTransfer?.getData(AssetDragType) ?? "")
+          return props.onProblem(refusedFor(props.field, dragged, "a GameObject", "drag an object from the hierarchy"))
+        }
         const id = e.dataTransfer?.getData(EntityDragType) ?? ""
         if (tree.nodes.has(id)) props.onChange(id)
         else props.onProblem("That object isn't in the scene")
@@ -759,8 +772,11 @@ function ComponentSlot(props: {
       empty={props.uuid === null}
       title={props.uuid ?? `Pick a ${wanted === "Component" ? "component" : wanted}`}
       disabled={props.disabled}
-      accepts={() => false}
-      onDrop={() => {}}
+      accepts={(e) => dragHas(e, AssetDragType)}
+      onDrop={(e) => {
+        const dragged = parseAssetDrag(e.dataTransfer?.getData(AssetDragType) ?? "")
+        props.onProblem(refusedFor(props.field, dragged, `a ${wanted === "Component" ? "component" : wanted}`, "pick one with ..."))
+      }}
       onClear={() => props.onChange(null)}
     >
       {!props.disabled && (
