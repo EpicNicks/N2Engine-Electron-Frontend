@@ -1146,3 +1146,56 @@ describe("InspectorState: the local transform", () => {
     assert.equal(t.inspector.euler.value, null)
   })
 })
+
+describe("InspectorState: scripts dropped on the inspector", () => {
+  const script = (uuid: string, path: string): AssetEntry => ({ uuid, path, resourceType: "LuaScript" })
+  const names = (calls: Array<[string, unknown[]]>) => calls.map(([name]) => name).filter((n) => n !== "getEntity" && n !== "getLuaFields")
+
+  test("one script adds a LuaComponent running it, in one edit group, even when the object has one already", async () => {
+    const t = setup({ groups: true })
+    await t.inspector.loadTypes()
+    await t.inspector.select("e1") // has a LuaComponent already
+    t.calls.length = 0
+    await t.inspector.addScripts([script(S2, "res://scripts/b.lua")])
+    assert.deepEqual(names(t.calls), ["beginEditGroup", "addComponent", "setComponentFields", "endEditGroup"])
+    assert.deepEqual(t.calls.find(([n]) => n === "addComponent")?.[1], ["e1", "LuaComponent"])
+    assert.deepEqual(t.calls.find(([n]) => n === "setComponentFields")?.[1], ["e1", "new-LuaComponent", { scriptUUID: S2 }])
+  })
+
+  test("several scripts add one component each inside a single group", async () => {
+    const t = setup({ groups: true })
+    await t.inspector.select("e1")
+    t.calls.length = 0
+    await t.inspector.addScripts([script(S1, "res://a.lua"), script(S2, "res://b.lua")])
+    assert.deepEqual(names(t.calls), [
+      "beginEditGroup",
+      "addComponent",
+      "setComponentFields",
+      "addComponent",
+      "setComponentFields",
+      "endEditGroup",
+    ])
+  })
+
+  test("something that is not a script is refused without a command; read-only too; a refusal ends the group", async () => {
+    const t = setup({ groups: true })
+    await t.inspector.select("e1")
+    t.calls.length = 0
+    await assert.rejects(
+      t.inspector.addScripts([{ uuid: S2, path: "res://t.png", resourceType: "Texture" }]),
+      /isn't a script/
+    )
+    t.inspector.setReadOnly("playing")
+    await assert.rejects(t.inspector.addScripts([script(S2, "res://b.lua")]), /read-only/)
+    assert.deepEqual(names(t.calls), [])
+    t.inspector.setReadOnly(null)
+    t.state.failSet = "denied"
+    await assert.rejects(t.inspector.addScripts([script(S2, "res://b.lua")]), /denied/)
+    assert.equal(names(t.calls).at(-1), "endEditGroup")
+  })
+
+  test("with no object inspected it is refused", async () => {
+    const t = setup()
+    await assert.rejects(t.inspector.addScripts([script(S2, "res://b.lua")]), /No object/)
+  })
+})

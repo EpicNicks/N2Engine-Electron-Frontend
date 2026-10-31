@@ -14,6 +14,7 @@ import type { SceneChange } from "../protocol/editor-events"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { AssetEntry, EngineApi, JsonObject } from "../shared/api"
 import { AssetLookup } from "./asset-lookup"
+import { ScriptResourceType } from "./drag-types"
 import type { EditGroups, GroupHandle } from "./edit-groups"
 import { eulerToQuat, quatToEuler, quatsEquivalent, stableEuler, vecEqual } from "./euler"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
@@ -649,6 +650,44 @@ export class InspectorState {
         ]
       }
     })
+    await this.syncLua(false)
+  }
+
+  /**
+   * Scripts dropped on the inspector: adds a LuaComponent running each to the inspected object, one component per
+   * script (the engine allows several, so an object that already has one gets another), all as one edit group so
+   * one Undo takes them back. Each is AddComponent then SetComponentFields {scriptUUID}; nothing new in the protocol.
+   * A refusal stops the rest and is thrown; what was added stays (one undo step).
+   */
+  async addScripts(scripts: readonly AssetEntry[]): Promise<void> {
+    this.requireEditable()
+    const entityId = this.entityId.value
+    if (entityId === null) throw new Error("No object is inspected")
+    const chosen = scripts.filter((script) => script.resourceType === ScriptResourceType)
+    if (chosen.length === 0) throw new Error("That isn't a script")
+    const type = this.types.value?.find((schema) => schema.typeName === LuaComponentType)
+    if (type?.singleton && (this.presentTypes.value.has(LuaComponentType) || chosen.length > 1)) {
+      throw new Error(`An object can have only one ${LuaComponentType}`)
+    }
+    const handle = this.options.groups ? await this.options.groups.begin(chosen.length > 1 ? "Add scripts" : "Add script") : null
+    try {
+      for (const script of chosen) {
+        const added = await this.engine.addComponent(entityId, LuaComponentType)
+        let values: unknown = added.values
+        try {
+          values = await this.engine.setComponentFields(entityId, added.componentId, { scriptUUID: script.uuid.toLowerCase() })
+        } finally {
+          if (this.entityId.value === entityId) {
+            const view = { id: added.componentId, type: LuaComponentType, values: isObject(values) ? values : {} }
+            this.components.value = [...this.components.value.filter((v) => v.id !== view.id), view]
+          }
+        }
+      }
+    } finally {
+      if (this.options.groups) await this.options.groups.end(handle)
+      // What the host has is the truth (its change events read the object again too)
+      if (this.entityId.value === entityId) await this.refresh()
+    }
     await this.syncLua(false)
   }
 

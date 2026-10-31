@@ -12,6 +12,15 @@ export const AssetDragType = "application/x-n2-asset"
  */
 export const PrefabDragType = "application/x-n2-prefab"
 
+/**
+ * Also set by a drag of a LuaScript asset: the same {uuid, path, type} data, or a list of them when several selected
+ * scripts are dragged together. The inspector takes it anywhere outside a field and adds a LuaComponent per script.
+ */
+export const ScriptDragType = "application/x-n2-script"
+
+/** The resource type of a Lua script asset */
+export const ScriptResourceType = "LuaScript"
+
 /** An object dragged from the hierarchy: its id */
 export const EntityDragType = "application/x-n2-entity"
 
@@ -38,14 +47,23 @@ export function parseAssetDrag(data: string): AssetEntry | null {
 
 /** The prefab assets a drop carried (several may be dragged together), or [] when it carried none that parse */
 export function parsePrefabDrop(data: string): AssetEntry[] {
-  // One asset, or a list of them (the assets panel drags every selected prefab)
+  return parseAssetListDrop(data, "Prefab")
+}
+
+/** The Lua scripts a drop carried (several may be dragged together), or [] when it carried none that parse */
+export function parseScriptDrop(data: string): AssetEntry[] {
+  return parseAssetListDrop(data, ScriptResourceType)
+}
+
+/** One asset, or a list of them (the assets panel drags every selected prefab or script): those of the type */
+function parseAssetListDrop(data: string, resourceType: string): AssetEntry[] {
   try {
     const value: unknown = JSON.parse(data)
     const items = Array.isArray(value) ? value : [value]
     const out: AssetEntry[] = []
     for (const item of items) {
       const asset = parseAssetDrag(JSON.stringify(item))
-      if (asset && asset.resourceType === "Prefab") out.push(asset)
+      if (asset && asset.resourceType === resourceType) out.push(asset)
     }
     return out
   } catch {
