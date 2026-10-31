@@ -3,9 +3,9 @@
 // tested in Node. Every action sends its command and then reads the hierarchy again, because the siblings whose
 // index shifted are only fresh in GetHierarchy; the failure of an action is thrown for the panel to show.
 import { batch, computed, signal } from "@preact/signals-core"
-import type { EngineApi } from "../shared/api"
+import { errorTextOf, type EngineApi } from "../shared/api"
 import type { HierarchyResponse, Vec3 } from "../protocol/protocol.generated"
-import { normalizePrefabPath } from "../protocol/prefab-assets"
+import { isPrefabExistsRefusal, normalizePrefabPath } from "../protocol/prefab-assets"
 import type { SceneChange } from "../protocol/editor-events"
 import type { EditGroups } from "./edit-groups"
 import { clipboardText, parseClipboardText } from "../protocol/entity-clipboard"
@@ -56,6 +56,11 @@ export interface PrefabOptions {
   pathOf(uuid: string): string | null
   /** Whether the assets listing has a file at this path (a stale listing is caught by the host, which refuses an overwrite) */
   exists(path: string): boolean
+  /**
+   * Reads the assets listing again, so exists() answers for the files there are now (one made outside the editor, or by
+   * another window); a failure leaves the listing as it was. Without it exists() answers from the listing as it is.
+   */
+  refreshListing?(): Promise<void>
   /** A prefab file was made or replaced: the assets panel lists again */
   changed(): void
 }
@@ -667,7 +672,8 @@ export class HierarchyState {
 
   /**
    * Writes the object, with what is under it, as a prefab file at the path (a res:// path, or text that becomes one) and
-   * links the object to it. When the listing has a file there the user is asked before it is replaced. Resolves the
+   * links the object to it. The assets listing is read again first; when it has a file there the user is asked before
+   * it is replaced, and so they are when the host refuses because a file is there after all (made since). Resolves the
    * file's path and UUID, or null when the user said no. The host refuses it in a play session (and so does this).
    */
   createPrefab(id: string, pathText: string): Promise<{ path: string; uuid: string } | null> {
@@ -678,18 +684,27 @@ export class HierarchyState {
       if (!node) return null
       const normal = normalizePrefabPath(pathText)
       if (normal.path === null) throw new Error(normal.error)
-      const overwrite = prefabs.exists(normal.path)
-      if (
-        overwrite &&
-        !(await this.options.confirm(
-          `Replace ${normal.path} with '${node.name}'? Objects already made from that prefab are not updated.`,
+      const path = normal.path
+      const askReplace = () =>
+        this.options.confirm(
+          `Replace ${path} with '${node.name}'? Objects already made from that prefab are not updated.`,
           "Replace"
-        ))
-      ) {
-        return null
-      }
+        )
+      // A listing from before a file was made there (outside the editor, or by another window) would not ask: it is read
+      // again first
+      await prefabs.refreshListing?.()
+      const overwrite = prefabs.exists(path)
+      if (overwrite && !(await askReplace())) return null
       try {
-        return await this.engine.createPrefab!(id, normal.path, overwrite)
+        try {
+          return await this.engine.createPrefab!(id, path, overwrite)
+        } catch (e) {
+          // The listing still didn't have the file (it couldn't be read, or the file came since): the host refused to
+          // replace it unasked. The user is asked now, and a yes sends it again as a replace.
+          if (overwrite || !isPrefabExistsRefusal(errorTextOf(e))) throw e
+          if (!(await askReplace())) return null
+          return await this.engine.createPrefab!(id, path, true)
+        }
       } finally {
         // The object is linked to the file now: its row shows it
         await this.refresh()

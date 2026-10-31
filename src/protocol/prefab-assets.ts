@@ -70,3 +70,11 @@ export function normalizePrefabPath(text: string): { path: string; error: null }
 export function samePath(a: string, b: string, caseInsensitive: boolean): boolean {
   return caseInsensitive ? a.toLowerCase() === b.toLowerCase() : a === b
 }
+
+/**
+ * Whether an error message is the host's refusal of a CreatePrefab without overwrite because a file is at the path
+ * ("res://prefabs/Crate.prefab already exists"): the editor's listing didn't have it, and the user can be asked now
+ */
+export function isPrefabExistsRefusal(message: string): boolean {
+  return /\salready exists$/.test(message)
+}

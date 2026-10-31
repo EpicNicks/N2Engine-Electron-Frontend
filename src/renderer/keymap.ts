@@ -79,6 +79,12 @@ export const DefaultActions: readonly ActionDef[] = [
   { id: "viewport.cancel", title: "Cancel the move in progress", scope: "viewport", chords: ["Escape"] },
   { id: "viewport.orthographic", title: "Toggle orthographic", scope: "viewport", chords: ["Numpad5"] },
   { id: "viewport.twoD", title: "Toggle 2D mode", scope: "viewport", chords: [] },
+  // The selection's keys in the view too (selection-keys.ts): the same actions as the hierarchy's, on the same selection
+  { id: "viewport.delete", title: "Delete the selected objects", scope: "viewport", chords: ["Delete"] },
+  { id: "viewport.duplicate", title: "Duplicate the selected objects", scope: "viewport", chords: ["Mod+D"] },
+  { id: "viewport.copy", title: "Copy the selected objects", scope: "viewport", chords: ["Mod+C"] },
+  { id: "viewport.cut", title: "Cut the selected objects", scope: "viewport", chords: ["Mod+X"] },
+  { id: "viewport.paste", title: "Paste the copied objects", scope: "viewport", chords: ["Mod+V"] },
   ...(["front","back","right","left","top","bottom"] as const).map((axis,i)=>({id:`viewport.axis${axis[0].toUpperCase()+axis.slice(1)}`,title:`View ${axis}`,scope:"viewport" as const,chords:[["Numpad1"],["Ctrl+Numpad1"],["Numpad3"],["Ctrl+Numpad3"],["Numpad7"],["Ctrl+Numpad7"]][i]})),
   ...Array.from({length:9},(_,i)=>[
     {id:`viewport.bookmarkSave${i+1}`,title:`Save camera bookmark ${i+1}`,scope:"viewport" as const,chords:[`Mod+Shift+Digit${i+1}`]},
