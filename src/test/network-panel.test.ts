@@ -8,6 +8,7 @@ import {
   formatValue,
   mergePatches,
   networkPatchOf,
+  timeDilationOf,
   validateNetworkSettingsInfo,
   validateNetworkValidationReport,
 } from "../protocol/network-panel"
@@ -223,5 +224,107 @@ describe("the network panel state", () => {
     const second = h.model.refresh()
     await Promise.all([first, second, settle()])
     assert.equal(h.model.info.value?.preset, "none")
+  })
+})
+
+const find = (settings: unknown, path: string): unknown => {
+  let node: unknown = settings
+  for (const part of path.split(".")) {
+    if (typeof node !== "object" || node === null || !(part in node)) return undefined
+    node = (node as Record<string, unknown>)[part]
+  }
+  return node
+}
+
+describe("time dilation (protocol 1.23.0)", () => {
+  const authoritative = (dilation?: JsonObject): JsonObject => ({ network: { preset: "authoritative", ...(dilation ? { authoritative: { timeDilation: dilation } } : {}) } })
+
+  test("the host's values are read from values.authoritative.timeDilation, and a 1.22 host has none", async () => {
+    const h = modelOf({ settings: authoritative({ enabled: true, minScale: 0.8 }) })
+    await h.model.refresh()
+    assert.deepEqual(h.model.timeDilation, { enabled: true, minScale: 0.8, maxScale: 1.1 })
+    assert.equal(h.model.timeDilationShown, true)
+    assert.equal(h.model.timeDilationEditable, true)
+    assert.equal(h.model.timeDilationText("minScale"), "0.8")
+    assert.equal(h.model.timeDilationText("enabled"), "true")
+    const old = modelOf({ settings: authoritative(), network: { timeDilation: false } })
+    await old.model.refresh()
+    assert.equal(old.model.timeDilation, null)
+    assert.equal(old.model.timeDilationShown, false)
+    assert.deepEqual(timeDilationOf({ ...old.model.info.value!, values: { authoritative: { timeDilation: { enabled: "yes" } } } }), null)
+  })
+
+  test("shown only under the Server authoritative bundle, editable only when that is the project's preset", async () => {
+    const none = modelOf()
+    await none.model.refresh()
+    assert.equal(none.model.timeDilationShown, false)
+    await none.model.view("authoritative")
+    assert.equal(none.model.timeDilationShown, true)
+    assert.equal(none.model.timeDilationEditable, false)
+    const h = modelOf({ settings: authoritative(), readOnly: "viewer" })
+    await h.model.refresh()
+    assert.equal(h.model.timeDilationEditable, false)
+    const unsupported = modelOf({ settings: authoritative(), supported: false })
+    await unsupported.model.refresh()
+    assert.equal(unsupported.model.timeDilationShown, false)
+  })
+
+  test("edits become authoritative.timeDilation in the merge patch, with the other rows, and the answer is shown", async () => {
+    const h = modelOf({ settings: authoritative() })
+    await h.model.refresh()
+    const tick = h.model.viewedPreset!.rows.find((r) => r.key === "network.tickRate")!
+    h.model.setDraft(tick, "30")
+    h.model.setTimeDilationDraft("enabled", "true")
+    h.model.setTimeDilationDraft("maxScale", "1.25")
+    assert.deepEqual(h.model.build(), { patch: { tickRate: 30, authoritative: { timeDilation: { enabled: true, maxScale: 1.25 } } }, errors: [] })
+    assert.equal(await h.model.apply(), true)
+    assert.deepEqual(h.sets, [{ preset: "", settings: { tickRate: 30, authoritative: { timeDilation: { enabled: true, maxScale: 1.25 } } } }])
+    assert.deepEqual(h.model.timeDilation, { enabled: true, minScale: 0.9, maxScale: 1.25 })
+    assert.equal(h.model.hasDrafts, false)
+  })
+
+  test("the scales are checked against the engine's ranges before sending", async () => {
+    const h = modelOf({ settings: authoritative() })
+    await h.model.refresh()
+    h.model.setTimeDilationDraft("minScale", "0.4")
+    h.model.setTimeDilationDraft("maxScale", "2.5")
+    assert.equal(h.model.timeDilationDraftError("minScale"), "Must be between 0.5 and 1")
+    assert.equal(h.model.timeDilationDraftError("maxScale"), "Must be between 1 and 2")
+    assert.deepEqual(h.model.build().errors, ["Time dilation minimum scale: Must be between 0.5 and 1", "Time dilation maximum scale: Must be between 1 and 2"])
+    assert.equal(h.model.canApply, false)
+    assert.equal(await h.model.apply(), false)
+    assert.deepEqual(h.sets, [])
+  })
+
+  test("Default sends null for one field; Reset sends null for the whole object, which removes it", async () => {
+    const h = modelOf({ settings: authoritative({ enabled: true, minScale: 0.7, maxScale: 1.5 }) })
+    await h.model.refresh()
+    h.model.resetTimeDilationDraft("minScale")
+    assert.equal(h.model.timeDilationText("minScale"), "0.9")
+    assert.deepEqual(h.model.build().patch, { authoritative: { timeDilation: { minScale: null } } })
+    h.model.removeTimeDilation()
+    assert.equal(h.model.timeDilationRemoved, true)
+    assert.equal(h.model.timeDilationText("enabled"), "false")
+    assert.deepEqual(h.model.build().patch, { authoritative: { timeDilation: null } })
+    assert.equal(await h.model.apply(), true)
+    assert.equal(find(h.settings(), "network.authoritative.timeDilation"), undefined)
+    assert.deepEqual(h.model.timeDilation, { enabled: false, minScale: 0.9, maxScale: 1.1 })
+    // A field edited after Reset takes the reset back
+    h.model.removeTimeDilation()
+    h.model.setTimeDilationDraft("enabled", "true")
+    assert.equal(h.model.timeDilationRemoved, false)
+    assert.deepEqual(h.model.build().patch, { authoritative: { timeDilation: { enabled: true } } })
+  })
+
+  test("the host's refusal of a scale is shown and nothing is saved; a bad value in the file is a problem", async () => {
+    const h = modelOf({ settings: authoritative({ maxScale: 3 }) })
+    await h.model.refresh()
+    assert.deepEqual(h.model.info.value!.problems, ["network.authoritative.timeDilation.maxScale must be between 1 and 2"])
+    assert.equal(h.model.timeDilation!.maxScale, 2)
+    // The client check passes (1.0 is in range) but the stored maxScale is still out: the host refuses the whole patch
+    h.model.setTimeDilationDraft("minScale", "1")
+    assert.equal(await h.model.apply(), false)
+    assert.match(h.model.error.value!, /maxScale must be between 1 and 2/)
+    assert.equal(find(h.settings(), "network.authoritative.timeDilation.minScale"), undefined)
   })
 })

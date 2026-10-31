@@ -130,10 +130,10 @@ const answerOf = (value: Partial<ExtensionResultResponse> = {}): Uint8Array =>
   )
 
 describe("the generated protocol since 1.15.0", () => {
-  test("the client and the vectors are at 1.22.0", () => {
+  test("the client and the vectors are at 1.23.0", () => {
     const vectorsPath = path.join(__dirname, "..", "..", "src", "protocol", "test-vectors.json")
     const vectors = JSON.parse(fs.readFileSync(vectorsPath, "utf-8")) as { protocolVersion: string }
-    assert.equal(PROTOCOL_VERSION, "1.22.0")
+    assert.equal(PROTOCOL_VERSION, "1.23.0")
     assert.equal(vectors.protocolVersion, PROTOCOL_VERSION)
   })
 

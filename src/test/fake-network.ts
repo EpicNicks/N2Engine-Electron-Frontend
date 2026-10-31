@@ -100,6 +100,30 @@ export interface FakeNetworkOptions {
   networkObjects?: number
   /** Whether the build has strict FP (default true) */
   strictFp?: boolean
+  /** Whether the host reports values.authoritative.timeDilation (protocol 1.23.0; default true, false for a 1.22 host) */
+  timeDilation?: boolean
+}
+
+/** The engine's read of network.authoritative.timeDilation: defaults off, 0.9, 1.1; scales clamped 0.5-1 and 1-2 */
+function readTimeDilation(settings: unknown): { values: { enabled: boolean; minScale: number; maxScale: number }; problems: string[] } {
+  const problems: string[] = []
+  const values = { enabled: false, minScale: 0.9, maxScale: 1.1 }
+  const block = find(settings, "network.authoritative.timeDilation")
+  if (block === undefined || block === null) return { values, problems }
+  const enabled = find(block, "enabled")
+  if (typeof enabled === "boolean") values.enabled = enabled
+  else if (enabled !== undefined && enabled !== null) problems.push("network.authoritative.timeDilation.enabled must be a boolean")
+  for (const [field, min, max] of [["minScale", 0.5, 1], ["maxScale", 1, 2]] as const) {
+    const v = find(block, field)
+    if (v === undefined || v === null) continue
+    if (typeof v !== "number") {
+      problems.push(`network.authoritative.timeDilation.${field} must be a number`)
+      continue
+    }
+    if (v < min || v > max) problems.push(`network.authoritative.timeDilation.${field} must be between ${min} and ${max}`)
+    values[field] = Math.min(max, Math.max(min, v))
+  }
+  return { values, problems }
 }
 
 /** The host's answers for a project settings object */
@@ -156,12 +180,13 @@ export function fakeNetworkAnswers(settings: unknown, options: FakeNetworkOption
   const reasons = [...((options.networkObjects ?? 0) > 0 ? ["scene"] : []), ...(hasBlockSettings ? ["settings"] : [])]
   const show = preset === "none" && reasons.length > 0
 
+  const dilation = readTimeDilation(settings)
   const info: NetworkSettingsInfo = {
     preset,
     customised: lostGuarantees.length > 0,
     storedCustomised: false,
     tickRate: Number(currentOf("network.tickRate")),
-    values: {},
+    values: options.timeDilation === false ? {} : { authoritative: { timeDilation: dilation.values } },
     overrides: {},
     ranges: Ranges,
     lostGuarantees,
@@ -173,7 +198,7 @@ export function fakeNetworkAnswers(settings: unknown, options: FakeNetworkOption
       networkObjects: options.networkObjects ?? 0,
       hint: show ? "The project has network settings but no network model (network.preset is none). Choose Server authoritative or Deterministic." : "",
     },
-    problems: [],
+    problems: options.timeDilation === false ? [] : dilation.problems,
   }
 
   const report = (asked: string): NetworkValidationReport => {
@@ -245,8 +270,24 @@ export function fakeSetNetwork(settings: unknown, preset: string, patch: JsonObj
   }
   for (const [key, value] of Object.entries(patch)) {
     if (!tunable.has(key)) return { error: `${key} is not a tunable network setting this command changes` }
+    // authoritative.timeDilation (1.23.0): an object of its three keys, each of its type or null, or null for the whole
+    const dilation = key === "authoritative" && typeof value === "object" && value !== null ? (value as JsonObject).timeDilation : undefined
+    if (dilation !== undefined && dilation !== null) {
+      if (typeof dilation !== "object" || Array.isArray(dilation)) return { error: "authoritative.timeDilation must be an object (enabled, minScale, maxScale) or null" }
+      for (const [field, v] of Object.entries(dilation)) {
+        const path = `authoritative.timeDilation.${field}`
+        if (!["enabled", "minScale", "maxScale"].includes(field)) return { error: `${path} is not a tunable network setting this command changes` }
+        if (v === null) continue
+        if (field === "enabled" && typeof v !== "boolean") return { error: `${path} must be true, false or null` }
+        if (field !== "enabled" && typeof v !== "number") return { error: `${path} must be a number or null` }
+      }
+    }
     network[key] = value
   }
   if (Object.keys(network).length === 0) return { settings }
-  return { settings: applyMergePatch(settings as Json, { network }) }
+  const next = applyMergePatch(settings as Json, { network })
+  // The engine's read checks the scale ranges when the host applies the patch: a problem is an Error and nothing is saved
+  const problems = readTimeDilation(next).problems
+  if (problems.length > 0) return { error: problems.join("; ") }
+  return { settings: next }
 }

@@ -1,9 +1,20 @@
 // The Network section of Project Settings (protocol 1.21.0): the three preset cards, the shown preset's bundle row by row
 // (locked and tunable settings), the validation report with its fix buttons, the nudge and the "takes effect at next
-// start" notice. The logic is in network-panel-state.ts (tested in Node). Every string from the host (labels,
+// start" notice, and (protocol 1.23.0) the time dilation group under the Server authoritative bundle. The logic is in network-panel-state.ts (tested in Node). Every string from the host (labels,
 // descriptions, reasons, messages) is untrusted and is only ever a text node here.
 import type { NetworkPresetInfo, NetworkRequirementInfo, NetworkSettingRow } from "../protocol/protocol.generated"
-import { NetworkTakesEffectNote, formatValue, presetLabel, rangeOf, sourceLabel, tunableKind } from "../protocol/network-panel"
+import {
+  NetworkTakesEffectNote,
+  TimeDilationDefaults,
+  TimeDilationKey,
+  TimeDilationRanges,
+  formatValue,
+  presetLabel,
+  rangeOf,
+  sourceLabel,
+  tunableKind,
+  type TimeDilationField,
+} from "../protocol/network-panel"
 import type { NetworkPanelModel } from "./network-panel-state"
 import type { SectionProps } from "./project-settings-sections"
 
@@ -121,6 +132,101 @@ function BundleRow(props: { panel: NetworkPanelModel; row: NetworkSettingRow }) 
   )
 }
 
+const TimeDilationRows: Array<{ field: TimeDilationField; label: string; help: string }> = [
+  { field: "enabled", label: "Time dilation enabled", help: "A joined client speeds up or slows down its fixed-step clock to keep its input stamps at the tick the server needs." },
+  { field: "minScale", label: "Minimum scale", help: "The slowest the client's clock runs (0.5 to 1)." },
+  { field: "maxScale", label: "Maximum scale", help: "The fastest the client's clock runs (1 to 2)." },
+]
+
+function TimeDilationEditor(props: { panel: NetworkPanelModel; field: TimeDilationField; label: string }) {
+  const { panel, field, label } = props
+  const text = panel.timeDilationText(field)
+  const error = panel.timeDilationDraftError(field)
+  const range = field === "enabled" ? null : TimeDilationRanges[field]
+  return (
+    <div class="ps-control">
+      {range === null ? (
+        <input type="checkbox" aria-label={label} checked={text === "true"} onChange={(e) => panel.setTimeDilationDraft(field, (e.currentTarget as HTMLInputElement).checked ? "true" : "false")} />
+      ) : (
+        <>
+          <input
+            type="number"
+            aria-label={label}
+            value={text}
+            min={range.min}
+            max={range.max}
+            step="any"
+            aria-invalid={error !== null}
+            onInput={(e) => panel.setTimeDilationDraft(field, (e.currentTarget as HTMLInputElement).value)}
+          />
+          <span class="ps-unit">
+            {range.min}-{range.max}
+          </span>
+        </>
+      )}
+      {panel.timeDilationDirty(field) && (
+        <button type="button" onClick={() => panel.resetTimeDilationDraft(field)} title={`Back to the default (${formatValue(TimeDilationDefaults[field])})`}>
+          Default
+        </button>
+      )}
+      {error && (
+        <span class="ps-field-error" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** network.authoritative.timeDilation (protocol 1.23.0): not a row of the preset table, so a group of its own */
+function TimeDilationGroup(props: { panel: NetworkPanelModel }) {
+  const { panel } = props
+  const current = panel.timeDilation
+  if (!panel.timeDilationShown || current === null) return null
+  const editable = panel.timeDilationEditable
+  return (
+    <div class="ps-net-dilation" data-dilation="">
+      <h4>Time dilation (opt-in)</h4>
+      <p class="ps-help">
+        <code>{TimeDilationKey}</code>: client clock dilation for Server authoritative. Off by default; the scales default to {TimeDilationDefaults.minScale} and{" "}
+        {TimeDilationDefaults.maxScale}. The server is not affected.
+      </p>
+      <div class="ps-matrix-scroll">
+        <table class="ps-net-table" aria-label="Time dilation">
+          <thead>
+            <tr>
+              <th scope="col">Setting</th>
+              <th scope="col">Default</th>
+              <th scope="col">Current</th>
+            </tr>
+          </thead>
+          <tbody>
+            {TimeDilationRows.map(({ field, label, help }) => (
+              <tr key={field} class="ps-net-row" data-dilation-field={field}>
+                <th scope="row">
+                  <div>{label}</div>
+                  <code class="ps-help">{`${TimeDilationKey}.${field}`}</code>
+                  <div class="ps-help">{help}</div>
+                </th>
+                <td>{formatValue(TimeDilationDefaults[field])}</td>
+                <td>{editable ? <TimeDilationEditor panel={panel} field={field} label={label} /> : formatValue(current[field])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editable && (
+        <div class="ps-buttons">
+          <button type="button" disabled={panel.timeDilationRemoved} onClick={() => panel.removeTimeDilation()} title="Remove network.authoritative.timeDilation from the project file: every field back to its default">
+            Reset time dilation
+          </button>
+          {panel.timeDilationRemoved && <span class="ps-help">Apply removes it from the project file.</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function BundleTable(props: { panel: NetworkPanelModel }) {
   const { panel } = props
   const preset = panel.viewedPreset
@@ -150,6 +256,7 @@ function BundleTable(props: { panel: NetworkPanelModel }) {
           </tbody>
         </table>
       </div>
+      <TimeDilationGroup panel={panel} />
       {errors.length > 0 && (
         <ul class="ps-field-error" role="alert">
           {errors.map((e) => (
@@ -157,7 +264,7 @@ function BundleTable(props: { panel: NetworkPanelModel }) {
           ))}
         </ul>
       )}
-      {panel.viewingProjectPreset && Object.keys(panel.drafts.value).length > 0 && (
+      {panel.viewingProjectPreset && panel.hasDrafts && (
         <div class="ps-actions ps-buttons">
           <button type="button" disabled={!panel.canApply} onClick={() => void panel.apply()}>
             {panel.busy.value === "settings" ? "Saving..." : "Apply"}

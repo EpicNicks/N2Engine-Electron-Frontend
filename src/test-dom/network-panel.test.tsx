@@ -172,6 +172,61 @@ describe("the Network panel (FE-B11)", () => {
     assert.equal(screen.queryByText(/Saved \(/), null)
   })
 
+  test("time dilation: shown under the Server authoritative bundle with its defaults, and edited like a tunable row", async () => {
+    const h = await shown({ settings: { network: { preset: "authoritative" } } })
+    const group = within(screen.getByRole("table", { name: "Time dilation" }))
+    const enabled = group.getByLabelText("Time dilation enabled") as HTMLInputElement
+    const min = group.getByLabelText("Minimum scale") as HTMLInputElement
+    const max = group.getByLabelText("Maximum scale") as HTMLInputElement
+    assert.equal(enabled.checked, false)
+    assert.equal(min.value, "0.9")
+    assert.equal(max.value, "1.1")
+    await userEvent.click(enabled)
+    await userEvent.clear(max)
+    await userEvent.type(max, "2.5")
+    assert.ok(screen.getAllByText("Must be between 1 and 2").length >= 1)
+    assert.equal((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled, true)
+    await userEvent.clear(max)
+    await userEvent.type(max, "1.2")
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }))
+    await waitFor(() => assert.deepEqual(h.networkSets, [{ preset: "", settings: { authoritative: { timeDilation: { enabled: true, maxScale: 1.2 } } } }]))
+    await waitFor(() => assert.ok(screen.getByText(/Saved \(settings\)\./)))
+    const after = within(screen.getByRole("table", { name: "Time dilation" }))
+    assert.equal((after.getByLabelText("Time dilation enabled") as HTMLInputElement).checked, true)
+    assert.equal((after.getByLabelText("Maximum scale") as HTMLInputElement).value, "1.2")
+  })
+
+  test("time dilation: Default resets one field, Reset time dilation removes the whole object", async () => {
+    const h = await shown({ settings: { network: { preset: "authoritative", authoritative: { timeDilation: { enabled: true, minScale: 0.6 } } } } })
+    const minRow = within(document.querySelector('[data-dilation-field="minScale"]') as HTMLElement)
+    assert.equal((minRow.getByLabelText("Minimum scale") as HTMLInputElement).value, "0.6")
+    await userEvent.type(minRow.getByLabelText("Minimum scale"), "5")
+    await userEvent.click(minRow.getByRole("button", { name: "Default" }))
+    assert.equal((minRow.getByLabelText("Minimum scale") as HTMLInputElement).value, "0.9")
+    await userEvent.click(screen.getByRole("button", { name: "Reset time dilation" }))
+    assert.ok(screen.getByText(/Apply removes it from the project file/))
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }))
+    await waitFor(() => assert.deepEqual(h.networkSets, [{ preset: "", settings: { authoritative: { timeDilation: null } } }]))
+    await waitFor(() => assert.equal((h.settings().network as { authoritative?: { timeDilation?: unknown } }).authoritative?.timeDilation, undefined))
+  })
+
+  test("time dilation: absent under other bundles, read-only when Server authoritative is viewed but not the project's preset", async () => {
+    await shown({ settings: { network: { preset: "none" } } })
+    assert.equal(screen.queryByRole("table", { name: "Time dilation" }), null)
+    await userEvent.click(card("Server authoritative").getByRole("button", { name: "View bundle" }))
+    await waitFor(() => assert.ok(screen.getByRole("table", { name: "Time dilation" })))
+    const group = within(screen.getByRole("table", { name: "Time dilation" }))
+    assert.equal(group.queryByRole("checkbox"), null)
+    assert.equal(group.queryByRole("spinbutton"), null)
+    assert.equal(screen.queryByRole("button", { name: "Reset time dilation" }), null)
+  })
+
+  test("time dilation: a host before 1.23.0 does not report it, so nothing is shown", async () => {
+    await shown({ settings: { network: { preset: "authoritative" } }, network: { timeDilation: false } })
+    assert.ok(screen.getByRole("table", { name: "Server authoritative bundle" }))
+    assert.equal(screen.queryByRole("table", { name: "Time dilation" }), null)
+  })
+
   test("the panel is read again when the project changes", async () => {
     const h = await shown()
     const before = h.networkReads.settings
