@@ -98,18 +98,21 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
     /** The local transform GetEntity answers with; none: an object with no transform */
     transform?: LocalTransform
     failTransform: string | null
+    /** Objects the host no longer has */
+    goneIds: Set<string>
   } = {
     connected: true,
     stored: {},
     autoReply: true,
     failSet: null,
     failTransform: null,
+    goneIds: new Set(),
   }
   const engine = {
     isConnected: () => state.connected,
     getEntity: async (id: string) => {
       calls.push(["getEntity", [id]])
-      if (id === "gone") throw new Error("Entity not found: gone")
+      if (id === "gone" || state.goneIds.has(id)) throw new Error(`Entity not found: ${id}`)
       const data = entityData(id, state.stored, state.transform)
       return data
     },
@@ -1197,5 +1200,94 @@ describe("InspectorState: scripts dropped on the inspector", () => {
   test("with no object inspected it is refused", async () => {
     const t = setup()
     await assert.rejects(t.inspector.addScripts([script(S2, "res://b.lua")]), /No object/)
+  })
+})
+
+describe("InspectorState: the lock", () => {
+  test("without a lock it follows the selection; the same selection again is no change", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    assert.equal(t.inspector.entityId.value, "e1")
+    const reads = t.calls.filter(([n]) => n === "getEntity").length
+    await t.inspector.follow("e1", ["e1"])
+    assert.equal(t.calls.filter(([n]) => n === "getEntity").length, reads)
+    await t.inspector.follow("e2", ["e2"])
+    assert.equal(t.inspector.entityId.value, "e2")
+  })
+
+  test("locked, the selection can change and the inspector stays on the locked object", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    assert.equal(t.inspector.lock(), true)
+    assert.equal(t.inspector.locked.value, true)
+    await t.inspector.follow("e2", ["e2"])
+    await t.inspector.follow(null, [])
+    await t.inspector.follow("e3", ["e3", "e4"])
+    assert.equal(t.inspector.entityId.value, "e1")
+    assert.equal(t.inspector.header.value?.id, "e1")
+    assert.equal(t.inspector.multi.objects.value, null)
+    // Edits and added components go to the locked object
+    await t.inspector.addComponent("Light")
+    assert.deepEqual(t.calls.find(([n]) => n === "addComponent")?.[1], ["e1", "Light"])
+  })
+
+  test("unlocking stays on the object until the selection next changes, then follows it", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    t.inspector.lock()
+    await t.inspector.follow("e2", ["e2"])
+    t.inspector.unlock()
+    assert.equal(t.inspector.locked.value, false)
+    assert.equal(t.inspector.entityId.value, "e1", "unlocked: still on what it was locked to")
+    assert.equal(t.inspector.pinned.value, "e1")
+    await t.inspector.follow("e2", ["e2"]) // the same selection: not a change
+    assert.equal(t.inspector.entityId.value, "e1")
+    await t.inspector.follow("e3", ["e3"])
+    assert.equal(t.inspector.entityId.value, "e3")
+    assert.equal(t.inspector.pinned.value, null)
+  })
+
+  test("a change after unlocking to several objects shows the shared fields", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    t.inspector.lock()
+    t.inspector.unlock()
+    await t.inspector.follow("e1", ["e1", "e2"])
+    assert.equal(t.inspector.pinned.value, null)
+    await tick()
+    assert.deepEqual(t.inspector.multi.objects.value?.map((o) => o.header.id).sort(), ["e1", "e2"])
+  })
+
+  test("nothing to lock with no object, or with several selected", async () => {
+    const t = setup()
+    assert.equal(t.inspector.lock(), false)
+    await t.inspector.follow("e1", ["e1", "e2"])
+    assert.equal(t.inspector.lock(), false)
+    assert.equal(t.inspector.locked.value, false)
+  })
+
+  test("the locked object is gone: it unlocks and follows the selection", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    t.inspector.lock()
+    await t.inspector.follow("e2", ["e2"])
+    // The host says the object is gone (deleted, its scene closed, an undo): the next read fails
+    t.state.goneIds = new Set(["e1"])
+    await t.inspector.applyChange({ full: false, entityIds: ["e1"] } as never)
+    await tick()
+    assert.equal(t.inspector.locked.value, false)
+    assert.equal(t.inspector.pinned.value, null)
+    assert.equal(t.inspector.entityId.value, "e2")
+  })
+
+  test("a lock does not survive a new connection or project (reset)", async () => {
+    const t = setup()
+    await t.inspector.follow("e1", ["e1"])
+    t.inspector.lock()
+    t.inspector.reset()
+    assert.equal(t.inspector.locked.value, false)
+    assert.equal(t.inspector.pinned.value, null)
+    await t.inspector.follow("e1", ["e1"]) // the same selection is read again on the new connection
+    assert.equal(t.inspector.entityId.value, "e1")
   })
 })

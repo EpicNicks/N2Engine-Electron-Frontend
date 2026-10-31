@@ -768,15 +768,22 @@ function MultiInspector() {
 
 export function InspectorPanel() {
   const { store, scene, hierarchy, inspector } = useApp()
-  const selected = scene.selectedId.value
+  const pinned = inspector.pinned.value
+  const locked = inspector.locked.value
+  // Locked (or still on the object it was locked to): that object, whatever is selected
+  const selected = pinned ?? scene.selectedId.value
   const readOnlyReason = inspector.readOnlyReason.value
 
-  const selectedCount = hierarchy.selection.value.ids.size
+  const selectedCount = pinned !== null ? 1 : hierarchy.selection.value.ids.size
   const deleteButton = (
     <button
       class="danger"
       disabled={inspector.readOnly.value}
-      onClick={() => hierarchy.deleteSelected().catch((e) => store.reportError("Failed to delete the entity", e))}
+      onClick={() =>
+        hierarchy
+          .deleteSelected(pinned !== null ? [pinned] : undefined)
+          .catch((e) => store.reportError("Failed to delete the entity", e))
+      }
     >
       {selectedCount > 1 ? `Delete ${selectedCount} Selected` : "Delete Entity"}
     </button>
@@ -817,7 +824,27 @@ export function InspectorPanel() {
     )
   }
   return (
-    <Panel title="Inspector" icon="⚙️" class="inspector-panel">
+    <Panel
+      title="Inspector"
+      icon="⚙️"
+      class="inspector-panel"
+      actions={
+        <button
+          class={locked ? "secondary inspector-lock locked" : "secondary inspector-lock"}
+          aria-pressed={locked}
+          aria-label={locked ? "Unlock the inspector" : "Lock the inspector"}
+          title={
+            locked
+              ? "Unlock: the inspector stays on this object until the selection changes"
+              : "Lock: keep showing this object whatever is selected"
+          }
+          disabled={!locked && (inspector.entityId.value === null || (pinned === null && selectedCount > 1))}
+          onClick={() => (locked ? inspector.unlock() : inspector.lock())}
+        >
+          {locked ? "🔒" : "🔓"}
+        </button>
+      }
+    >
       <ScriptDropZone single={selectedCount <= 1}>{content}</ScriptDropZone>
     </Panel>
   )

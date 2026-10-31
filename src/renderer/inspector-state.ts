@@ -87,6 +87,16 @@ export class InspectorState {
   readonly typesProblem = signal<string | null>(null)
   readonly assets = signal<AssetLookup>(new AssetLookup([], false))
 
+  /** Whether the lock is on: the inspector keeps showing the object it was locked to, whatever the selection does */
+  readonly locked = signal(false)
+  /**
+   * The object the inspector holds on to instead of following the selection: while locked, and after unlocking until
+   * the selection next changes. Null when it follows the selection.
+   */
+  readonly pinned = signal<string | null>(null)
+  /** The selection as last told (follow), kept while the inspector holds on to an object, for when it lets go */
+  private focus: { key: string; primary: string | null; ids: string[] } = { key: "\0", primary: null, ids: [] }
+
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
   readonly header = signal<EntityHeader | null>(null)
@@ -210,6 +220,9 @@ export class InspectorState {
       this.types.value = null
       this.typesProblem.value = null
       this.clearEntity()
+      this.locked.value = false
+      this.pinned.value = null
+      this.focus = { key: "\0", primary: null, ids: [] }
       this.known.value = new Map()
       this.scanned.clear()
       this.multi.reset()
@@ -285,6 +298,54 @@ export class InspectorState {
 
   // ==================== The inspected object ====================
 
+  /**
+   * The selection changed (or was first read): the inspector shows the primary object, or the fields the ids share when
+   * there are several. Locked, it only notes the selection. After an unlock it is still on the object it was locked to,
+   * and the first change of the selection after that lets go and follows it again. The same selection twice is no change.
+   */
+  follow(primary: string | null, ids: readonly string[]): Promise<void> {
+    const key = `${primary ?? ""}|${[...ids].sort().join(",")}`
+    if (key === this.focus.key) return Promise.resolve()
+    this.focus = { key, primary, ids: [...ids] }
+    if (this.locked.value) return Promise.resolve()
+    this.pinned.value = null
+    return this.showSelection()
+  }
+
+  private async showSelection(): Promise<void> {
+    const { primary, ids } = this.focus
+    const multi = this.multi.select(ids.length > 1 ? ids : [])
+    await Promise.all([this.select(primary), multi])
+  }
+
+  /**
+   * Locks the inspector to the object it shows. False when there is nothing to lock (no object is shown, or several
+   * are selected and the shared fields are).
+   */
+  lock(): boolean {
+    const id = this.entityId.value
+    if (id === null || this.focus.ids.length > 1) return false
+    batch(() => {
+      this.pinned.value = id
+      this.locked.value = true
+    })
+    return true
+  }
+
+  /** Unlocks: the inspector stays on the object until the selection next changes, then follows it again */
+  unlock(): void {
+    this.locked.value = false
+  }
+
+  /** Lets go of the object (it is gone): the inspector follows the selection again at once */
+  private releasePin(): void {
+    batch(() => {
+      this.locked.value = false
+      this.pinned.value = null
+    })
+    void this.showSelection().catch((e) => this.options.onError?.("Failed to read the object", e))
+  }
+
   /** Inspects another object (or none): what was edited and not yet sent is sent to the object it was edited on first */
   async select(entityId: string | null): Promise<void> {
     if (entityId === this.entityId.value) return
@@ -337,6 +398,8 @@ export class InspectorState {
           this.components.value = []
           this.header.value = null
         })
+        // The object it was locked to is gone (deleted, its scene closed, an undo took it away): unlock, follow the selection
+        if (this.pinned.peek() !== null) this.releasePin()
       }
       return
     }
