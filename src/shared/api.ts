@@ -500,6 +500,15 @@ export interface PreferencesApi {
   chooseHostPath(): Promise<string | null>
 }
 
+/**
+ * window.systemClipboard: the system clipboard as text, through the main process (Electron's clipboard module). The
+ * page's navigator.clipboard is refused there (the editor grants no permission); a page without this uses it instead.
+ */
+export interface SystemClipboardApi {
+  readText(): Promise<string>
+  writeText(text: string): Promise<void>
+}
+
 /** window.host: the project's editor host process */
 export interface HostApi {
   /** The last known state (pushed by the main process, so it's synchronous) */
@@ -830,6 +839,10 @@ export const Channels = {
   preferencesGetHost: "preferences:getHost",
   preferencesSaveHost: "preferences:saveHost",
   preferencesChooseHost: "preferences:chooseHost",
+  /** () → IpcResult<string> */
+  clipboardReadText: "clipboard:readText",
+  /** (text: string) → IpcResult */
+  clipboardWriteText: "clipboard:writeText",
   /** (settings: RemoteSettings, token: string) → IpcResult<string> */
   remoteConnect: "remote:connect",
   remoteGetRecent: "remote:getRecent",

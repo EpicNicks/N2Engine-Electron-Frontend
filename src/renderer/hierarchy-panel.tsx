@@ -11,6 +11,7 @@ import { MaxQueryLength } from "./hierarchy-filter-prefs"
 import { DropPosition, DropTarget, RootId, canDrop, resolveDrop } from "./hierarchy-tree"
 import { keymap } from "./keymap"
 import { useKeymapActions } from "./keymap-hooks"
+import { selectionKeyHandlers } from "./selection-keys"
 import { Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
 
 /** What the drag in progress carries (empty when none, or when it isn't one of ours) */
@@ -171,30 +172,12 @@ export function HierarchyPanel() {
   // doesn't fire these in a text field); the active checkbox, say, doesn't take them from the list.
   useKeymapActions(
     {
-      // A read-only hierarchy (a running game) takes the key and does nothing (the keymap prevents its default); a held
-      // key would repeat delete or duplicate on whatever is selected next, so it acts once
+      // A read-only hierarchy (a running game) takes the key and does nothing (the keymap prevents its default)
       "hierarchy.rename": () => {
         if (!readOnly) hierarchy.beginRename()
       },
-      "hierarchy.delete": (e) => {
-        if (!readOnly && !e.repeat) void remove()
-      },
-      "hierarchy.duplicate": (e) => {
-        if (!readOnly && !e.repeat) void duplicate()
-      },
-      // A host before protocol 1.18.0 can't copy: the keys are left alone (false)
-      "hierarchy.copy": (e) => {
-        if (!copyPaste) return false
-        if (!e.repeat) void copy()
-      },
-      "hierarchy.cut": (e) => {
-        if (!copyPaste) return false
-        if (!readOnly && !e.repeat) void cut()
-      },
-      "hierarchy.paste": (e) => {
-        if (!copyPaste) return false
-        if (!readOnly && !e.repeat) void paste()
-      },
+      // Delete, duplicate, copy, cut and paste: the same handlers as the viewport's (selection-keys.ts)
+      ...selectionKeyHandlers("hierarchy", hierarchy, { report: (what, e) => store.reportError(what, e) }),
       "hierarchy.next": () => void hierarchy.step(1, false),
       "hierarchy.previous": () => void hierarchy.step(-1, false),
       "hierarchy.extendNext": () => void hierarchy.step(1, true),

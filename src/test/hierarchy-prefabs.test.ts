@@ -19,6 +19,8 @@ class Host {
   calls: string[] = []
   made = 0
   fail: string | null = null
+  /** The prefab files on the host's disk */
+  files: string[] = []
   constructor(...specs: Array<[string, string, string?]>) {
     this.objects = specs.map(([id, parentId, prefab]) => ({ id, parentId, prefab }))
   }
@@ -49,6 +51,8 @@ class Host {
     createPrefab: async (id: string, path: string, overwrite: boolean) => {
       this.calls.push(`createPrefab ${id}|${path}|${overwrite}`)
       if (this.fail) throw new Error(this.fail)
+      // The host checks the disk, not the editor's listing (EditorServer.cpp: "<path> already exists")
+      if (!overwrite && this.files.includes(path)) throw new Error(`${path} already exists`)
       const object = this.objects.find((o) => o.id === id)
       if (object) object.prefab = P1
       return { path, uuid: P1 }
@@ -73,16 +77,29 @@ class Host {
   }
 }
 
-function setup(host: Host, options: { enabled?: boolean; existing?: string[]; agree?: boolean } = {}) {
+function setup(
+  host: Host,
+  options: { enabled?: boolean; existing?: string[]; agree?: boolean; onDisk?: string[]; refreshable?: boolean } = {}
+) {
   const enabled = signal(options.enabled ?? true)
   const events: string[] = []
   const asked: string[] = []
   const labels: string[] = []
+  // What the listing has (existing), and what a fresh read of it would find (onDisk: files made since it was read)
+  let listed = [...(options.existing ?? [])]
   const prefabs: PrefabOptions = {
     enabled,
     pathOf: (uuid) => (uuid === P1 ? "res://prefabs/One.prefab" : null),
-    exists: (path) => (options.existing ?? []).includes(path),
+    exists: (path) => listed.includes(path),
     changed: () => void events.push("changed"),
+    ...(options.refreshable === false
+      ? {}
+      : {
+          refreshListing: async () => {
+            events.push("listed")
+            listed = [...listed, ...(options.onDisk ?? [])]
+          },
+        }),
   }
   const groups = {
     within: async <T>(label: string, work: () => Promise<T>): Promise<T> => {
@@ -196,8 +213,59 @@ describe("create prefab", () => {
     assert.deepEqual(made, { path: "res://prefabs/A.prefab", uuid: P1 })
     assert.deepEqual(host.calls, ["createPrefab A|res://prefabs/A.prefab|false"])
     assert.deepEqual(t.asked, [])
-    assert.deepEqual(t.events, ["changed"])
+    // The listing is read again before deciding, and after the file is made
+    assert.deepEqual(t.events, ["listed", "changed"])
     assert.equal(t.state.prefabOf("A"), P1) // the object is linked now
+  })
+
+  test("a file made since the listing was read is found by reading it again, and replaced only after the user agrees", async () => {
+    const host = new Host(["A", ""])
+    host.files = ["res://prefabs/A.prefab"]
+    const t = setup(host, { existing: [], onDisk: ["res://prefabs/A.prefab"] })
+    await t.state.refresh()
+    const made = await t.state.createPrefab("A", "res://prefabs/A.prefab")
+    assert.deepEqual(made, { path: "res://prefabs/A.prefab", uuid: P1 })
+    assert.equal(t.asked.length, 1)
+    assert.match(t.asked[0], /Replace res:\/\/prefabs\/A.prefab/)
+    assert.deepEqual(host.calls, ["createPrefab A|res://prefabs/A.prefab|true"])
+
+    const hostNo = new Host(["A", ""])
+    hostNo.files = ["res://prefabs/A.prefab"]
+    const no = setup(hostNo, { existing: [], onDisk: ["res://prefabs/A.prefab"], agree: false })
+    await no.state.refresh()
+    assert.equal(await no.state.createPrefab("A", "res://prefabs/A.prefab"), null)
+    assert.deepEqual(hostNo.calls, [])
+  })
+
+  test("when the listing still lacks the file, the host's refusal asks the user, and a yes sends it again as a replace", async () => {
+    const host = new Host(["A", ""])
+    host.files = ["res://prefabs/A.prefab"]
+    const t = setup(host, { refreshable: false })
+    await t.state.refresh()
+    const made = await t.state.createPrefab("A", "res://prefabs/A.prefab")
+    assert.deepEqual(made, { path: "res://prefabs/A.prefab", uuid: P1 })
+    assert.equal(t.asked.length, 1)
+    assert.match(t.asked[0], /Replace res:\/\/prefabs\/A.prefab/)
+    assert.deepEqual(host.calls, ["createPrefab A|res://prefabs/A.prefab|false", "createPrefab A|res://prefabs/A.prefab|true"])
+    assert.deepEqual(t.events, ["changed"])
+
+    const hostNo = new Host(["A", ""])
+    hostNo.files = ["res://prefabs/A.prefab"]
+    const no = setup(hostNo, { refreshable: false, agree: false })
+    await no.state.refresh()
+    assert.equal(await no.state.createPrefab("A", "res://prefabs/A.prefab"), null)
+    assert.deepEqual(hostNo.calls, ["createPrefab A|res://prefabs/A.prefab|false"])
+    assert.equal(no.state.prefabOf("A"), null)
+  })
+
+  test("a refusal of a replace the user agreed to is not asked about again", async () => {
+    const host = new Host(["A", ""])
+    host.fail = "res://prefabs/A.prefab already exists"
+    const t = setup(host, { existing: ["res://prefabs/A.prefab"] })
+    await t.state.refresh()
+    await assert.rejects(t.state.createPrefab("A", "res://prefabs/A.prefab"), /already exists/)
+    assert.equal(t.asked.length, 1)
+    assert.deepEqual(host.calls, ["createPrefab A|res://prefabs/A.prefab|true"])
   })
 
   test("a file already listed is replaced only after the user agrees", async () => {
@@ -223,9 +291,10 @@ describe("create prefab", () => {
     t.state.setReadOnly("a game is running")
     await assert.rejects(t.state.createPrefab("A", "res://a.prefab"), /can't be changed while a game is running/)
     t.state.setReadOnly(null)
-    host.fail = "A prefab 'res://a.prefab' already exists"
-    await assert.rejects(t.state.createPrefab("A", "res://a.prefab"), /already exists/)
+    host.fail = "CreatePrefab is not allowed in a play session"
+    await assert.rejects(t.state.createPrefab("A", "res://a.prefab"), /not allowed in a play session/)
     assert.deepEqual(host.calls, ["createPrefab A|res://a.prefab|false"])
+    assert.deepEqual(t.asked, [])
   })
 })
 

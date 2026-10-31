@@ -25,6 +25,7 @@ import {
   ProjectApi,
   PreferencesApi,
   RemoteApi,
+  SystemClipboardApi,
 } from "../shared/api"
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -267,3 +268,12 @@ const preferences: PreferencesApi = {
   chooseHostPath: () => invoke(Channels.preferencesChooseHost),
 }
 contextBridge.exposeInMainWorld("preferences", preferences)
+
+// ==================== window.systemClipboard ====================
+
+// The page's navigator.clipboard is refused (main.ts grants no permission): copy and paste go through the main process
+const systemClipboard: SystemClipboardApi = {
+  readText: () => invoke(Channels.clipboardReadText),
+  writeText: (text) => invoke(Channels.clipboardWriteText, text),
+}
+contextBridge.exposeInMainWorld("systemClipboard", systemClipboard)

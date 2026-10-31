@@ -5,6 +5,7 @@ import { signal } from "@preact/signals-core"
 import {
   PrefabAssetsCapability,
   defaultPrefabPath,
+  isPrefabExistsRefusal,
   normalizePrefabPath,
   prefabFileName,
   prefabPathIn,
@@ -102,5 +103,32 @@ describe("prefabOptions", () => {
     const t = make([PrefabAssetsCapability])
     t.options.changed()
     assert.deepEqual(t.refreshed, [1])
+  })
+
+  test("refreshListing waits for a fresh listing, so exists() sees a file made since", async () => {
+    const t = make([PrefabAssetsCapability])
+    const made = { path: "res://New.prefab", uuid: U2, type: "Prefab", size: 1, modified: 2 }
+    t.assets.refresh = async () => {
+      await Promise.resolve()
+      t.assets.listing.value = { folders: [], assets: [...listing.assets, made] } as AssetListing
+    }
+    assert.equal(t.options.exists("res://New.prefab"), false)
+    await t.options.refreshListing!()
+    assert.equal(t.options.exists("res://New.prefab"), true)
+    // A listing that fails is reported, not thrown: the decision is left to the host's refusal
+    t.assets.refresh = async () => {
+      throw new Error("offline")
+    }
+    await t.options.refreshListing!()
+    assert.deepEqual(t.errors, ["Failed to list the assets"])
+  })
+})
+
+describe("the host's refusal to replace a prefab unasked", () => {
+  test("is told apart from other refusals by its words", () => {
+    assert.equal(isPrefabExistsRefusal("res://prefabs/A.prefab already exists"), true)
+    assert.equal(isPrefabExistsRefusal("res://prefabs/A.prefab isn't a file"), false)
+    assert.equal(isPrefabExistsRefusal("A prefab's path must end in .prefab: res://a"), false)
+    assert.equal(isPrefabExistsRefusal("already exists"), false)
   })
 })
