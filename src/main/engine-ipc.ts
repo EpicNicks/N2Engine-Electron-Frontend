@@ -12,6 +12,7 @@ import {
   EngineCommandArgs,
   EngineCommandName,
   EngineCommands,
+  MaxAssetMoves,
   MaxEntityBoundsIds,
   MaxJsonDepth,
   MaxJsonNodes,
@@ -41,6 +42,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
   stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
+  assetMoves: `an array of 1 to ${MaxAssetMoves} {from, to} pairs of strings`,
   inputEvents: "an array of input events",
 }
 
@@ -123,6 +125,20 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
           items.push(item)
         }
         return items
+      }
+      break
+    case "assetMoves":
+      if (Array.isArray(value) && value.length >= 1 && value.length <= MaxAssetMoves) {
+        // An index loop, as for stringArray: a sparse array's holes must not pass; only from and to are copied
+        const moves: { from: string; to: string }[] = []
+        for (let i = 0; i < value.length; i++) {
+          const item: unknown = value[i]
+          if (typeof item !== "object" || item === null || Array.isArray(item)) throw new Error(`${where} must be ${KindDescriptions[kind]}`)
+          const { from, to } = item as Record<string, unknown>
+          if (typeof from !== "string" || typeof to !== "string") throw new Error(`${where} must be ${KindDescriptions[kind]}`)
+          moves.push({ from, to })
+        }
+        return moves
       }
       break
     case "inputEvents":

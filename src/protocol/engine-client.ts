@@ -2,6 +2,8 @@ import * as net from "net"
 import {
   AssetDetails,
   AssetListResponse,
+  AssetMove,
+  AssetsMovedResult,
   LuaSyntaxResult,
   AutosaveInfo,
   CameraPositionResponse,
@@ -42,7 +44,7 @@ import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
 import { validateNetworkSettingsInfo, validateNetworkValidationReport } from "./network-panel"
-import { parseAssetDetails, parseAssetList } from "./asset-parse"
+import { parseAssetDetails, parseAssetList, parseAssetsMoved } from "./asset-parse"
 import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
@@ -888,6 +890,16 @@ export class EngineClient {
   /** Makes a folder and those above it that are missing (Ok when it exists) */
   createFolder(path: string): Promise<void> {
     return this.send(Commands.CreateFolder, { path })
+  }
+
+  /**
+   * Moves (and renames) assets and folders (protocol 1.24.0, 1..256 {from, to}: `to` is the new full path). All or
+   * nothing: the host refuses the whole call for a collision, a path outside the assets or the open scene's file. An
+   * asset keeps its UUID, so what refers to it by UUID keeps working. The answer lists what moved and the host's
+   * warnings (a script that names the old path).
+   */
+  async moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult> {
+    return parseAssetsMoved((await this.send(Commands.MoveAsset, { moves })).result)
   }
 
   // ==================== Events ====================

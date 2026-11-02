@@ -7,7 +7,8 @@ import { useRef } from "preact/hooks"
 import { signal } from "@preact/signals"
 import { AssetThumb, DetailPreviewSize, RowPreviewSize } from "./asset-thumb"
 import { entriesAfter } from "./console-store"
-import { AssetDragEffect, AssetDragType, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
+import { AssetDragType, AssetMoveDragType, AssetRowDragEffect, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
+import { ConfirmMoveAssets, assetsMoving, canDrop, planMove } from "./asset-move"
 import type { AssetEntry } from "../shared/api"
 import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
 import { RootId } from "./hierarchy-tree"
@@ -18,7 +19,7 @@ import { ImportSettingsForm } from "./assets-import-form"
 import { ImportCheck, ImportSchema, checkImportSettings, firstImportError, importSchemaFor } from "./assets-import-schema"
 import { useKeymapActions } from "./keymap-hooks"
 import { systemClipboardOf } from "./system-clipboard"
-import { AppState, Empty, MenuItem, Panel, prompt, showContextMenu, useApp } from "./ui"
+import { AppState, Empty, MenuItem, Panel, confirmDialog, prompt, showContextMenu, useApp } from "./ui"
 
 /** A glyph for a resource type (the host's names) */
 function typeIcon(type: string, name: string): string {
@@ -172,6 +173,99 @@ function folderDrop(app: AppState, folder: string) {
   }
 }
 
+// ==================== Moving ====================
+
+/** The paths a drag in the panel moves, set when it starts: during a drag only the types are readable, not the data */
+const movingPaths = signal<readonly string[]>([])
+
+/** The folder a drag of assets is over, and whether a drop there would move something (else it is marked as refused) */
+const moveOver = signal<{ folder: string; ok: boolean } | null>(null)
+
+/** What dragging a row moves: the whole selection when the row is in it, else just the row */
+function movedBy(app: AppState, path: string): string[] {
+  const selection = app.assets.selectedPaths()
+  return selection.includes(path) ? selection : [path]
+}
+
+/** Moves the sources into a folder; a folder of many assets asks once. The host's refusal is shown. */
+async function runMove(app: AppState, sources: readonly string[], folder: string): Promise<void> {
+  const { store, assets } = app
+  try {
+    const listing = assets.listing.peek()
+    if (listing) {
+      const plan = planMove(listing, sources, folder, store.scene.peek()?.path || null)
+      const count = plan.problem === null ? assetsMoving(listing, plan.moves) : 0
+      if (count > ConfirmMoveAssets && !(await confirmDialog(`Move ${count} assets into ${folder}?`, "Move"))) return
+    }
+    await assets.moveAssets(sources, folder)
+  } catch (e) {
+    store.reportError("Failed to move", e)
+  }
+}
+
+/**
+ * A folder (or the root) as the place to drop assets being moved (MoveAsset, protocol 1.24.0). The drop is allowed when it
+ * would move something (not into itself, not onto a name that is there, not the folder the open scene is in); otherwise the
+ * folder is marked as refused. The host has the last word, and its refusal is shown.
+ */
+function moveDrop(app: AppState, folder: string) {
+  const accepts = (e: DragEvent): boolean => dragHas(e, AssetMoveDragType) && app.store.connected.value && app.store.canWrite.value
+  const forget = () => {
+    if (moveOver.value?.folder === folder) moveOver.value = null
+  }
+  return {
+    onDragOver: (e: DragEvent) => {
+      if (!accepts(e)) return
+      e.stopPropagation()
+      const listing = app.assets.listing.value
+      const ok = listing !== null && canDrop(planMove(listing, movingPaths.value, folder, app.store.scene.value?.path || null))
+      if (ok) e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = ok ? "move" : "none"
+      if (moveOver.value?.folder !== folder || moveOver.value.ok !== ok) moveOver.value = { folder, ok }
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) forget()
+    },
+    onDrop: (e: DragEvent) => {
+      moveOver.value = null
+      if (!accepts(e)) return
+      e.stopPropagation()
+      e.preventDefault()
+      let sources = movingPaths.peek()
+      try {
+        const data: unknown = JSON.parse(e.dataTransfer?.getData(AssetMoveDragType) ?? "[]")
+        if (Array.isArray(data)) sources = data.filter((p): p is string => typeof p === "string")
+      } catch {
+        // The drag's own list stands
+      }
+      movingPaths.value = []
+      if (sources.length > 0) void runMove(app, sources, folder)
+    },
+  }
+}
+
+/** What a folder, a file row or the list takes dropped on it: assets to move, or an object to make a prefab of */
+function dropOn(app: AppState, folder: string) {
+  const prefab = folderDrop(app, folder)
+  const move = moveDrop(app, folder)
+  const moving = (e: DragEvent) => dragHas(e, AssetMoveDragType)
+  return {
+    onDragOver: (e: DragEvent) => (moving(e) ? move.onDragOver(e) : prefab.onDragOver(e)),
+    onDragLeave: (e: DragEvent) => {
+      move.onDragLeave(e)
+      prefab.onDragLeave(e)
+    },
+    onDrop: (e: DragEvent) => (moving(e) ? move.onDrop(e) : prefab.onDrop(e)),
+  }
+}
+
+/** The class of a drop target: highlighted for a drop that moves, marked for one that is refused, else none */
+function moveClass(folder: string): string | null {
+  const over = moveOver.value
+  if (over?.folder !== folder) return null
+  return over.ok ? "drop-target" : "drop-refused"
+}
+
 function RowView({ row }: { row: AssetRow }) {
   const app = useApp()
   const { store, assets } = app
@@ -189,6 +283,8 @@ function RowView({ row }: { row: AssetRow }) {
     const classes = ["asset-row"]
     if (selected) classes.push("selected")
     if (prefabDropFolder.value === row.path) classes.push("drop-target")
+    const moving = moveClass(row.path)
+    if (moving) classes.push(moving)
     return (
       <div
         class={classes.join(" ")}
@@ -199,7 +295,21 @@ function RowView({ row }: { row: AssetRow }) {
           assets.toggle(row.path)
         }}
         onContextMenu={onContextMenu}
-        {...folderDrop(app, row.path)}
+        // A folder is dragged onto another folder to move it, with what is selected when it is one of the selection
+        draggable
+        onDragStart={(e) => {
+          if (!e.dataTransfer) return
+          const paths = movedBy(app, row.path)
+          movingPaths.value = paths
+          e.dataTransfer.effectAllowed = "move"
+          e.dataTransfer.setData(AssetMoveDragType, JSON.stringify(paths))
+          e.dataTransfer.setData("text/plain", row.path)
+        }}
+        onDragEnd={() => {
+          movingPaths.value = []
+          moveOver.value = null
+        }}
+        {...dropOn(app, row.path)}
       >
         <span class="arrow">{row.open ? "▾" : "▸"}</span>
         <span class="icon">📁</span>
@@ -247,8 +357,14 @@ function RowView({ row }: { row: AssetRow }) {
       draggable
       onDragStart={(e) => {
         if (!e.dataTransfer) return
-        e.dataTransfer.effectAllowed = AssetDragEffect
+        e.dataTransfer.effectAllowed = AssetRowDragEffect
         e.dataTransfer.setData(AssetDragType, assetDragData(entry))
+        // A file (not a part of a model) can also be dropped on a folder to move it, with the other selected files
+        if (row.kind === "asset") {
+          const paths = movedBy(app, row.path)
+          movingPaths.value = paths
+          e.dataTransfer.setData(AssetMoveDragType, JSON.stringify(paths))
+        }
         // A prefab can also be dropped on the hierarchy (a copy with a link is made there)
         // Dragging one of several selected prefabs carries all of them, as a list (the drop adds them as one edit group)
         if (type === PrefabResourceType) {
@@ -260,8 +376,13 @@ function RowView({ row }: { row: AssetRow }) {
         }
         e.dataTransfer.setData("text/plain", row.path)
       }}
-      // An object dragged from the hierarchy onto a file makes a prefab in the file's folder
-      {...folderDrop(app, parentOf(row.kind === "sub" ? row.parent.path : row.path))}
+      onDragEnd={() => {
+        movingPaths.value = []
+        moveOver.value = null
+      }}
+      // An object dragged from the hierarchy onto a file makes a prefab in the file's folder; assets dragged onto it move
+      // into that folder
+      {...dropOn(app, parentOf(row.kind === "sub" ? row.parent.path : row.path))}
     >
       {row.kind === "asset" && row.parts > 0 ? (
         <span
@@ -510,9 +631,25 @@ export function AssetsPanel() {
         </select>
       </div>
       {error && listing && <div class="asset-error">Couldn't refresh: {error}</div>}
+      {assets.moveNotes.value.length > 0 && (
+        <div class="asset-warning move-notes" role="status">
+          {assets.moveNotes.value.map((note, i) => (
+            <div key={i}>{note}</div>
+          ))}
+          <button type="button" onClick={() => assets.dismissMoveNotes()}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <div
-        class={prefabDropFolder.value === RootFolder ? "asset-list drop-target" : "asset-list"}
-        {...folderDrop(app, RootFolder)}
+        class={
+          prefabDropFolder.value === RootFolder
+            ? "asset-list drop-target"
+            : moveClass(RootFolder)
+              ? `asset-list ${moveClass(RootFolder)}`
+              : "asset-list"
+        }
+        {...dropOn(app, RootFolder)}
       >
         {content}
       </div>
