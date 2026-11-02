@@ -444,13 +444,19 @@ describe("paths: no write reaches editor/ or leaves assets/", () => {
       for (const [tool, args] of [
         ["n2_write_text_asset", { path, text: "x" }],
         ["n2_create_script", { path }],
+        ["n2_move_asset", { moves: [{ from: path, to: "res://moved/ok.txt" }] }],
+        ["n2_move_asset", { moves: [{ from: "res://textures/wall.png", to: path }] }],
       ] as Array<[string, Record<string, unknown>]>) {
         const r = await h.call(tool, args)
         assert.equal(r.isError, true, `${tool} ${JSON.stringify(path)}`)
         assert.ok(code(r) === "path_refused" || /Invalid arguments|validation/i.test(textOf(r)), `${tool} ${JSON.stringify(path)}: ${textOf(r).slice(0, 120)}`)
       }
     }
-    assert.equal(h.host.count("WriteTextAsset") + h.host.count("CreateScriptAsset") + h.host.count("ReadTextAsset"), 0, "the host was not even asked to read")
+    assert.equal(
+      h.host.count("WriteTextAsset") + h.host.count("CreateScriptAsset") + h.host.count("ReadTextAsset") + h.host.count("MoveAsset"),
+      0,
+      "the host was not even asked to read"
+    )
     await h.close()
   })
 

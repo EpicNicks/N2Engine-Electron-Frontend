@@ -56,6 +56,8 @@ export class FakeWorld {
   counter = 100
   /** Commands that changed the world, by name: to see that a refused call changed nothing */
   mutations: string[] = []
+  /** What MoveAsset answers as warnings */
+  moveWarnings: string[] = []
 
   constructor(readonly host: FakeHost) {}
 
@@ -355,6 +357,43 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
     const id = world.nextId()
     host.assets.push({ path: r.path, uuid: id, type: "LuaScript", size: 40, modified: 1700000002000 })
     return { path: r.path, uuid: id }
+  })
+
+  // MoveAsset (protocol 1.24.0): everything is checked before anything moves (all or nothing); an asset keeps its UUID
+  const lowerInside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`)
+  h("MoveAsset", (r) => {
+    const moves: Array<{ from: string; to: string }> = r.moves
+    if (moves.length < 1 || moves.length > 256) throw new Refusal("Between 1 and 256 moves")
+    const exists = (p: string): boolean => host.folders.includes(p) || host.assets.some((a) => a.path === p)
+    const taken = new Set<string>([...host.folders, ...host.assets.map((a) => a.path)].map((p) => p.toLowerCase()))
+    const placed = new Set<string>()
+    for (const m of moves) {
+      if (!exists(m.from)) throw new Refusal(`Not an asset: ${m.from}`)
+      if (m.from === m.to) throw new Refusal("already there")
+      if (lowerInside(m.to, m.from)) throw new Refusal("A folder cannot move into itself")
+      if (lowerInside(world.scenePath, m.from)) throw new Refusal("The open scene is in that move: save the scene elsewhere first")
+      const ext = (p: string): string => (p.slice(p.lastIndexOf("/") + 1).match(/\.[^.]*$/)?.[0] ?? "").toLowerCase()
+      if (!host.folders.includes(m.from) && ext(m.from) !== ext(m.to)) throw new Refusal("A move cannot change the extension")
+      if (taken.has(m.to.toLowerCase()) || placed.has(m.to.toLowerCase())) throw new Refusal(`${m.to} already exists`)
+      placed.add(m.to.toLowerCase())
+    }
+    const moved: Array<{ from: string; to: string; uuid?: string; type?: string }> = []
+    for (const m of moves) {
+      if (host.folders.includes(m.from)) moved.push({ from: m.from, to: m.to })
+      for (const a of host.assets) {
+        if (!lowerInside(a.path, m.from)) continue
+        const to = m.to + a.path.slice(m.from.length)
+        moved.push({ from: a.path, to, uuid: a.uuid, type: a.type })
+        if (host.texts.has(a.path)) {
+          host.texts.set(to, host.texts.get(a.path) as string)
+          host.texts.delete(a.path)
+        }
+        a.path = to
+      }
+      host.folders = host.folders.map((f) => (lowerInside(f, m.from) ? m.to + f.slice(m.from.length) : f))
+    }
+    world.mutations.push("MoveAsset")
+    return { result: { moved, warnings: [...world.moveWarnings] } }
   })
 
   // ----- scenes and settings -----
