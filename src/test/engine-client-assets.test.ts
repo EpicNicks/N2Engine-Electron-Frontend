@@ -13,12 +13,14 @@ import {
   decodeCreateScriptAssetRequest,
   decodeGetAssetInfoRequest,
   decodeListAssetsRequest,
+  decodeMoveAssetRequest,
   decodeReadTextAssetRequest,
   decodeSetImportSettingsRequest,
   decodeWriteTextAssetRequest,
   encodeAssetCreatedResponse,
   encodeAssetDetailResponse,
   encodeAssetListResponse,
+  encodeAssetsMovedResponse,
   encodeErrorResponse,
   encodeFrame,
   encodeOkResponse,
@@ -151,6 +153,25 @@ describe("EngineClient asset commands", () => {
     reply(ResponseType.Ok, encodeOkResponse({}))
     await client.createFolder("res://a/b")
     assert.deepEqual(decodeCreateFolderRequest(requests[0].payload), { path: "res://a/b" })
+  })
+
+  test("moveAssets sends the pairs and answers what moved with the host's warnings (1.24.0)", async () => {
+    const client = await connected()
+    const moved = [
+      { from: "res://a", to: "res://b/a" },
+      { from: "res://a/x.png", to: "res://b/a/x.png", uuid: info.uuid, type: "Texture" },
+    ]
+    reply(ResponseType.AssetsMoved, encodeAssetsMovedResponse({ result: { moved, warnings: ["scripts name the old path"] } }))
+    const answer = await client.moveAssets([{ from: "res://a", to: "res://b/a" }])
+    assert.deepEqual(answer, { moved, warnings: ["scripts name the old path"] })
+    assert.equal(requests[0].type, CommandType.MoveAsset)
+    assert.deepEqual(decodeMoveAssetRequest(requests[0].payload), { moves: [{ from: "res://a", to: "res://b/a" }] })
+  })
+
+  test("a move answer of the wrong shape is refused", async () => {
+    const client = await connected()
+    reply(ResponseType.AssetsMoved, encodeAssetsMovedResponse({ result: { moved: [{ from: "res://a" }], warnings: [] } as never }))
+    await assert.rejects(client.moveAssets([{ from: "res://a", to: "res://b/a" }]), /to must be a string/)
   })
 
   test("the host's Error responses reject with its message, and the connection carries on", async () => {

@@ -23,6 +23,7 @@ function setup() {
     ] as AssetInfo[],
     files: new Map<string, string>([["res://scripts/a.lua", "print(1)"]]),
     settings: { sRGB: true } as Record<string, unknown>,
+    moveWarnings: [] as string[],
     fail: new Map<string, string>(),
     failCode: new Map<string, string>(),
   }
@@ -73,6 +74,27 @@ function setup() {
       calls.push(`createFolder ${path}`)
       gate("createFolder")
       if (!state.folders.includes(path)) state.folders.push(path)
+    },
+    moveAssets: async (moves: { from: string; to: string }[]) => {
+      calls.push(`moveAssets ${moves.map((m) => `${m.from}>${m.to}`).join(",")}`)
+      gate("moveAssets")
+      const moved: { from: string; to: string; uuid?: string; type?: string }[] = []
+      for (const m of moves) {
+        const under = (p: string) => p === m.from || p.startsWith(`${m.from}/`)
+        if (state.folders.includes(m.from)) moved.push({ from: m.from, to: m.to })
+        for (const a of state.assets) {
+          if (!under(a.path)) continue
+          const to = m.to + a.path.slice(m.from.length)
+          moved.push({ from: a.path, to, uuid: a.uuid, type: a.type })
+          if (state.files.has(a.path)) {
+            state.files.set(to, state.files.get(a.path) as string)
+            state.files.delete(a.path)
+          }
+          a.path = to
+        }
+        state.folders = state.folders.map((f) => (under(f) ? m.to + f.slice(m.from.length) : f))
+      }
+      return { moved, warnings: [...state.moveWarnings] }
     },
   }
   const errors: string[] = []
@@ -743,5 +765,136 @@ describe("AssetsState denied saves", () => {
     assert.equal(await assets.saveText("res://scripts/a.lua"), false)
     assert.equal(assets.tabs.value[0].error, "busy")
     assert.deepEqual(errors, [])
+  })
+})
+
+describe("AssetsState moving assets (protocol 1.24.0)", () => {
+  test("a file moves into a folder: the plan is sent, the selection and the folder follow, the UUID stays", async () => {
+    const { assets, calls, state } = setup()
+    state.folders.push("res://textures")
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    const result = await assets.moveAssets(["res://hero.png"], "res://textures")
+    assert.ok(calls.includes("moveAssets res://hero.png>res://textures/hero.png"))
+    assert.deepEqual(result?.moved, [{ from: "res://hero.png", to: "res://textures/hero.png", uuid: U1, type: "Texture" }])
+    assert.equal(assets.selected.value, "res://textures/hero.png")
+    assert.equal(assets.open.value.has("res://textures"), true)
+    assert.deepEqual(
+      assets.listing.value?.assets.map((a) => [a.path, a.uuid]).sort(),
+      [["res://scripts/a.lua", U2], ["res://textures/hero.png", U1]]
+    )
+    assert.equal(assets.detail.value?.path, "res://textures/hero.png")
+  })
+
+  test("a folder move keeps an open file and its unsaved text under the new path, and the open folders follow", async () => {
+    const { assets, state } = setup()
+    state.folders.push("res://textures")
+    await assets.refresh()
+    assets.toggle("res://scripts")
+    await assets.openText("res://scripts/a.lua")
+    assets.editText("res://scripts/a.lua", "mine")
+    await assets.moveAssets(["res://scripts"], "res://textures")
+    assert.equal(assets.tabs.value[0].path, "res://textures/scripts/a.lua")
+    assert.equal(assets.tabs.value[0].text, "mine")
+    assert.equal(assets.activeTab.value, "res://textures/scripts/a.lua")
+    assert.equal(assets.open.value.has("res://textures/scripts"), true)
+    assert.equal(assets.open.value.has("res://scripts"), false)
+    // Saving writes the new path
+    assert.equal(await assets.saveText("res://textures/scripts/a.lua"), true)
+  })
+
+  test("the selected files that were marked move together and stay marked", async () => {
+    const { assets, state } = setup()
+    state.folders.push("res://textures")
+    state.assets.push({ path: "res://b.png", uuid: U3, type: "Texture", size: 1, modified: 1 })
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    await assets.toggleMarked("res://b.png")
+    await assets.moveAssets(assets.selectedPaths(), "res://textures")
+    assert.equal(assets.selected.value, "res://textures/hero.png")
+    assert.deepEqual([...assets.marked.value], ["res://textures/b.png"])
+  })
+
+  test("a drop that needs no move sends nothing and answers null", async () => {
+    const { assets, calls } = setup()
+    await assets.refresh()
+    assert.equal(await assets.moveAssets(["res://scripts/a.lua"], "res://scripts"), null)
+    assert.equal(calls.some((c) => c.startsWith("moveAssets")), false)
+  })
+
+  test("a drop the panel can tell is wrong never reaches the host", async () => {
+    const { assets, calls, state } = setup()
+    state.folders.push("res://scripts/enemies")
+    state.assets.push({ path: "res://scripts/hero.png", uuid: U3, type: "Texture", size: 1, modified: 1 })
+    await assets.refresh()
+    await assert.rejects(assets.moveAssets(["res://scripts"], "res://scripts/enemies"), /into itself/)
+    await assert.rejects(assets.moveAssets(["res://hero.png"], "res://scripts"), /already exists/)
+    assert.equal(calls.some((c) => c.startsWith("moveAssets")), false)
+  })
+
+  test("the open scene's file is not moved, as the host would refuse", async () => {
+    const { engine } = setup()
+    const assets = new AssetsState(engine, null, () => {}, () => null, () => true, () => "res://scripts/a.lua")
+    await assets.refresh()
+    await assert.rejects(assets.moveAssets(["res://scripts/a.lua"], "res://"), /save the scene elsewhere first/)
+  })
+
+  test("nothing moves while the assets are locked (a play session, a read-only host)", async () => {
+    const { engine, calls } = setup()
+    const assets = new AssetsState(engine, null, () => {}, () => "a play session is running")
+    await assets.refresh()
+    await assert.rejects(assets.moveAssets(["res://hero.png"], "res://scripts"), /can't be changed now: a play session/)
+    assert.equal(calls.some((c) => c.startsWith("moveAssets")), false)
+  })
+
+  test("the host's refusal is thrown and nothing the panel holds changes", async () => {
+    const { assets, state } = setup()
+    state.folders.push("res://textures")
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    state.fail.set("moveAssets", "res://textures/hero.png is open in another process")
+    await assert.rejects(assets.moveAssets(["res://hero.png"], "res://textures"), /another process/)
+    assert.equal(assets.selected.value, "res://hero.png")
+    assert.equal(assets.open.value.has("res://textures"), false)
+  })
+
+  test("the host's warnings are kept until dismissed", async () => {
+    const { assets, state } = setup()
+    state.folders.push("res://textures")
+    state.moveWarnings.push("scripts/b.lua names res://hero.png")
+    await assets.refresh()
+    await assets.moveAssets(["res://hero.png"], "res://textures")
+    assert.deepEqual(assets.moveNotes.value, ["scripts/b.lua names res://hero.png"])
+    assets.dismissMoveNotes()
+    assert.deepEqual(assets.moveNotes.value, [])
+  })
+
+  test("a move made by another client of the host: an open file follows, it is not flagged as removed", async () => {
+    const { assets, state } = setup()
+    state.folders.push("res://textures")
+    await assets.refresh()
+    await assets.openText("res://scripts/a.lua")
+    // The other client moved the file on the host
+    state.files.set("res://textures/a.lua", "print(1)")
+    state.files.delete("res://scripts/a.lua")
+    state.assets[1].path = "res://textures/a.lua"
+    await assets.onAssetsChanged(
+      change({
+        added: ["res://textures/a.lua"],
+        removed: ["res://scripts/a.lua"],
+        moved: [{ from: "res://scripts/a.lua", to: "res://textures/a.lua" }],
+      })
+    )
+    assert.equal(assets.tabs.value.length, 1)
+    assert.equal(assets.tabs.value[0].path, "res://textures/a.lua")
+    assert.equal(assets.tabs.value[0].external, null)
+  })
+
+  test("an event without moved (an older host) still refreshes the listing", async () => {
+    const { assets, state } = setup()
+    await assets.refresh()
+    state.assets[0].path = "res://other.png"
+    await assets.onAssetsChanged(change({ added: ["res://other.png"], removed: ["res://hero.png"] }))
+    assert.ok(assets.listing.value?.assets.some((a) => a.path === "res://other.png"))
   })
 })

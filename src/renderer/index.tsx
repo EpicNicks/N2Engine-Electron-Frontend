@@ -102,7 +102,9 @@ const assets = new AssetsState(
   // The host refuses the asset writers during a play session, and always when it is read-only
   () => store.readOnlyReason.peek(),
   // Previews need GetAssetPreview (protocol 1.17.0)
-  () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion)
+  () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion),
+  // The host refuses to move the loaded scene's file (or a folder that holds it)
+  () => store.scene.peek()?.path || null
 )
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,

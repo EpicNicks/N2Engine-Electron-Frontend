@@ -5,6 +5,8 @@
 import type {
   AssetDetails,
   AssetListResponse,
+  AssetMove,
+  AssetsMovedResult,
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
@@ -113,6 +115,8 @@ export interface EngineCommands {
   createScriptAsset(path: string, className: string): Promise<{ path: string; uuid: string }>
   /** Makes a folder and those above it that are missing; Ok when it exists */
   createFolder(path: string): Promise<void>
+  /** Moves assets and folders, all or nothing (protocol 1.24.0; 1..MaxAssetMoves {from, to} pairs); see EngineClient.moveAssets */
+  moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult>
 
   getEngineHealth(): Promise<EngineHealthResponse>
 
@@ -262,7 +266,10 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray"
+export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray" | "assetMoves"
+
+/** MoveAsset takes at most this many {from, to} pairs (the host refuses more) */
+export const MaxAssetMoves = 256
 
 /** GetEntityBounds takes at most this many ids (the host refuses more) */
 export const MaxEntityBoundsIds = 4096
@@ -302,6 +309,7 @@ export const EngineCommandArgs = {
   writeTextAsset: ["string", "string"],
   createScriptAsset: ["string", "string"],
   createFolder: ["string"],
+  moveAssets: ["assetMoves"],
   getEngineHealth: [],
   pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],
@@ -363,6 +371,7 @@ interface ArgKindTypes {
   quat: Quat
   jsonObject: JsonObject
   stringArray: string[]
+  assetMoves: AssetMove[]
   inputEvents: InputEvent[]
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }

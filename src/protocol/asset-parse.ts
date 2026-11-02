@@ -1,6 +1,13 @@
 // The asset commands' answers (protocol 1.9.0: ListAssets, GetAssetInfo): validated before anything uses them. The
 // engine stays the authority on paths and types; this only makes sure what arrives has the shape the panel reads.
-import type { AssetDetails, AssetInfo, AssetListResponse, SubAssetInfo } from "./protocol.generated"
+import type {
+  AssetDetails,
+  AssetInfo,
+  AssetListResponse,
+  AssetsMovedResult,
+  MovedAsset,
+  SubAssetInfo,
+} from "./protocol.generated"
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -70,4 +77,25 @@ export function parseAssetDetails(value: unknown): AssetDetails {
   if (!isObject(customData)) throw new Error(`${where}: customData must be an object`)
   if (typeof record.loaded !== "boolean") throw new Error(`${where}: loaded must be a boolean`)
   return { ...info, customData, loaded: record.loaded }
+}
+
+/**
+ * MoveAsset's answer (protocol 1.24.0, AssetsMoved): the assets moved with their UUIDs (the same before and after; a
+ * folder's entry has none) and the host's warnings, which are shown, not errors: the move has happened.
+ */
+export function parseAssetsMoved(value: unknown): AssetsMovedResult {
+  const where = "The move answer"
+  if (!isObject(value)) throw new Error(`${where} must be an object`)
+  const { moved, warnings } = value
+  if (!Array.isArray(moved)) throw new Error(`${where}: moved must be an array`)
+  const parsed = moved.map((item, i): MovedAsset => {
+    const at = `${where}: item ${i}`
+    if (!isObject(item)) throw new Error(`${at} must be an object`)
+    const entry: MovedAsset = { from: requireString(item, "from", at), to: requireString(item, "to", at) }
+    if (typeof item.uuid === "string") entry.uuid = item.uuid
+    if (typeof item.type === "string") entry.type = item.type
+    return entry
+  })
+  const notes = Array.isArray(warnings) ? warnings.filter((w): w is string => typeof w === "string") : []
+  return { moved: parsed, warnings: notes }
 }

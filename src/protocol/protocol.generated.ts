@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.23.0";
+export const PROTOCOL_VERSION = "1.24.0";
 
 // ==================== Types ====================
 
@@ -48,6 +48,7 @@ export interface EditorEvent {
   added?: string[];
   removed?: string[];
   modified?: string[];
+  moved?: MovedAsset[];
   canUndo?: boolean;
   canRedo?: boolean;
   label?: string;
@@ -67,6 +68,23 @@ export interface InputEvent {
   down?: boolean;
   x?: number;
   y?: number;
+}
+
+export interface AssetMove {
+  from: string;
+  to: string;
+}
+
+export interface MovedAsset {
+  from: string;
+  to: string;
+  uuid?: string;
+  type?: string;
+}
+
+export interface AssetsMovedResult {
+  moved: MovedAsset[];
+  warnings: string[];
 }
 
 export interface HistoryEntry {
@@ -497,6 +515,7 @@ export const CommandType = {
   GetNetworkSettings: 0x51,
   SetNetworkSettings: 0x52,
   GetNetworkValidation: 0x53,
+  MoveAsset: 0xAF,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -547,6 +566,7 @@ export const ResponseType = {
   PhysicsBackends: 0x23,
   NetworkSettings: 0x24,
   NetworkValidation: 0x25,
+  AssetsMoved: 0xA5,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -638,6 +658,7 @@ export const CommandResponse = {
   GetNetworkSettings: "NetworkSettings",
   SetNetworkSettings: "NetworkSettings",
   GetNetworkValidation: "NetworkValidation",
+  MoveAsset: "AssetsMoved",
 } as const;
 
 // ==================== Messages ====================
@@ -934,6 +955,10 @@ export interface GetNetworkValidationRequest {
   preset: string;
 }
 
+export interface MoveAssetRequest {
+  moves: AssetMove[];
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -1169,6 +1194,10 @@ export interface NetworkSettingsResponse {
 
 export interface NetworkValidationResponse {
   report: NetworkValidationReport;
+}
+
+export interface AssetsMovedResponse {
+  result: AssetsMovedResult;
 }
 
 export interface ErrorCodedResponse {
@@ -2394,6 +2423,20 @@ export function decodeGetNetworkValidationRequest(payload: Uint8Array): GetNetwo
   return { preset };
 }
 
+/** MoveAsset's request payload (without the frame header) */
+export function encodeMoveAssetRequest(value: MoveAssetRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.moves);
+  return writer.finish();
+}
+
+/** Reads MoveAsset's request payload; bytes after the last field are ignored */
+export function decodeMoveAssetRequest(payload: Uint8Array): MoveAssetRequest {
+  const reader = new ProtocolReader(payload);
+  const moves = reader.json() as AssetMove[];
+  return { moves };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3125,6 +3168,20 @@ export function decodeNetworkValidationResponse(payload: Uint8Array): NetworkVal
   return { report };
 }
 
+/** AssetsMoved's payload (without the frame header) */
+export function encodeAssetsMovedResponse(value: AssetsMovedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.result);
+  return writer.finish();
+}
+
+/** Reads AssetsMoved's payload; bytes after the last field are ignored */
+export function decodeAssetsMovedResponse(payload: Uint8Array): AssetsMovedResponse {
+  const reader = new ProtocolReader(payload);
+  const result = reader.json() as AssetsMovedResult;
+  return { result };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3201,6 +3258,7 @@ export const RequestCodecs = {
   SetPhysicsBackend: { encode: encodeSetPhysicsBackendRequest, decode: decodeSetPhysicsBackendRequest },
   SetNetworkSettings: { encode: encodeSetNetworkSettingsRequest, decode: decodeSetNetworkSettingsRequest },
   GetNetworkValidation: { encode: encodeGetNetworkValidationRequest, decode: decodeGetNetworkValidationRequest },
+  MoveAsset: { encode: encodeMoveAssetRequest, decode: decodeMoveAssetRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3249,5 +3307,6 @@ export const ResponseCodecs = {
   PhysicsBackends: { encode: encodePhysicsBackendsResponse, decode: decodePhysicsBackendsResponse },
   NetworkSettings: { encode: encodeNetworkSettingsResponse, decode: decodeNetworkSettingsResponse },
   NetworkValidation: { encode: encodeNetworkValidationResponse, decode: decodeNetworkValidationResponse },
+  AssetsMoved: { encode: encodeAssetsMovedResponse, decode: decodeAssetsMovedResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

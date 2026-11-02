@@ -226,6 +226,7 @@ function setup(settings: Record<string, unknown> = {}) {
     writeTextAsset: async () => {},
     createScriptAsset: async () => ({ path: "", uuid: "" }),
     createFolder: async () => {},
+    moveAssets: async () => ({ moved: [], warnings: [] }),
   }
   const assets = new AssetsState(engine, null, () => {}, () => blocked)
   return { assets, state, calls, block: (reason: string | null) => (blocked = reason) }
