@@ -152,8 +152,39 @@ export class HierarchyState {
     if (reason !== null) throw new Error(`The scene can't be changed while ${reason}`)
   }
 
+  /** The scene's selection and expanded objects while a prefab stage is open (they come back when it closes) */
+  private parked: { selection: Selection; expanded: ReadonlySet<string> } | null = null
+
+  /**
+   * A prefab stage opened (protocol 1.26.0): the scene's selection and expanded objects are kept aside and cleared. The
+   * stage's ids are the prefab file's, which can equal ids of the scene (the object it was made from has the same ones),
+   * so keeping them selected would select the wrong objects.
+   */
+  enterPrefabStage(): void {
+    if (this.parked) return
+    batch(() => {
+      this.parked = { selection: this.selection.value, expanded: this.expanded.value }
+      this.expanded.value = new Set()
+      this.renaming.value = null
+      this.setSelection(emptySelection)
+    })
+  }
+
+  /** The stage closed: the scene's selection and expanded objects come back (the next read keeps those that exist) */
+  leavePrefabStage(): void {
+    const parked = this.parked
+    if (!parked) return
+    this.parked = null
+    batch(() => {
+      this.renaming.value = null
+      this.expanded.value = parked.expanded
+      this.setSelection(parked.selection)
+    })
+  }
+
   /** Everything is gone (disconnected, or another host) */
   reset(): void {
+    this.parked = null
     this.fetches++
     batch(() => {
       this.response.value = null

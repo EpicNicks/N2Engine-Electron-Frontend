@@ -154,6 +154,8 @@ const play = new PlayController({
   api: window.play,
   stats: store.clientStats,
   setPlayMode: (reason) => store.setPlayMode(reason),
+  // The game plays the scene: a prefab stage open in front of it is closed first (asking about its changes)
+  beforeStart: () => store.ensurePrefabStageClosed("play"),
   // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
   settle: async () => {
     await hierarchy.renameSettled

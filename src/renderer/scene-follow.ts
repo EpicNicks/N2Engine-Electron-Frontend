@@ -21,9 +21,11 @@ export interface FollowDeps {
     | "lastAssetsChange"
     | "newestSceneRevision"
     | "reportError"
-  >
+  > &
+    Partial<Pick<EditorStore, "prefabStage">>
   scene: Pick<SceneState, "selectedId" | "reset">
-  hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree" | "selection">
+  hierarchy: Pick<HierarchyState, "reset" | "applyChange" | "tree" | "selection"> &
+    Partial<Pick<HierarchyState, "enterPrefabStage" | "leavePrefabStage">>
   assets: Pick<AssetsState, "reset" | "refresh" | "onAssetsChanged">
   inspector: Pick<
     InspectorState,
@@ -37,7 +39,21 @@ export function followScene({ store, scene, hierarchy, inspector, assets }: Foll
   let handledAssetsChange: AssetsChangedEvent | null = null
   // The effect's first run is not a change: connecting lists the assets itself
   let assetsEffectStarted = false
+  // The prefab stage last seen open (its UUID), so opening and closing are told apart from the stage changing
+  let stageOpen: string | null = null
   const stops = [
+    // A prefab stage opened or closed (protocol 1.26.0): the scene's selection is kept aside meanwhile
+    effect(() => {
+      const stage = store.prefabStage?.value ?? null
+      const uuid = stage ? stage.prefabUuid || stage.path : null
+      if (uuid === stageOpen) return
+      const wasOpen = stageOpen !== null
+      stageOpen = uuid
+      untracked(() => {
+        if (uuid === null) hierarchy.leavePrefabStage?.()
+        else if (!wasOpen) hierarchy.enterPrefabStage?.()
+      })
+    }),
     // The panels follow the connection: a new connection is a new host, with nothing loaded yet
     effect(() => {
       if (!store.connected.value) {

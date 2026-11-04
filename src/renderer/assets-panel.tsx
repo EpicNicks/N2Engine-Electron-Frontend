@@ -11,6 +11,7 @@ import { AssetDragType, AssetMoveDragType, AssetRowDragEffect, EntityDragType, P
 import { ConfirmMoveAssets, assetsMoving, canDrop, planMove } from "./asset-move"
 import type { AssetEntry } from "../shared/api"
 import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
+import { isPrefabPath } from "../protocol/prefab-stage"
 import { RootId } from "./hierarchy-tree"
 import { isTextAssetPath, parseImportSettings } from "./asset-edit"
 import { AssetRow, RootFolder, formatModified, formatSize, isFiltering, nameOf, parentOf, shortUuid } from "./asset-tree"
@@ -103,6 +104,10 @@ export function prefabsOfUse(app: AppState, path: string, own: AssetEntry): Asse
   return chosen.length > 0 ? chosen : [own]
 }
 
+/** Whether the host has the prefab stage (protocol 1.26.0); a page state without it (an older test stub) has none */
+const stageAvailable = (store: AppState["store"]): boolean =>
+  "prefabStageAvailable" in store && store.prefabStageAvailable.peek()
+
 export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" | "sub" }>, open: () => void): MenuItem[] {
   const uuid = row.kind === "asset" ? row.asset.uuid : row.sub.uuid
   const items: MenuItem[] = []
@@ -114,6 +119,21 @@ export function assetMenu(app: AppState, row: Extract<AssetRow, { kind: "asset" 
       action: open,
       disabled: isScene && app.store.hostReadOnly.peek(),
     })
+  }
+  if (row.kind === "asset" && row.asset.type === PrefabResourceType && stageAvailable(app.store)) {
+    // The prefab stage (protocol 1.26.0): the prefab alone, or inside the scene at its first instance
+    items.push({
+      label: "Edit Prefab",
+      action: () => void app.store.openPrefabStage(row.path, "isolated"),
+      disabled: app.store.hostReadOnly.peek() || app.store.prefabStage.peek()?.path === row.path,
+    })
+    if (app.store.prefabStageContextAvailable.peek()) {
+      items.push({
+        label: "Edit Prefab In Scene",
+        action: () => void app.store.openPrefabStage(row.path, "context"),
+        disabled: app.store.hostReadOnly.peek() || app.store.prefabStage.peek()?.path === row.path,
+      })
+    }
   }
   if (row.kind === "asset" && row.asset.type === PrefabResourceType && app.hierarchy.canPrefabs) {
     // The same as dropping it on the hierarchy's empty space: a copy with a link, as the last root of the scene
@@ -330,6 +350,11 @@ function RowView({ row }: { row: AssetRow }) {
       if (store.hostReadOnly.peek()) return
       if (!store.connected.value) return store.reportError("Open scene", "Not connected to the editor host")
       void store.openScene(row.path)
+    } else if (type === PrefabResourceType || isPrefabPath(row.path)) {
+      // A prefab opens in the prefab stage (protocol 1.26.0), in the mode last used
+      if (!stageAvailable(store)) return
+      if (!store.connected.value) return store.reportError("Edit prefab", "Not connected to the editor host")
+      void store.openPrefabStage(row.path)
     } else if (isTextAssetPath(row.path)) {
       assets.openText(row.path).catch(fail("Failed to open the file"))
     }

@@ -1,6 +1,7 @@
 // The editor once a project is open: the toolbar, then the panels in their regions (layout/layout-view.tsx), by default
 // assets | viewport over the console and text files | hierarchy, inspector and engine, with splitters between them.
 import { useEffect, useMemo } from "preact/hooks"
+import { PrefabStageBar } from "./prefab-stage-bar"
 import { AgentBanner, AgentToggle } from "./agent-ui"
 import { ConnectionLostNotice } from "./connection-notices"
 import { TextEditor } from "./assets-panel"
@@ -59,6 +60,9 @@ export function SceneButtons() {
   // A read-only host refuses all four (they make, load or write a scene): disabled, not hidden
   const hostReadOnly = store.hostReadOnly.value
   const readOnlyTip = hostReadOnly ? `Not available: ${store.hostReadOnlyReason.value}` : undefined
+  // A prefab stage stands in front of the scene (protocol 1.26.0): the scene's own actions wait for it to close
+  const stage = store.prefabStage.value
+  const stageTip = stage ? "Close the prefab first (the scene is parked while it is open)" : undefined
   // A scene command may have made a file (the host's assetsChanged follows too)
   const done = (result: unknown) => {
     if (result) assets.refresh().catch((e) => store.reportError("Failed to list the assets", e))
@@ -82,30 +86,30 @@ export function SceneButtons() {
     <>
       <button
         onClick={() => store.newScene().then(done)}
-        disabled={busy || !connected || hostReadOnly}
-        title={readOnlyTip ?? "Make a new empty scene"}
+        disabled={busy || !connected || hostReadOnly || stage !== null}
+        title={readOnlyTip ?? stageTip ?? "Make a new empty scene"}
       >
         New scene
       </button>
       <button
         onClick={open}
-        disabled={busy || !connected || hostReadOnly}
-        title={readOnlyTip ?? "Open a scene of the project"}
+        disabled={busy || !connected || hostReadOnly || stage !== null}
+        title={readOnlyTip ?? stageTip ?? "Open a scene of the project"}
       >
         Open scene
       </button>
       <button
         onClick={() => store.saveScene().then(done)}
-        disabled={busy || !loaded || hostReadOnly}
-        title={readOnlyTip ?? "Save the scene (Ctrl+S)"}
+        disabled={busy || !loaded || hostReadOnly || stage !== null}
+        title={readOnlyTip ?? stageTip ?? "Save the scene (Ctrl+S)"}
       >
         Save scene
       </button>
       <button
         class="secondary"
         onClick={() => store.saveSceneAs().then(done)}
-        disabled={busy || !loaded || hostReadOnly}
-        title={readOnlyTip ?? "Save the scene to another file"}
+        disabled={busy || !loaded || hostReadOnly || stage !== null}
+        title={readOnlyTip ?? stageTip ?? "Save the scene to another file"}
       >
         Save as...
       </button>
@@ -224,7 +228,7 @@ function Toolbar({ layout }: { layout: LayoutController }) {
       <span class="project-name" title={store.projectPath.value ?? undefined}>
         {store.projectName.value}
       </span>
-      {store.scene.value && (
+      {store.scene.value && !store.prefabStage.value && (
         <span
           class={store.sceneDirty.value ? "scene-name dirty" : "scene-name"}
           title={
@@ -235,6 +239,7 @@ function Toolbar({ layout }: { layout: LayoutController }) {
           {store.sceneLabel.value}
         </span>
       )}
+      <PrefabStageBar />
       <UserBadge />
       <ReadOnlyBadge />
       <div class="separator" />

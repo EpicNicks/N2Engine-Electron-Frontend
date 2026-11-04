@@ -20,6 +20,12 @@ import type { EditResultResponse, EditorEvent, SceneInfoResponse } from "../prot
 import { EmptyHistoryStatus, HistoryStatus, historyStatusOf } from "../protocol/edit-history"
 import { ExtensionOutputLog } from "../protocol/extension-output"
 import {
+  PrefabStage,
+  PrefabStageCapability,
+  PrefabStageContextCapability,
+  PrefabStageMode,
+} from "../protocol/prefab-stage"
+import {
   AssetsChangedEvent,
   SceneChange,
   hasUnsavedChanges,
@@ -91,7 +97,9 @@ export interface StoreApi {
     | "getAutosave"
     | "restoreAutosave"
     | "discardAutosave"
-  >
+  > &
+    // The prefab stage (protocol 1.26.0): a host without the capability is never asked
+    Partial<Pick<EngineApi, "openPrefabStage" | "setPrefabStageMode" | "savePrefabStage" | "closePrefabStage" | "getPrefabStage">>
   host: HostApi
   /** Remote engine mode (window.remote) */
   remote: RemoteApi
@@ -239,6 +247,21 @@ export class EditorStore {
     const scene = this.scene.value
     return scene !== null && hasUnsavedChanges(scene)
   })
+  /**
+   * The open prefab stage (protocol 1.26.0), or null: while it is open the host's loaded scene (scene, the hierarchy,
+   * the history) is the stage's, and the scene it parked comes back when it closes
+   */
+  readonly prefabStage = signal<PrefabStage | null>(null)
+  /** The host has the prefab stage (Hello's prefabStage capability) */
+  readonly prefabStageAvailable = computed(
+    () => this.serverInfo.value?.capabilities.includes(PrefabStageCapability) === true
+  )
+  /** The host draws the In Scene mode (Hello's prefabStageContext capability) */
+  readonly prefabStageContextAvailable = computed(
+    () => this.serverInfo.value?.capabilities.includes(PrefabStageContextCapability) === true
+  )
+  /** The mode the last stage was opened or switched to: the next one opens in it */
+  readonly lastStageMode = signal<PrefabStageMode>("isolated")
   /** The loaded scene's name for the toolbar, with a * after it when it has unsaved changes; "" with none */
   readonly sceneLabel = computed(() => {
     const scene = this.scene.value
@@ -342,6 +365,8 @@ export class EditorStore {
   readonly console: ConsoleStore
   /** Counts scene fetches, so a slow answer can't replace a newer one */
   private sceneFetches = 0
+  /** Counts GetPrefabStage reads and stage answers, so an older one can't replace a newer one */
+  private stageFetches = 0
   /** GetOpenScene calls still waiting for an answer */
   private sceneFetchesInFlight = 0
   /** Events were missed and the poll's own events haven't been applied yet: their change is everything */
@@ -776,6 +801,9 @@ export class EditorStore {
         this.scene.value = null
         this.sceneFetches++ // an answer still on its way is for a connection that is gone
       }
+      // A host keeps the stage for its session only: whatever was open is gone, and GetPrefabStage says what is
+      this.stageFetches++
+      this.prefabStage.value = null
       this.lastSeenRevision = null
       this.sceneMissed = false
       this.recordSceneChange({ full: true, entityIds: [] }) // another host (or none): nothing held is valid
@@ -784,9 +812,118 @@ export class EditorStore {
       this.console.connect(this.host.value.launch)
       void this.refreshScene()
       void this.refreshHistory()
+      void this.refreshPrefabStage()
     } else {
       this.console.disconnect()
     }
+  }
+
+  // ==================== The prefab stage (protocol 1.26.0) ====================
+
+  /** Reads the open stage (GetPrefabStage); none when the host doesn't have the capability */
+  async refreshPrefabStage(): Promise<void> {
+    const get = this.api.engine.getPrefabStage?.bind(this.api.engine)
+    if (!get || !this.prefabStageAvailable.value || !this.api.engine.isConnected()) return
+    const fetch = ++this.stageFetches
+    try {
+      const stage = await get()
+      if (fetch === this.stageFetches && this.api.engine.isConnected()) this.prefabStage.value = stage
+    } catch (e) {
+      console.debug("GetPrefabStage failed:", e)
+    }
+  }
+
+  /** Takes a stage command's answer as the stage (the prefabStageChanged event says the same soon) */
+  private takeStage(stage: PrefabStage | null): void {
+    this.stageFetches++
+    this.prefabStage.value = stage
+    if (stage) this.lastStageMode.value = stage.mode
+    void this.console.pollNow().catch(() => {}) // the panels hear of the scene change now, not in 100 ms
+  }
+
+  /**
+   * Opens a prefab (asset UUID or res:// path) in the prefab stage: the scene is parked by the host, the stage is the
+   * loaded scene until it is closed. mode: the last one used (anchorEntityId given: In Scene at that instance). Another
+   * stage open is closed first (asking about its unsaved changes). Resolves whether the stage is open now.
+   */
+  async openPrefabStage(uuidOrPath: string, mode?: PrefabStageMode, anchorEntityId = ""): Promise<boolean> {
+    const open = this.api.engine.openPrefabStage?.bind(this.api.engine)
+    if (!open || !this.prefabStageAvailable.value) {
+      this.error.value = "Edit prefab: this host has no prefab stage (it is older than protocol 1.26.0)"
+      return false
+    }
+    if (this.refusedWhilePlaying("Edit prefab")) return false
+    const current = this.prefabStage.value
+    if (current && (current.path === uuidOrPath || current.prefabUuid === uuidOrPath)) return true
+    if (current && !(await this.ensurePrefabStageClosed("open another prefab"))) return false
+    let wanted: PrefabStageMode = mode ?? (anchorEntityId !== "" ? "context" : this.lastStageMode.value)
+    if (wanted === "context" && !this.prefabStageContextAvailable.value) wanted = "isolated"
+    const stage = await this.run("Opening prefab...", () => open(uuidOrPath, wanted, anchorEntityId))
+    if (stage === undefined) return false
+    this.takeStage(stage)
+    return stage !== null
+  }
+
+  /** Switches the open stage between Isolated and In Scene (not an edit) */
+  async setPrefabStageMode(mode: PrefabStageMode): Promise<void> {
+    const set = this.api.engine.setPrefabStageMode?.bind(this.api.engine)
+    const stage = this.prefabStage.value
+    if (!set || !stage || stage.mode === mode) return
+    if (mode === "context" && !this.prefabStageContextAvailable.value) return
+    const next = await this.run(null, () => set(mode))
+    if (next !== undefined) this.takeStage(next)
+  }
+
+  /** Writes the stage to its .prefab file; resolves whether it was saved */
+  async savePrefabStage(): Promise<boolean> {
+    const save = this.api.engine.savePrefabStage?.bind(this.api.engine)
+    if (!save || !this.prefabStage.value) return false
+    if (this.refusedByReadOnlyHost("Save prefab")) return false
+    const saved = await this.run("Saving prefab...", () => save())
+    if (saved === undefined) return false
+    this.takeStage(saved)
+    return true
+  }
+
+  /**
+   * Closes the stage and gets the scene back: with unsaved changes asks Save, Discard or Cancel first. Resolves whether
+   * it is closed (true when none was open).
+   */
+  async closePrefabStage(): Promise<boolean> {
+    return this.ensurePrefabStageClosed("close it")
+  }
+
+  /**
+   * Before something the stage stands in the way of (Play, opening a scene or another prefab, closing the project):
+   * closes it, asking about its unsaved changes. Resolves whether to go on; true when no stage is open.
+   */
+  async ensurePrefabStageClosed(action: string): Promise<boolean> {
+    const close = this.api.engine.closePrefabStage?.bind(this.api.engine)
+    if (!this.prefabStage.value || !close) return true
+    // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
+    if (this.api.engine.isConnected()) {
+      await this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e))
+      await this.refreshPrefabStage()
+    }
+    const stage = this.prefabStage.value
+    if (!stage) return true
+    let discard = false
+    if (stage.dirty) {
+      const choice = await this.api.dialogs.unsaved(
+        `The prefab ${stage.name || stage.path} has unsaved changes.`,
+        `Discard and ${action}`
+      )
+      if (choice === "cancel") return false
+      if (choice === "save") {
+        if (!(await this.savePrefabStage())) return false
+      } else {
+        discard = true
+      }
+    }
+    const closed = await this.run("Closing prefab...", () => close(discard))
+    if (closed === undefined) return false
+    this.takeStage(null)
+    return true
   }
 
   // ==================== Scenes ====================
@@ -807,6 +944,8 @@ export class EditorStore {
   unsavedFiles: () => string[] = () => []
 
   async confirmDiscard(action: string, kept?: { note: string; label: string }): Promise<boolean> {
+    // A prefab stage stands in front of the scene: it is closed first (asking about its own changes), then the scene's
+    if (!(await this.ensurePrefabStageClosed(action))) return false
     // What is known may be up to 100 ms old (an edit nobody has polled yet): ask the host before deciding
     if (this.api.engine.isConnected()) {
       await this.console.pollNow().catch((e) => console.debug("PollEvents failed:", e))
@@ -884,6 +1023,11 @@ export class EditorStore {
     const scene = this.scene.value
     if (!scene) return undefined
     if (this.refusedByReadOnlyHost("Save scene")) return undefined
+    // Ctrl+S in the prefab stage saves the prefab (the scene can't be saved until the stage is closed)
+    if (this.prefabStage.value) {
+      await this.savePrefabStage()
+      return undefined
+    }
     if (scene.path === "") return this.saveSceneAs()
     return this.sceneAction("Saving scene...", () => this.api.engine.saveSceneToFile(""))
   }
@@ -893,6 +1037,10 @@ export class EditorStore {
     const scene = this.scene.value
     if (!scene) return undefined
     if (this.refusedByReadOnlyHost("Save scene")) return undefined
+    if (this.prefabStage.value) {
+      this.error.value = "Save as: not while a prefab is open. Close the prefab first."
+      return undefined
+    }
     const name = (scene.name || "Untitled").replace(/[\\/:*?"<>|]/g, "_")
     const input = await this.api.dialogs.prompt(
       "Save scene as (a res:// path)",
@@ -1102,7 +1250,11 @@ export class EditorStore {
         }
         const parsed = parseStateEvent(event)
         if (!parsed) continue
-        if (parsed.kind === "sceneChanged") {
+        if (parsed.kind === "prefabStageChanged") {
+          this.stageFetches++ // an older GetPrefabStage still on its way is out of date
+          this.prefabStage.value = parsed.stage
+          if (parsed.stage) this.lastStageMode.value = parsed.stage.mode
+        } else if (parsed.kind === "sceneChanged") {
           const objects = sceneChangeOf(parsed, this.lastSeenRevision)
           if (parsed.full) this.sceneReplacedCount.value++
           if (objects) pending.change = mergeSceneChange(pending.change, objects)
