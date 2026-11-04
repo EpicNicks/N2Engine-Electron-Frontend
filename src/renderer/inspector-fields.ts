@@ -39,6 +39,7 @@ export function kindOf(field: FieldSchema): FieldKind {
 }
 
 export const isRefKind = (kind: FieldKind): boolean =>
+  kind === "PrefabRef" ||
   kind === "AssetRef" ||
   kind === "GameObjectRef" ||
   kind === "ComponentRef" ||
@@ -389,6 +390,9 @@ export function checkValue(field: FieldSchema, value: unknown): Checked<unknown>
     case "GameObjectRef":
     case "ComponentRef":
       return checkRef(field, value)
+    case "PrefabRef":
+      // A plain UUID string even inside scriptData (never {"$ref"}); "" and null are none, sent as null
+      return value === "" ? ok(null) : checkRef(field, value)
     case "AssetRefList":
     case "GameObjectRefList":
     case "ComponentRefList": {

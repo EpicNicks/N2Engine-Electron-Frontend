@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks"
 import type { TextPass } from "./inspector-fields"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import { assetName } from "./asset-lookup"
-import { AssetDragType, EntityDragType, FieldDropEffect, dragHas, parseAssetDrag } from "./drag-types"
+import { AssetDragType, EntityDragType, FieldDropEffect, PrefabDragType, dragHas, parseAssetDrag } from "./drag-types"
 import {
   axesOf,
   checkNumber,
@@ -658,6 +658,85 @@ function AssetSlot(props: {
   )
 }
 
+/** The resource type a PrefabRef field takes (the host sends it as assetType too; an older one may not) */
+const PrefabType = "Prefab"
+
+/**
+ * A Lua script's Prefab field (protocol 1.25.0): a slot that takes only a .prefab. A drag of anything else is refused
+ * while it is over the slot (only a prefab's drag carries PrefabDragType, so the cursor shows the drop is not allowed),
+ * the picker lists only prefabs, and a UUID the project doesn't have is shown as a missing prefab and kept until cleared.
+ * Double-click selects the prefab in the Assets panel. The host checks the value again and has the last word.
+ */
+function PrefabSlot(props: {
+  field: FieldSchema
+  uuid: string | null
+  disabled: boolean
+  onChange(uuid: string | null): void
+  onProblem(message: string): void
+}) {
+  const app = useApp()
+  const assets = app.inspector.assets.value
+  const field: FieldSchema = { ...props.field, assetType: PrefabType }
+  const uuid = props.uuid === "" ? null : props.uuid
+  const entry = uuid ? assets.byUuid(uuid) : undefined
+  const missing = uuid !== null && entry === undefined
+  const take = (candidate: { uuid: string; path: string; resourceType: string } | null | undefined, what: string) => {
+    if (!candidate) return props.onProblem(what)
+    const checked = assets.check(field, candidate)
+    if (checked.ok) props.onChange(checked.value)
+    else props.onProblem(checked.error)
+  }
+  const label = entry ? assetName(entry) : missing ? `Missing prefab ${uuid!.slice(0, 8)}` : ""
+  return (
+    <div
+      class="prefab-slot"
+      onDblClick={() => {
+        const path = entry?.path ?? props.field.assetPath
+        if (path) void app.assets?.select(path)
+      }}
+    >
+      <Slot
+        label={label}
+        known={!missing}
+        empty={uuid === null}
+        title={entry ? entry.path : missing ? `No prefab in the project has the UUID ${uuid}` : "Drop a prefab here"}
+        disabled={props.disabled}
+        accepts={(e) => dragHas(e, PrefabDragType)}
+        onDrop={(e) =>
+          take(parseAssetDrag(e.dataTransfer?.getData(AssetDragType) ?? ""), "That isn't a prefab")
+        }
+        onClear={() => props.onChange(null)}
+      >
+        {!props.disabled && (
+          <PickerButton
+            label="..."
+            title="Pick a prefab"
+            entries={() => [
+              { key: "", label: "None" },
+              ...assets.ofType(PrefabType).map((asset) => ({ key: asset.uuid, label: assetName(asset), detail: asset.path })),
+            ]}
+            placeholder="Search prefabs"
+            emptyText="No prefabs in the project"
+            onPick={(key) => (key === "" ? props.onChange(null) : take(assets.byUuid(key), "That prefab isn't in the project"))}
+          />
+        )}
+      </Slot>
+    </div>
+  )
+}
+
+function PrefabRefEditor({ field, value, disabled, commit, invalid }: EditorProps) {
+  return (
+    <PrefabSlot
+      field={field}
+      uuid={typeof value === "string" && value !== "" ? value : null}
+      disabled={disabled}
+      onChange={(uuid) => commit(uuid, true)}
+      onProblem={invalid}
+    />
+  )
+}
+
 /** One object reference (a GameObjectRef, or an item of a GameObjectRefList) */
 function ObjectSlot(props: {
   field: FieldSchema
@@ -988,6 +1067,8 @@ export function FieldEditor(props: EditorProps) {
     case "GameObjectRefList":
     case "ComponentRefList":
       return <RefListEditor {...props} />
+    case "PrefabRef":
+      return <PrefabRefEditor {...props} />
     case "Json":
       return <JsonEditor {...props} />
   }
