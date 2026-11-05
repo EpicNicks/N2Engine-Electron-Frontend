@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "39d218ca2705f2f4aff978a9d792a1bbf9cffc78",
+  "engineRef": "2603743a6ddea42eb31467e8012860178508741e",
   "runtime": {
     "available": true,
     "classes": {
@@ -346,6 +346,32 @@
         "base": "Component",
         "description": "Makes the MeshRenderer on the same object a soft body that squashes and wobbles under gravity (see\ndocs/soft-bodies.html). Needs a MeshRenderer with a mesh and no Rigidbody on the object. The body exists only while\nthe scene plays, is never saved, and freezes while the time scale is 0. Settings apply at once, except Backend and\nResolution, which are read when the body starts; Reset restarts it.",
         "fields": {}
+      },
+      "Prefab": {
+        "name": "Prefab",
+        "description": "A prefab asset (.prefab): what a `{ type = \"Prefab\" }` field of SerializableFields holds (nil until one is chosen; it\nhas no default). It holds the asset's UUID only and loads nothing until Instantiate. Equal handles name the same\nUUID. See docs/scripting-lua.html#prefabs",
+        "fields": {
+          "valid": {
+            "name": "valid",
+            "type": "boolean",
+            "description": "The asset is indexed and is a prefab"
+          },
+          "uuid": {
+            "name": "uuid",
+            "type": "string",
+            "description": "The asset's UUID (stable: a moved prefab keeps it)"
+          },
+          "path": {
+            "name": "path",
+            "type": "string",
+            "description": "Its res:// path, \"\" when no indexed asset has the UUID"
+          },
+          "name": {
+            "name": "name",
+            "type": "string",
+            "description": "The file name without .prefab, \"\" when no indexed asset has the UUID"
+          }
+        }
       },
       "TextRenderer": {
         "name": "TextRenderer",
@@ -3753,6 +3779,21 @@
         ],
         "overloads": []
       },
+      "GameObject.GetPrefab": {
+        "name": "GameObject.GetPrefab",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetPrefab()",
+        "description": "The prefab this object is an instance of (set by Prefab.Instantiate and by the editor's Instantiate), nil for none",
+        "params": [],
+        "returns": [
+          {
+            "type": "Prefab|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "GameObject.FindChild": {
         "name": "GameObject.FindChild",
         "owner": "GameObject",
@@ -5567,6 +5608,42 @@
           {
             "name": "parent",
             "type": "GameObject|nil",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "GameObject",
+            "description": "root"
+          }
+        ],
+        "overloads": []
+      },
+      "Prefab.Instantiate": {
+        "name": "Prefab.Instantiate",
+        "owner": "Prefab",
+        "method": false,
+        "signature": "Prefab.Instantiate(pathOrUuid, parent, position, rotation)",
+        "description": "A new instance of the prefab, with fresh UUIDs. Under `parent` when given (keeping the prefab root's local\ntransform), otherwise a root object of the current scene: the parent or the scene owns it (unlike\nModel.Instantiate, nothing is lost when the returned handle goes out of scope). `position` and `rotation` are WORLD\nvalues applied after it is placed; nil skips one. Its components attach at the scene's next attach pass (their\nOnAttach runs then, not inside this call), so the returned object can be set up first. References to objects outside\nthe prefab come back nil (one warning per prefab). Raises an error for a missing asset, one that is not a prefab, a\nmalformed prefab or one over the limits (10000 objects, 512 levels), and for a prefab with a NetworkObject while a\nnetwork session runs (a script spawn is local: use Network.Spawn, not available yet). Not available to editor\nextensions.\nCalled on a handle (`self.enemy:Instantiate(parent, position, rotation)`) or with a res:// path or UUID string\n(`Prefab.Instantiate(\"res://prefabs/enemy.prefab\", ...)`). Prefer a Prefab field to a path in code: a future\nexporter that prunes unused assets can see a field.",
+        "params": [
+          {
+            "name": "pathOrUuid",
+            "type": "Prefab|string",
+            "description": "a handle, a res:// path or a UUID string"
+          },
+          {
+            "name": "parent",
+            "type": "GameObject|nil",
+            "description": ""
+          },
+          {
+            "name": "position",
+            "type": "Vector3|nil",
+            "description": ""
+          },
+          {
+            "name": "rotation",
+            "type": "Quaternion|nil",
             "description": ""
           }
         ],
@@ -11728,6 +11805,11 @@
         "type": "table",
         "description": "3D model files (.glb, .gltf; .fbx and .obj when the engine is built with N2ENGINE_MODEL_UFBX): see docs/meshes.html#models"
       },
+      "Prefab": {
+        "name": "Prefab",
+        "type": "Prefab",
+        "description": ""
+      },
       "TextRenderer": {
         "name": "TextRenderer",
         "type": "TextRenderer",
@@ -11972,6 +12054,7 @@
       "Light": "Light",
       "ParticleSystem": "ParticleSystem",
       "SoftBody": "SoftBody",
+      "Prefab": "Prefab",
       "TextRenderer": "TextRenderer",
       "LuaComponent": "LuaComponent",
       "Component": "Component",

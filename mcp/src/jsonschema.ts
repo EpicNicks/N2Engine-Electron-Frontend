@@ -65,6 +65,10 @@ export function fieldToJsonSchema(field: FieldSchema, scrubber: Scrubber): JsonS
     case "ComponentRefList":
       schema = { type: "array", items: { ...uuid } }
       break
+    case "PrefabRef":
+      // A Lua Prefab field (protocol 1.25.0): a prefab asset's UUID as a plain string (not {"$ref"}); "" or null clears it
+      schema = { anyOf: [{ ...uuid }, { const: "" }] }
+      break
     default:
       // Json, and a kind a newer host added: anything goes
       schema = {}
@@ -85,6 +89,7 @@ function isKnown(kind: string): boolean {
   return [
     "Bool", "Int", "Float", "String", "Vector2", "Vector3", "Vector4", "Quaternion", "Color", "Enum",
     "AssetRef", "AssetRefList", "GameObjectRef", "GameObjectRefList", "ComponentRef", "ComponentRefList", "Json",
+    "PrefabRef",
   ].includes(kind)
 }
 

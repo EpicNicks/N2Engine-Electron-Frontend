@@ -23,6 +23,8 @@ export const FieldKinds = [
   "ComponentRef",
   "ComponentRefList",
   "Json",
+  /** A Lua script's type = "Prefab" field (protocol 1.25.0): a prefab asset's UUID as a plain string, "" for none */
+  "PrefabRef",
 ] as const
 
 export type FieldKind = (typeof FieldKinds)[number]
@@ -66,7 +68,7 @@ export function parseFieldSchema(value: unknown, where: string): FieldSchema {
     }
     field.enumOptions = [...(value.enumOptions as string[])]
   }
-  for (const key of ["assetType", "tooltip", "container"] as const) {
+  for (const key of ["assetType", "assetPath", "tooltip", "container"] as const) {
     if (value[key] !== undefined) field[key] = requireString(value, key, where)
   }
   for (const key of ["min", "max"] as const) {

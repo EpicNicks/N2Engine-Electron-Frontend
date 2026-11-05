@@ -226,6 +226,7 @@ export interface FieldSchema {
   readOnly: boolean;
   enumOptions?: string[];
   assetType?: string;
+  assetPath?: string;
   min?: number;
   max?: number;
   tooltip?: string;
