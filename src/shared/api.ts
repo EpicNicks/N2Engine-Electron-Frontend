@@ -34,6 +34,7 @@ import type {
   Vec3,
 } from "../protocol/protocol.generated"
 import type { AssetPreview } from "../protocol/editor-tooling"
+import type { PrefabStage, PrefabStageMode } from "../protocol/prefab-stage"
 import type { AudioSamples } from "../audio-stream"
 import type { ExtensionsInfo, ExtensionsResult, ExtensionsUi, InvokeResult } from "../protocol/extensions"
 
@@ -178,6 +179,16 @@ export interface EngineCommands {
   setNetworkSettings(preset: string, settings: JsonObject): Promise<NetworkSettingsInfo>
   /** Protocol 1.21.0: the startup checks of a preset ("none", "authoritative", "deterministic", or empty for the project's own), without starting anything (a Read command) */
   getNetworkValidation(preset: string): Promise<NetworkValidationReport>
+  /** Protocol 1.26.0 (prefabStage capability): opens a prefab for editing, parking the open scene; answers the stage */
+  openPrefabStage(uuidOrPath: string, mode: PrefabStageMode, anchorEntityId: string): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: Isolated or In Scene (not an edit) */
+  setPrefabStageMode(mode: PrefabStageMode): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: writes the stage to its .prefab file */
+  savePrefabStage(): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: closes the stage (refused with unsaved changes unless discard); answers null */
+  closePrefabStage(discard: boolean): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: the open stage, or null (a Read command) */
+  getPrefabStage(): Promise<PrefabStage | null>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -266,7 +277,7 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray" | "assetMoves"
+export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray" | "assetMoves" | "stageMode"
 
 /** MoveAsset takes at most this many {from, to} pairs (the host refuses more) */
 export const MaxAssetMoves = 256
@@ -333,6 +344,11 @@ export const EngineCommandArgs = {
   getNetworkSettings: [],
   setNetworkSettings: ["string", "jsonObject"],
   getNetworkValidation: ["string"],
+  openPrefabStage: ["string", "stageMode", "string"],
+  setPrefabStageMode: ["stageMode"],
+  savePrefabStage: [],
+  closePrefabStage: ["bool"],
+  getPrefabStage: [],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],
@@ -373,6 +389,7 @@ interface ArgKindTypes {
   stringArray: string[]
   assetMoves: AssetMove[]
   inputEvents: InputEvent[]
+  stageMode: PrefabStageMode
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
 type ArgsMatch = {

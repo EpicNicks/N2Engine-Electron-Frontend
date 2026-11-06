@@ -3,6 +3,7 @@
 // console). Events are plain JSON with the fields the protocol lists, and a client ignores kinds and keys it doesn't
 // know, so parsing is lenient: a missing or mistyped field takes its default.
 import type { EditorEvent } from "./protocol.generated"
+import { PrefabStage, parsePrefabStageInfo } from "./prefab-stage"
 
 /** The scene revision moved, a scene was saved, or another was loaded */
 export interface SceneChangedEvent {
@@ -77,7 +78,17 @@ export interface ExtensionsChangedEvent {
   uiRevision: number
 }
 
+/**
+ * The prefab stage changed (since 1.26.0): it was opened, closed, switched, saved, became dirty or clean, or its file
+ * moved, changed elsewhere or was deleted. stage is null when it is closed.
+ */
+export interface PrefabStageChangedEvent {
+  kind: "prefabStageChanged"
+  stage: PrefabStage | null
+}
+
 export type StateEvent =
+  | PrefabStageChangedEvent
   | SceneChangedEvent
   | AssetsChangedEvent
   | ProjectChangedEvent
@@ -170,6 +181,8 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
       return { kind: "frameChanged", revision: count(event.revision) }
     case "extensionsChanged":
       return { kind: "extensionsChanged", uiRevision: count(event.uiRevision) }
+    case "prefabStageChanged":
+      return { kind: "prefabStageChanged", stage: parsePrefabStageInfo(event.stage) }
     default:
       return null
   }

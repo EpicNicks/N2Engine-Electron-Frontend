@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.25.0";
+export const PROTOCOL_VERSION = "1.26.0";
 
 // ==================== Types ====================
 
@@ -59,6 +59,7 @@ export interface EditorEvent {
   frame?: number;
   uiRevision?: number;
   extension?: string;
+  stage?: PrefabStageInfo;
 }
 
 export interface InputEvent {
@@ -85,6 +86,25 @@ export interface MovedAsset {
 export interface AssetsMovedResult {
   moved: MovedAsset[];
   warnings: string[];
+}
+
+export interface PrefabStageInfo {
+  open: boolean;
+  prefabUuid?: string;
+  path?: string;
+  name?: string;
+  mode?: string;
+  dirty?: boolean;
+  revision?: number;
+  savedRevision?: number;
+  anchorEntityId?: string;
+  contextAvailable?: boolean;
+  rootLocked?: boolean;
+  sceneName?: string;
+  scenePath?: string;
+  warnings?: string[];
+  externalChange?: boolean;
+  orphaned?: boolean;
 }
 
 export interface HistoryEntry {
@@ -517,6 +537,11 @@ export const CommandType = {
   SetNetworkSettings: 0x52,
   GetNetworkValidation: 0x53,
   MoveAsset: 0xAF,
+  OpenPrefabStage: 0x2A,
+  SetPrefabStageMode: 0x2B,
+  SavePrefabStage: 0x2C,
+  ClosePrefabStage: 0x2D,
+  GetPrefabStage: 0x2E,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -568,6 +593,7 @@ export const ResponseType = {
   NetworkSettings: 0x24,
   NetworkValidation: 0x25,
   AssetsMoved: 0xA5,
+  PrefabStageInfo: 0x26,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -660,6 +686,11 @@ export const CommandResponse = {
   SetNetworkSettings: "NetworkSettings",
   GetNetworkValidation: "NetworkValidation",
   MoveAsset: "AssetsMoved",
+  OpenPrefabStage: "PrefabStageInfo",
+  SetPrefabStageMode: "PrefabStageInfo",
+  SavePrefabStage: "PrefabStageInfo",
+  ClosePrefabStage: "PrefabStageInfo",
+  GetPrefabStage: "PrefabStageInfo",
 } as const;
 
 // ==================== Messages ====================
@@ -960,6 +991,20 @@ export interface MoveAssetRequest {
   moves: AssetMove[];
 }
 
+export interface OpenPrefabStageRequest {
+  uuidOrPath: string;
+  mode: string;
+  anchorEntityId: string;
+}
+
+export interface SetPrefabStageModeRequest {
+  mode: string;
+}
+
+export interface ClosePrefabStageRequest {
+  discard: boolean;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -1199,6 +1244,10 @@ export interface NetworkValidationResponse {
 
 export interface AssetsMovedResponse {
   result: AssetsMovedResult;
+}
+
+export interface PrefabStageInfoResponse {
+  info: PrefabStageInfo;
 }
 
 export interface ErrorCodedResponse {
@@ -2438,6 +2487,52 @@ export function decodeMoveAssetRequest(payload: Uint8Array): MoveAssetRequest {
   return { moves };
 }
 
+/** OpenPrefabStage's request payload (without the frame header) */
+export function encodeOpenPrefabStageRequest(value: OpenPrefabStageRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  writer.string(value.mode);
+  writer.string(value.anchorEntityId);
+  return writer.finish();
+}
+
+/** Reads OpenPrefabStage's request payload; bytes after the last field are ignored */
+export function decodeOpenPrefabStageRequest(payload: Uint8Array): OpenPrefabStageRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  const mode = reader.string();
+  const anchorEntityId = reader.string();
+  return { uuidOrPath, mode, anchorEntityId };
+}
+
+/** SetPrefabStageMode's request payload (without the frame header) */
+export function encodeSetPrefabStageModeRequest(value: SetPrefabStageModeRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.mode);
+  return writer.finish();
+}
+
+/** Reads SetPrefabStageMode's request payload; bytes after the last field are ignored */
+export function decodeSetPrefabStageModeRequest(payload: Uint8Array): SetPrefabStageModeRequest {
+  const reader = new ProtocolReader(payload);
+  const mode = reader.string();
+  return { mode };
+}
+
+/** ClosePrefabStage's request payload (without the frame header) */
+export function encodeClosePrefabStageRequest(value: ClosePrefabStageRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.bool(value.discard);
+  return writer.finish();
+}
+
+/** Reads ClosePrefabStage's request payload; bytes after the last field are ignored */
+export function decodeClosePrefabStageRequest(payload: Uint8Array): ClosePrefabStageRequest {
+  const reader = new ProtocolReader(payload);
+  const discard = reader.bool();
+  return { discard };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3183,6 +3278,20 @@ export function decodeAssetsMovedResponse(payload: Uint8Array): AssetsMovedRespo
   return { result };
 }
 
+/** PrefabStageInfo's payload (without the frame header) */
+export function encodePrefabStageInfoResponse(value: PrefabStageInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads PrefabStageInfo's payload; bytes after the last field are ignored */
+export function decodePrefabStageInfoResponse(payload: Uint8Array): PrefabStageInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as PrefabStageInfo;
+  return { info };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3260,6 +3369,9 @@ export const RequestCodecs = {
   SetNetworkSettings: { encode: encodeSetNetworkSettingsRequest, decode: decodeSetNetworkSettingsRequest },
   GetNetworkValidation: { encode: encodeGetNetworkValidationRequest, decode: decodeGetNetworkValidationRequest },
   MoveAsset: { encode: encodeMoveAssetRequest, decode: decodeMoveAssetRequest },
+  OpenPrefabStage: { encode: encodeOpenPrefabStageRequest, decode: decodeOpenPrefabStageRequest },
+  SetPrefabStageMode: { encode: encodeSetPrefabStageModeRequest, decode: decodeSetPrefabStageModeRequest },
+  ClosePrefabStage: { encode: encodeClosePrefabStageRequest, decode: decodeClosePrefabStageRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3309,5 +3421,6 @@ export const ResponseCodecs = {
   NetworkSettings: { encode: encodeNetworkSettingsResponse, decode: decodeNetworkSettingsResponse },
   NetworkValidation: { encode: encodeNetworkValidationResponse, decode: decodeNetworkValidationResponse },
   AssetsMoved: { encode: encodeAssetsMovedResponse, decode: decodeAssetsMovedResponse },
+  PrefabStageInfo: { encode: encodePrefabStageInfoResponse, decode: decodePrefabStageInfoResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

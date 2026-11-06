@@ -44,6 +44,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
   assetMoves: `an array of 1 to ${MaxAssetMoves} {from, to} pairs of strings`,
   inputEvents: "an array of input events",
+  stageMode: "\"isolated\" or \"context\"",
 }
 
 // How deep and how large a JSON argument may be (shared with the page, whose editors check the same limits)
@@ -143,6 +144,9 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       break
     case "inputEvents":
       return checkInputEvents(value, where)
+    case "stageMode":
+      if (value === "isolated" || value === "context") return value
+      break
     case "jsonObject":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
         const copy = copyJson(value, 0, { nodes: MaxJsonNodes })

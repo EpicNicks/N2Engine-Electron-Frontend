@@ -45,6 +45,7 @@ import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
 import { validateNetworkSettingsInfo, validateNetworkValidationReport } from "./network-panel"
 import { parseAssetDetails, parseAssetList, parseAssetsMoved } from "./asset-parse"
+import { PrefabStage, PrefabStageMode, parsePrefabStageInfo } from "./prefab-stage"
 import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
@@ -900,6 +901,37 @@ export class EngineClient {
    */
   async moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult> {
     return parseAssetsMoved((await this.send(Commands.MoveAsset, { moves })).result)
+  }
+
+  // ==================== Prefab stage (protocol 1.26.0) ====================
+
+  /**
+   * Opens a prefab (asset UUID or res:// path) for editing: the host parks the open scene and loads the prefab's tree as
+   * the loaded scene. mode "context" shows it inside the parked scene at anchorEntityId (an instance; "" for the first).
+   * Refused (stageOpen) while a stage is open. Answers the stage.
+   */
+  async openPrefabStage(uuidOrPath: string, mode: PrefabStageMode, anchorEntityId: string): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.OpenPrefabStage, { uuidOrPath, mode, anchorEntityId })).info)
+  }
+
+  /** Switches the open stage between Isolated and In Scene (not an edit) */
+  async setPrefabStageMode(mode: PrefabStageMode): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.SetPrefabStageMode, { mode })).info)
+  }
+
+  /** Writes the stage to its .prefab file */
+  async savePrefabStage(): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.SavePrefabStage, {})).info)
+  }
+
+  /** Closes the stage and gets the parked scene back; refused (unsavedChanges) with unsaved changes unless discard */
+  async closePrefabStage(discard: boolean): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.ClosePrefabStage, { discard })).info)
+  }
+
+  /** The open stage, or null (a Read command) */
+  async getPrefabStage(): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.GetPrefabStage, {})).info)
   }
 
   // ==================== Events ====================

@@ -62,6 +62,15 @@
       .toolbar .project-name { color: #fff; font-weight: 500; }
       .toolbar .scene-name { color: #bbb; }
       .toolbar .scene-name.dirty { color: #e6b450; }
+      .prefab-stage-bar { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 4px; background: #2a3442; }
+      .prefab-stage-bar .breadcrumb { display: flex; align-items: center; gap: 4px; }
+      .prefab-stage-bar button.link { background: none; border: none; color: #8ab4f8; padding: 0; cursor: pointer; text-decoration: underline; }
+      .prefab-stage-bar .prefab-name { color: #fff; font-weight: 500; }
+      .prefab-stage-bar .prefab-name.dirty, .prefab-stage-bar .dirty-dot { color: #e6b450; }
+      .prefab-stage-bar .segmented { display: flex; }
+      .prefab-stage-bar .segmented button.selected { background: #3d6fb4; color: #fff; }
+      .prefab-stage-bar .stage-notice { color: #bbb; font-size: 12px; max-width: 28em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .prefab-stage-bar .stage-notice.warning { color: #ff9800; white-space: normal; }
       .toolbar .separator { width: 1px; height: 20px; background: #555; margin: 0 4px; }
       .toolbar .audio-status { color: #888; font-size: 12px; }
       .toolbar .audio-status.warning { color: #ff9800; }
