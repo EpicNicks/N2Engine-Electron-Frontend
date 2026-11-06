@@ -1,7 +1,7 @@
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
 import type { BoundsResponse, PickResultResponse } from "../protocol/protocol.generated"
-import { createPickBackend, hostHasPicking, remapToHostViewport, translateBounds, unionBounds, validBounds } from "../renderer/viewport-picking"
+import { createPickBackend, hostHasPicking, pickHitOf, remapToHostViewport, translateBounds, unionBounds, validBounds } from "../renderer/viewport-picking"
 import { vec3 } from "../renderer/viewport-math"
 
 const box = (min: [number, number, number], max: [number, number, number]) => ({
@@ -81,7 +81,7 @@ describe("createPickBackend", () => {
     const engine = {
       pickEntity: async (x: number, y: number, includeInactive: boolean) => {
         picks.push([x, y, includeInactive])
-        return answers.pick ?? { entityId: "", point: vec3(0, 0, 0), distance: 0 }
+        return answers.pick ?? { entityId: "", point: vec3(0, 0, 0), distance: 0, normal: vec3(0, 0, 0) }
       },
       getEntityBounds: async (ids: string[]) => {
         bounds.push(ids)
@@ -95,9 +95,22 @@ describe("createPickBackend", () => {
     const miss = fake()
     assert.equal(await createPickBackend(miss.engine).pick(1.5, 2.5, false), null)
     assert.deepEqual(miss.picks, [[1.5, 2.5, false]])
-    const hit = fake({ pick: { entityId: "graphic-1", point: vec3(1, 2, 3), distance: 4 } })
+    const hit = fake({ pick: { entityId: "graphic-1", point: vec3(1, 2, 3), distance: 4, normal: vec3(0, 1, 0) } })
     assert.equal(await createPickBackend(hit.engine).pick(0, 0, true), "graphic-1") // a UI graphic's own object, as the host says
     assert.deepEqual(hit.picks, [[0, 0, true]])
+  })
+
+  test("pickHit: a miss is null; a hit keeps the point and the unit normal", async () => {
+    const miss = fake()
+    assert.equal(await createPickBackend(miss.engine).pickHit!(1, 2, false), null)
+    assert.deepEqual(miss.picks, [[1, 2, false]])
+    const hit = fake({ pick: { entityId: "a", point: vec3(1, 2, 3), distance: 4, normal: vec3(0, 2, 0) } })
+    assert.deepEqual(await createPickBackend(hit.engine).pickHit!(5, 6, true), {
+      entityId: "a",
+      point: vec3(1, 2, 3),
+      normal: vec3(0, 1, 0),
+    })
+    assert.deepEqual(hit.picks, [[5, 6, true]])
   })
 
   test("bounds: one call for the selection, repeated ids once, only entries for what was asked and well-formed", async () => {
@@ -139,5 +152,21 @@ describe("createPickBackend", () => {
     }
     await assert.rejects(createPickBackend(engine).pick(0, 0, false), /No scene/)
     await assert.rejects(createPickBackend(engine).bounds(["a"]), /No scene/)
+  })
+})
+
+describe("pickHitOf", () => {
+  test("a zero normal (a host before 1.27.0) is null; a non-finite point or normal is null", () => {
+    assert.deepEqual(pickHitOf({ entityId: "a", point: vec3(1, 2, 3), distance: 1, normal: vec3(0, 0, 0) }), {
+      entityId: "a",
+      point: vec3(1, 2, 3),
+      normal: null,
+    })
+    assert.deepEqual(pickHitOf({ entityId: "a", point: vec3(NaN, 0, 0), distance: 1, normal: vec3(0, Infinity, 0) }), {
+      entityId: "a",
+      point: null,
+      normal: null,
+    })
+    assert.equal(pickHitOf({ entityId: "", point: vec3(0, 0, 0), distance: 0, normal: vec3(0, 0, 0) }), null)
   })
 })

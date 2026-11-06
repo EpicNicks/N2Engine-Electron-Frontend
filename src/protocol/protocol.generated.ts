@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.26.0";
+export const PROTOCOL_VERSION = "1.27.0";
 
 // ==================== Types ====================
 
@@ -1075,6 +1075,7 @@ export interface PickResultResponse {
   entityId: string;
   point: Vec3;
   distance: number;
+  normal: Vec3;
 }
 
 export interface BoundsResponse {
@@ -2718,6 +2719,7 @@ export function encodePickResultResponse(value: PickResultResponse): Uint8Array 
   writer.string(value.entityId);
   writeVec3(writer, value.point);
   writer.f32(value.distance);
+  writeVec3(writer, value.normal);
   return writer.finish();
 }
 
@@ -2727,7 +2729,8 @@ export function decodePickResultResponse(payload: Uint8Array): PickResultRespons
   const entityId = reader.string();
   const point = readVec3(reader);
   const distance = reader.f32();
-  return { entityId, point, distance };
+  const normal = reader.remaining > 0 ? readVec3(reader) : { x: 0, y: 0, z: 0 };
+  return { entityId, point, distance, normal };
 }
 
 /** Bounds's payload (without the frame header) */

@@ -53,10 +53,21 @@ import { SnapSettings, SnapTool, defaultSnapSettings, snapActive, stepRadians } 
 import { GizmoPivot, GizmoSpace, gizmoAxes, otherPivot, otherSpace, pivotPosition } from "./viewport-tool-settings"
 import { MarqueeBoundsCache, MarqueeKeys, MarqueeOp, NoMarqueeKeys, Rect, clampRect, marqueeHits, marqueeOpOf, rectFrom } from "./viewport-marquee"
 
+/** What PickEntity found under a pixel: the object, the world point the ray meets it at and the surface normal there */
+export interface PickHit {
+  entityId: string
+  /** Null when the host's point is not finite */
+  point: Vec3 | null
+  /** Unit length, facing the camera; null from a host before protocol 1.27.0 (it sends none) */
+  normal: Vec3 | null
+}
+
 /** The host's picking and bounds (PickEntity and GetEntityBounds, protocol 1.8.0) */
 export interface PickBackend {
   /** The object under the pixel (frame pixels, top-left origin), or null for none */
   pick(x: number, y: number, includeInactive: boolean): Promise<string | null>
+  /** The same pick with the point and normal; optional (a backend without it gets the drop estimated from bounds) */
+  pickHit?(x: number, y: number, includeInactive: boolean): Promise<PickHit | null>
   /** World bounds of the objects that have any (an id the host can't measure is not in the map); null when the host can't say */
   bounds(entityIds: string[]): Promise<Map<string, Bounds> | null>
 }
@@ -1124,9 +1135,10 @@ export class ViewportController {
   }
 
   /**
-   * The world position for a prefab dropped on the picture at this frame pixel (protocol 1.19.0): where the ray through
-   * the pixel enters the object PickEntity finds there (it gives the object, not the point), else a point in front of
-   * the camera on that ray. A failed pick is a miss. See viewport-drop.ts.
+   * The world position for a prefab dropped on the picture at this frame pixel (protocol 1.19.0): the point where the ray
+   * through the pixel meets the object PickEntity finds there (its PickResult's point), else a point in front of the camera
+   * on that ray. A backend that gives no point (no pickHit, or a point that is not finite) falls back to where the ray
+   * enters the object's box (GetEntityBounds). A failed pick is a miss. See viewport-drop.ts.
    */
   async prefabDropPosition(pixel: Pixel): Promise<Vec3> {
     const matrices = this.matrices()
@@ -1138,8 +1150,17 @@ export class ViewportController {
     if (ray && size && picking && this.canPick && this.deps.engine.isConnected() && insideFrame(pixel, size)) {
       try {
         const asked = this.hostSize ? remapToHostViewport(pixel, size, this.hostSize) : pixel
-        const id = !this.hostSize || insideFrame(asked, this.hostSize) ? await picking.pick(asked.x, asked.y, false) : null
-        if (id !== null) hit = (await picking.bounds([id]))?.get(id) ?? null
+        if (!this.hostSize || insideFrame(asked, this.hostSize)) {
+          let id: string | null
+          if (picking.pickHit) {
+            const found = await picking.pickHit(asked.x, asked.y, false)
+            if (found?.point) return found.point
+            id = found?.entityId ?? null
+          } else {
+            id = await picking.pick(asked.x, asked.y, false)
+          }
+          if (id !== null) hit = (await picking.bounds([id]))?.get(id) ?? null
+        }
       } catch (e) {
         console.debug("Picking for a prefab drop failed:", e)
       }
