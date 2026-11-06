@@ -1,6 +1,6 @@
 {
-  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0 or the empty string).",
-  "protocolVersion": "1.26.0",
+  "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0, the empty string or a vec3 of zeros).",
+  "protocolVersion": "1.27.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -1020,9 +1020,14 @@
           "y": 1.75,
           "z": -2.0
         },
-        "distance": 1.75
+        "distance": 1.75,
+        "normal": {
+          "x": -2.0,
+          "y": 2.25,
+          "z": -2.5
+        }
       },
-      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f"
+      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f000000c000001040000020c0"
     },
     {
       "response": "Bounds",
@@ -2762,6 +2767,39 @@
         "pixels": ""
       },
       "payload": "78563412007a5634127b563412"
+    },
+    {
+      "response": "LuaFields",
+      "id": "0x14",
+      "fields": {
+        "schema": {
+          "typeName": "LuaComponent",
+          "singleton": false,
+          "fields": [
+            {
+              "name": "scriptUUID",
+              "displayName": "Script",
+              "kind": "AssetRef",
+              "typeName": "LuaScript",
+              "hidden": false,
+              "readOnly": false,
+              "assetType": "LuaScript"
+            },
+            {
+              "name": "enemy",
+              "displayName": "Enemy",
+              "kind": "PrefabRef",
+              "typeName": "Prefab",
+              "hidden": false,
+              "readOnly": false,
+              "assetType": "Prefab",
+              "assetPath": "res://prefabs/enemy.prefab",
+              "container": "scriptData"
+            }
+          ]
+        }
+      },
+      "payload": "8b0100007b226669656c6473223a5b7b22617373657454797065223a224c7561536372697074222c22646973706c61794e616d65223a22536372697074222c2268696464656e223a66616c73652c226b696e64223a224173736574526566222c226e616d65223a2273637269707455554944222c22726561644f6e6c79223a66616c73652c22747970654e616d65223a224c7561536372697074227d2c7b22617373657450617468223a227265733a2f2f707265666162732f656e656d792e707265666162222c22617373657454797065223a22507265666162222c22636f6e7461696e6572223a2273637269707444617461222c22646973706c61794e616d65223a22456e656d79222c2268696464656e223a66616c73652c226b696e64223a22507265666162526566222c226e616d65223a22656e656d79222c22726561644f6e6c79223a66616c73652c22747970654e616d65223a22507265666162227d5d2c2273696e676c65746f6e223a66616c73652c22747970654e616d65223a224c7561436f6d706f6e656e74227d"
     }
   ],
   "shortPayloads": [
@@ -2878,6 +2916,28 @@
         "role": ""
       },
       "payload": "1800000070726f746f636f6c56657273696f6e203020e29c9320c3a916000000656e67696e6556657273696f6e203120e29c9320c3a92b0000005b226361706162696c6974696573203220e29c93222c226361706162696c6974696573203320e29c93225d00010d00000075736572203520e29c9320c3a9"
+    },
+    {
+      "response": "PickResult",
+      "id": "0x1A",
+      "omitted": [
+        "normal"
+      ],
+      "fields": {
+        "entityId": "entityId 0 ✓ é",
+        "point": {
+          "x": -1.5,
+          "y": 1.75,
+          "z": -2.0
+        },
+        "distance": 1.75,
+        "normal": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      },
+      "payload": "11000000656e746974794964203020e29c9320c3a90000c0bf0000e03f000000c00000e03f"
     }
   ]
 }

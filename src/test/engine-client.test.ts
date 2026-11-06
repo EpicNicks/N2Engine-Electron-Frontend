@@ -1128,15 +1128,17 @@ describe("EngineClient viewport commands (protocol 1.7)", () => {
     }
 
     const pick = client.pickEntity(12.5, 300.25, false)
-    answer(ResponseType.PickResult, encodePickResultResponse({ entityId: "abc", point: { x: 1, y: 2, z: 3 }, distance: 4.5 }))
+    answer(ResponseType.PickResult, encodePickResultResponse({ entityId: "abc", point: { x: 1, y: 2, z: 3 }, distance: 4.5, normal: { x: 0, y: 0, z: 1 } }))
     const hit = await pick
     assert.equal(sentFrame(sockets[0], 0).type, CommandType.PickEntity)
     assert.deepEqual(decodePickEntityRequest(sentFrame(sockets[0], 0).payload), { x: 12.5, y: 300.25, includeInactive: false })
     assert.equal(hit.entityId, "abc")
     assert.equal(hit.distance, 4.5)
+    assert.deepEqual(hit.point, { x: 1, y: 2, z: 3 })
+    assert.deepEqual(hit.normal, { x: 0, y: 0, z: 1 }) // protocol 1.27.0
 
     const miss = client.pickEntity(1, 2, true)
-    answer(ResponseType.PickResult, encodePickResultResponse({ entityId: "", point: { x: 0, y: 0, z: 0 }, distance: 0 }))
+    answer(ResponseType.PickResult, encodePickResultResponse({ entityId: "", point: { x: 0, y: 0, z: 0 }, distance: 0, normal: { x: 0, y: 0, z: 0 } }))
     assert.equal((await miss).entityId, "")
     assert.equal(decodePickEntityRequest(sentFrame(sockets[0], 1).payload).includeInactive, true)
 
