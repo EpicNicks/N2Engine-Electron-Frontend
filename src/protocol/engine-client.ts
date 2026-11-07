@@ -11,6 +11,7 @@ import {
   ComponentSchema,
   CommandType,
   EngineHealthResponse,
+  EngineStats,
   ClipboardPayload,
   EntityDataResponse,
   EntityInfo,
@@ -43,6 +44,7 @@ import {
 import { CommandSpec, Commands, decodeError } from "./codec"
 import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
+import { validateEngineStats } from "./engine-stats"
 import { validateNetworkSettingsInfo, validateNetworkValidationReport } from "./network-panel"
 import { parseAssetDetails, parseAssetList, parseAssetsMoved } from "./asset-parse"
 import { PrefabStage, PrefabStageMode, parsePrefabStageInfo } from "./prefab-stage"
@@ -1090,6 +1092,15 @@ export class EngineClient {
   /** Per-subsystem status (window, renderer, audio, ...); healthy is false when any of them failed */
   getEngineHealth(): Promise<EngineHealthResponse> {
     return this.send(Commands.GetEngineHealth, {})
+  }
+
+  /**
+   * Protocol 1.28.0 (engineStats capability): the host's frame records after sinceFrame (it keeps the last 240; 0 for all
+   * of them), a summary, the last rendered frame's counters, and the scene, Lua, physics and process figures it has.
+   * A Read command that never logs; the first call turns the host's frame timers on, and 10 s without one turns them off.
+   */
+  async getEngineStats(sinceFrame: number): Promise<EngineStats> {
+    return validateEngineStats((await this.send(Commands.GetEngineStats, { sinceFrame })).stats)
   }
 
   // ==================== Internals ====================
