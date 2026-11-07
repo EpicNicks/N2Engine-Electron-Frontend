@@ -8,6 +8,7 @@ import { HistoryPanel } from "../history-panel"
 import { InspectorPanel } from "../inspector-panel"
 import { ProjectSettingsPanel } from "../project-settings-panel"
 import { EnginePanel } from "../panels"
+import { ProfilerPanel } from "../profiler-panel"
 import { Viewport } from "../viewport-panel"
 import { PanelRegistry } from "./panel-registry"
 
@@ -51,6 +52,17 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     title: "History",
     icon: "🕘",
     component: HistoryPanel as PanelComponent,
+    defaultRegion: "bottom",
+    closable: true,
+    singleton: true,
+    unmountWhenHidden: true,
+  })
+  // The profiler (FE-S5) is a tab beside the console and the history; it polls the host only while it is shown
+  registry.register({
+    id: "profiler",
+    title: "Profiler",
+    icon: "⏱",
+    component: ProfilerPanel as PanelComponent,
     defaultRegion: "bottom",
     closable: true,
     singleton: true,

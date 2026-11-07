@@ -430,6 +430,37 @@
       .client-stats dd { margin: 0; font-variant-numeric: tabular-nums; }
       .client-stats p { color: #999; font-size: 11px; line-height: 1.4; }
 
+      /* Profiler panel (FE-S5) */
+      .profiler-panel .panel-content { overflow-y: auto; font-size: 12px; }
+      .profiler-host { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 4px 8px; color: #bbb; }
+      .profiler-graph { display: block; width: calc(100% - 16px); height: 90px; margin: 4px 8px; background: #1b1b1b; border: 1px solid #333; }
+      .profiler-guide { stroke: #666; stroke-width: 1; stroke-dasharray: 3 3; }
+      .profiler-fixed { fill: #4e79a7; background: #4e79a7; }
+      .profiler-physics { fill: #76b7b2; background: #76b7b2; }
+      .profiler-update { fill: #59a14f; background: #59a14f; }
+      .profiler-audio { fill: #edc948; background: #edc948; }
+      .profiler-render { fill: #e15759; background: #e15759; }
+      .profiler-otherTick { fill: #9c9c9c; background: #9c9c9c; }
+      .profiler-renderRequest { fill: #b07aa1; background: #b07aa1; }
+      .profiler-readback { fill: #ff9da7; background: #ff9da7; }
+      .profiler-otherCommands { fill: #6b5b95; background: #6b5b95; }
+      .profiler-legend { display: flex; flex-wrap: wrap; gap: 2px 10px; list-style: none; margin: 0; padding: 0 8px; color: #bbb; font-size: 11px; }
+      .profiler-legend .swatch { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 1px; }
+      .profiler-breakdown { margin: 6px 8px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      .profiler-breakdown th, .profiler-breakdown td { padding: 1px 8px 1px 0; text-align: right; font-weight: normal; }
+      .profiler-breakdown th[scope="row"], .profiler-breakdown thead th:first-child { text-align: left; color: #bbb; }
+      .profiler-breakdown thead th { color: #888; }
+      .profiler-counters { padding: 4px 8px; border-top: 1px solid #444; }
+      .profiler-counters dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
+      .profiler-counters dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+      .profiler-counters dt { color: #bbb; }
+      .profiler-counters dd { margin: 0; font-variant-numeric: tabular-nums; }
+      .profiler-counters .warn dd { color: #e5a14b; }
+      .profiler-meter { height: 4px; margin: 4px 0; background: #333; border-radius: 2px; overflow: hidden; }
+      .profiler-meter > span { display: block; height: 100%; background: #4caf50; }
+      .profiler-meter.warn > span { background: #e5a14b; }
+      .profiler-panel .detail { color: #999; font-size: 11px; line-height: 1.4; padding: 0 8px; }
+
       /* History panel */
       .history-panel .history-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
       .history-row { display: flex; gap: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; align-items: baseline; }
