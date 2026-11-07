@@ -682,7 +682,7 @@ describe("text files at the bottom", () => {
 })
 
 describe("the editor's registered panels", () => {
-  test("are the six the editor always had, in their old places and stacks, the history beside the console and the project settings beside the inspector", () => {
+  test("are the six the editor always had, in their old places and stacks, the history and the profiler beside the console and the project settings beside the inspector", () => {
     const registry = builtinPanels()
     assert.deepEqual(
       registry.list().map((d) => [d.id, d.defaultRegion, d.defaultGroup ?? 0]),
@@ -691,6 +691,7 @@ describe("the editor's registered panels", () => {
         ["viewport", "center", 0],
         ["console", "bottom", 0],
         ["history", "bottom", 0],
+        ["profiler", "bottom", 0],
         ["hierarchy", "right", 0],
         ["inspector", "right", 1],
         ["projectSettings", "right", 1],
@@ -700,7 +701,7 @@ describe("the editor's registered panels", () => {
     assert.deepEqual(shape(defaultLayout(registry)), {
       left: [["assets"]],
       center: [["viewport"]],
-      bottom: [["console", "history"]],
+      bottom: [["console", "history", "profiler"]],
       right: [["hierarchy"], ["inspector", "projectSettings"], ["engine"]],
     })
   })
@@ -709,7 +710,8 @@ describe("the editor's registered panels", () => {
     const registry = builtinPanels()
     assert.equal(registry.get("viewport")!.closable, false)
     assert.equal(registry.get("viewport")!.unmountWhenHidden, true)
-    for (const id of ["assets", "console", "history", "hierarchy", "inspector", "projectSettings", "engine"]) assert.equal(registry.get(id)!.closable, true, id)
+    for (const id of ["assets", "console", "history", "profiler", "hierarchy", "inspector", "projectSettings", "engine"]) assert.equal(registry.get(id)!.closable, true, id)
+    assert.equal(registry.get("profiler")!.unmountWhenHidden, true, "the profiler polls only while it is shown")
     assert.deepEqual(registry.get("hierarchy")!.sizing, { flex: "0 0 30%" })
     assert.equal(registry.get("inspector")!.sizing, undefined, "flex 1: the rest")
     assert.deepEqual(registry.get("engine")!.sizing, { flex: "0 0 auto", maxHeight: "30%" })

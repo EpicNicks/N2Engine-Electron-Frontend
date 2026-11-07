@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.27.0";
+export const PROTOCOL_VERSION = "1.28.0";
 
 // ==================== Types ====================
 
@@ -448,6 +448,87 @@ export interface AssetPreviewInfo {
   peaks?: AudioPeak[];
 }
 
+export interface EngineStatsHost {
+  kind: string;
+  state: string;
+  renderer?: string;
+  timersEnabled: boolean;
+  timeScale: number;
+}
+
+export interface EngineFrameRecord {
+  frame: number;
+  intervalMs: number;
+  tickMs: number;
+  fixedMs: number;
+  fixedTicks: number;
+  physicsMs: number;
+  updateMs: number;
+  audioMs: number;
+  renderMs: number;
+  commandsMs: number;
+  renderRequestMs: number;
+  readbackMs: number;
+}
+
+export interface EngineTiming {
+  avg: number;
+  p95: number;
+  max: number;
+}
+
+export interface EngineStatsSummary {
+  windowFrames: number;
+  fps: number;
+  tickMs: EngineTiming;
+}
+
+export interface EngineRenderStats {
+  counters: boolean;
+  drawCalls: number;
+  triangles: number;
+  vertices: number;
+  framesRendered: number;
+  width: number;
+  height: number;
+}
+
+export interface EngineSceneStats {
+  objects: number;
+  activeObjects: number;
+  components: number;
+  luaComponents: number;
+}
+
+export interface EngineLuaStats {
+  memoryBytes: number;
+  memoryCapBytes: number;
+}
+
+export interface EnginePhysicsStats {
+  backend: string;
+  bodies?: number;
+  staticBodies?: number;
+  activeBodies?: number;
+}
+
+export interface EngineProcessStats {
+  workingSetBytes: number;
+  peakWorkingSetBytes?: number;
+}
+
+export interface EngineStats {
+  host: EngineStatsHost;
+  frame: number;
+  frames: EngineFrameRecord[];
+  summary: EngineStatsSummary;
+  render?: EngineRenderStats;
+  scene?: EngineSceneStats;
+  lua?: EngineLuaStats;
+  physics?: EnginePhysicsStats;
+  process?: EngineProcessStats;
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -542,6 +623,7 @@ export const CommandType = {
   SavePrefabStage: 0x2C,
   ClosePrefabStage: 0x2D,
   GetPrefabStage: 0x2E,
+  GetEngineStats: 0x54,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -594,6 +676,7 @@ export const ResponseType = {
   NetworkValidation: 0x25,
   AssetsMoved: 0xA5,
   PrefabStageInfo: 0x26,
+  EngineStats: 0x27,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -691,6 +774,7 @@ export const CommandResponse = {
   SavePrefabStage: "PrefabStageInfo",
   ClosePrefabStage: "PrefabStageInfo",
   GetPrefabStage: "PrefabStageInfo",
+  GetEngineStats: "EngineStats",
 } as const;
 
 // ==================== Messages ====================
@@ -1005,6 +1089,10 @@ export interface ClosePrefabStageRequest {
   discard: boolean;
 }
 
+export interface GetEngineStatsRequest {
+  sinceFrame: number;
+}
+
 /** Ok has no payload */
 export type OkResponse = Record<string, never>;
 
@@ -1249,6 +1337,10 @@ export interface AssetsMovedResponse {
 
 export interface PrefabStageInfoResponse {
   info: PrefabStageInfo;
+}
+
+export interface EngineStatsResponse {
+  stats: EngineStats;
 }
 
 export interface ErrorCodedResponse {
@@ -2534,6 +2626,20 @@ export function decodeClosePrefabStageRequest(payload: Uint8Array): ClosePrefabS
   return { discard };
 }
 
+/** GetEngineStats's request payload (without the frame header) */
+export function encodeGetEngineStatsRequest(value: GetEngineStatsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.sinceFrame);
+  return writer.finish();
+}
+
+/** Reads GetEngineStats's request payload; bytes after the last field are ignored */
+export function decodeGetEngineStatsRequest(payload: Uint8Array): GetEngineStatsRequest {
+  const reader = new ProtocolReader(payload);
+  const sinceFrame = reader.u32();
+  return { sinceFrame };
+}
+
 /** Ok's (empty) payload */
 export function encodeOkResponse(_value: OkResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3295,6 +3401,20 @@ export function decodePrefabStageInfoResponse(payload: Uint8Array): PrefabStageI
   return { info };
 }
 
+/** EngineStats's payload (without the frame header) */
+export function encodeEngineStatsResponse(value: EngineStatsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.stats);
+  return writer.finish();
+}
+
+/** Reads EngineStats's payload; bytes after the last field are ignored */
+export function decodeEngineStatsResponse(payload: Uint8Array): EngineStatsResponse {
+  const reader = new ProtocolReader(payload);
+  const stats = reader.json() as EngineStats;
+  return { stats };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3375,6 +3495,7 @@ export const RequestCodecs = {
   OpenPrefabStage: { encode: encodeOpenPrefabStageRequest, decode: decodeOpenPrefabStageRequest },
   SetPrefabStageMode: { encode: encodeSetPrefabStageModeRequest, decode: decodeSetPrefabStageModeRequest },
   ClosePrefabStage: { encode: encodeClosePrefabStageRequest, decode: decodeClosePrefabStageRequest },
+  GetEngineStats: { encode: encodeGetEngineStatsRequest, decode: decodeGetEngineStatsRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3425,5 +3546,6 @@ export const ResponseCodecs = {
   NetworkValidation: { encode: encodeNetworkValidationResponse, decode: decodeNetworkValidationResponse },
   AssetsMoved: { encode: encodeAssetsMovedResponse, decode: decodeAssetsMovedResponse },
   PrefabStageInfo: { encode: encodePrefabStageInfoResponse, decode: decodePrefabStageInfoResponse },
+  EngineStats: { encode: encodeEngineStatsResponse, decode: decodeEngineStatsResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

@@ -15,6 +15,7 @@ import type {
   BoundsResponse,
   ComponentSchema,
   EngineHealthResponse,
+  EngineStats,
   ClipboardPayload,
   EntityDataResponse,
   EventsResponse,
@@ -120,6 +121,11 @@ export interface EngineCommands {
   moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult>
 
   getEngineHealth(): Promise<EngineHealthResponse>
+  /**
+   * Protocol 1.28.0 (engineStats capability): the host's frame records after sinceFrame, the last frame's render
+   * counters and its scene, Lua, physics and process figures (a Read command that never logs; the Profiler polls it)
+   */
+  getEngineStats(sinceFrame: number): Promise<EngineStats>
 
   /**
    * PollEvents: the host's events after afterSeq in epoch (0, 0 for everything it still keeps), at most maxEvents
@@ -322,6 +328,7 @@ export const EngineCommandArgs = {
   createFolder: ["string"],
   moveAssets: ["assetMoves"],
   getEngineHealth: [],
+  getEngineStats: ["uint32"],
   pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],
   destroyEntity: ["string"],
@@ -722,6 +729,8 @@ export interface PlayCommands {
   getAudio(): Promise<AudioSamples | null>
   pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse>
   sendInput(events: PlayInputEvent[]): Promise<void>
+  /** The game's frame records and figures (protocol 1.28.0, the edit host's engineStats capability; a play host is the same executable) */
+  getEngineStats(sinceFrame: number): Promise<EngineStats>
 }
 
 export type PlayCommandName = keyof PlayCommands
@@ -733,6 +742,7 @@ export const PlayCommandArgs = {
   getAudio: [],
   pollEvents: ["uint32", "uint32", "uint32"],
   sendInput: ["inputEvents"],
+  getEngineStats: ["uint32"],
 } as const satisfies { readonly [K in PlayCommandName]: readonly ArgKind[] }
 
 export const PlayCommandNames = Object.keys(PlayCommandArgs) as PlayCommandName[]
