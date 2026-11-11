@@ -126,6 +126,8 @@ describe("the SetBuildTargets patch", () => {
     assert.ok(fieldError("icon", "assets/icon.png"))
     assert.equal(fieldError("icon", "res://icons/app.png"), null)
     assert.ok(fieldError("renderer", "metal"))
+    assert.equal(fieldError("pack", "7z"), null)
+    assert.ok(fieldError("pack", "rar"), "a pack is zip, stored, 7z or folder")
     assert.ok(fieldError("signing.profile", "-----BEGIN PRIVATE KEY-----"), "a key is not a profile name")
     assert.deepEqual(Object.keys(buildPatch({}, { version: "x" }).errors), ["version"])
   })

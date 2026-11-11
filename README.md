@@ -225,7 +225,7 @@ Build targets stage 3 (engine design: `orchestrator/proposals/build-targets-desi
 - **The targets.** The list holds every target `n2build list` knows on this machine, then any target the project has settings for that this machine lacks (a private console target, say), marked with `?`.
   - A target turned off (`enabled: false`) is hidden until **Show turned-off targets** is ticked.
   - Selecting a target runs `n2build doctor` for it: what it needs, whether this machine has each thing, and the fix for each missing one. **Check again** asks again.
-- **The settings.** The fields are the name on that platform, app id, version, build number, default configuration, orientation, renderer, icon, the engine modules for that target (over `build.modules`) and a signing profile's name.
+- **The settings.** The fields are the name on that platform, app id, version, build number, default configuration, pack format (zip, stored, 7z or the folder as it is; engine build targets stage 4), orientation, renderer, icon, the engine modules for that target (over `build.modules`) and a signing profile's name.
   - **Apply** sends `SetBuildTargets` with only the changed keys. A field that is emptied is removed.
   - The form checks the host's rules first (`1.2.3` versions, the build-number range, reverse-domain app ids, `res://….png` icons). The host refuses anything that looks like a secret and names the key; the edits are then kept.
   - **Offered in the build list** turns a target on or off at once.

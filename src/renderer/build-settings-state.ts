@@ -45,6 +45,7 @@ export const BuildFields = [
   "version",
   "buildNumber",
   "config",
+  "pack",
   "orientation",
   "renderer",
   "icon",
@@ -59,6 +60,7 @@ export type BuildField = (typeof BuildFields)[number]
 export const Choices: Partial<Record<BuildField, readonly string[]>> = {
   enabled: ["true", "false"],
   config: ["debug", "release"],
+  pack: ["zip", "stored", "7z", "folder"],
   orientation: ["any", "landscape", "portrait"],
   renderer: ["auto", "software", "opengl", "vulkan", "webgpu"],
   "modules.physics3d": ["none", "physx", "jolt", "both"],
