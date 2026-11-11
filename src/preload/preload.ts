@@ -5,7 +5,11 @@ import { contextBridge, ipcRenderer } from "electron"
 import {
   AgentApi,
   AgentState,
+  BuildApi,
+  BuildState,
+  BuildUpdate,
   Channels,
+  InitialBuildState,
   ConnectionState,
   EditCommand,
   EditMenuApi,
@@ -277,3 +281,35 @@ const systemClipboard: SystemClipboardApi = {
   writeText: (text) => invoke(Channels.clipboardWriteText, text),
 }
 contextBridge.exposeInMainWorld("systemClipboard", systemClipboard)
+
+// ==================== window.build ====================
+
+let buildState: BuildState = InitialBuildState
+let buildPushed = false
+const buildListeners: Array<(update: BuildUpdate) => void> = []
+ipcRenderer.on(Channels.buildUpdate, (_event, update: BuildUpdate) => {
+  buildPushed = true
+  buildState = update.state
+  notify(buildListeners, update, "Build")
+})
+invoke<BuildState>(Channels.buildGetState).then(
+  (state) => {
+    // Pushes arrive in order; the first fetch only counts if none has arrived yet
+    if (buildPushed) return
+    buildState = state
+    notify(buildListeners, { state, events: [] }, "Build")
+  },
+  (e) => console.error("Failed to get the build state:", e)
+)
+
+const build: BuildApi = {
+  state: () => buildState,
+  onUpdate(listener) {
+    buildListeners.push(listener)
+  },
+  list: () => invoke(Channels.buildList),
+  doctor: (target) => invoke(Channels.buildDoctor, target),
+  start: (request) => invoke(Channels.buildStart, request),
+  cancel: () => invoke(Channels.buildCancel),
+}
+contextBridge.exposeInMainWorld("build", build)

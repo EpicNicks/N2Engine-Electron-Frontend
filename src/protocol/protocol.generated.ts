@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.28.0";
+export const PROTOCOL_VERSION = "1.29.0";
 
 // ==================== Types ====================
 
@@ -586,6 +586,7 @@ export const CommandType = {
   GetProjectInfo: 0x70,
   SetProjectSettings: 0x71,
   SetStartupScene: 0x72,
+  SetBuildTargets: 0x73,
   ListEditorExtensions: 0x80,
   GetEditorUi: 0x81,
   ReloadEditorExtensions: 0x84,
@@ -737,6 +738,7 @@ export const CommandResponse = {
   GetProjectInfo: "ProjectInfo",
   SetProjectSettings: "ProjectInfo",
   SetStartupScene: "ProjectInfo",
+  SetBuildTargets: "ProjectInfo",
   ListEditorExtensions: "EditorExtensions",
   GetEditorUi: "EditorUi",
   ReloadEditorExtensions: "EditorExtensions",
@@ -986,6 +988,10 @@ export interface SetProjectSettingsRequest {
 
 export interface SetStartupSceneRequest {
   path: string;
+}
+
+export interface SetBuildTargetsRequest {
+  targets: unknown;
 }
 
 export interface InvokeMenuItemRequest {
@@ -2298,6 +2304,20 @@ export function decodeSetStartupSceneRequest(payload: Uint8Array): SetStartupSce
   return { path };
 }
 
+/** SetBuildTargets's request payload (without the frame header) */
+export function encodeSetBuildTargetsRequest(value: SetBuildTargetsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.targets);
+  return writer.finish();
+}
+
+/** Reads SetBuildTargets's request payload; bytes after the last field are ignored */
+export function decodeSetBuildTargetsRequest(payload: Uint8Array): SetBuildTargetsRequest {
+  const reader = new ProtocolReader(payload);
+  const targets = reader.json() as unknown;
+  return { targets };
+}
+
 /** InvokeMenuItem's request payload (without the frame header) */
 export function encodeInvokeMenuItemRequest(value: InvokeMenuItemRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3474,6 +3494,7 @@ export const RequestCodecs = {
   GetLuaFields: { encode: encodeGetLuaFieldsRequest, decode: decodeGetLuaFieldsRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
+  SetBuildTargets: { encode: encodeSetBuildTargetsRequest, decode: decodeSetBuildTargetsRequest },
   InvokeMenuItem: { encode: encodeInvokeMenuItemRequest, decode: decodeInvokeMenuItemRequest },
   InvokeInspectorAction: { encode: encodeInvokeInspectorActionRequest, decode: decodeInvokeInspectorActionRequest },
   BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },

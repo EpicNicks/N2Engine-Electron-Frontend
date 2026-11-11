@@ -91,6 +91,11 @@ export interface EngineCommands {
   /** settings: a JSON merge patch object (RFC 7386: a null value removes the key) */
   setProjectSettings(settings: JsonObject): Promise<ProjectInfoResponse>
   setStartupScene(path: string): Promise<ProjectInfoResponse>
+  /**
+   * Protocol 1.29.0 (buildTargets capability): changes project.n2proj's build.targets with a JSON merge patch (a target
+   * or a key set to null is removed). The host refuses secret-looking keys and PEM blocks, and names the key at fault.
+   */
+  setBuildTargets(targets: JsonObject): Promise<ProjectInfoResponse>
 
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
@@ -316,6 +321,7 @@ export const EngineCommandArgs = {
   getOpenScene: [],
   getProjectInfo: [],
   setProjectSettings: ["jsonObject"],
+  setBuildTargets: ["jsonObject"],
   setStartupScene: ["string"],
   createScript: ["string"],
   rescanAssets: [],
@@ -931,4 +937,127 @@ export const Channels = {
   agentDone: "agent:done",
   /** (labels: EditMenuLabels) → IpcResult */
   editMenuLabels: "edit:menuLabels",
+
+  /** () → IpcResult<BuildTargetList>: n2build list, and where n2build is */
+  buildList: "build:list",
+  /** (target: string) → IpcResult<DoctorReport>: n2build doctor for the open local project */
+  buildDoctor: "build:doctor",
+  /** (request: BuildRequest) → IpcResult<BuildState>: starts n2build build (or run) for the open local project */
+  buildStart: "build:start",
+  /** () → IpcResult<BuildState>: ends the running build, with whatever it started */
+  buildCancel: "build:cancel",
+  /** () → IpcResult<BuildState> */
+  buildGetState: "build:getState",
+  /** main → page: BuildUpdate (the state, and the events since the last update) */
+  buildUpdate: "build:update",
 } as const
+
+// ==================== Builds (build targets stage 3: n2build from the main process) ====================
+
+/** A target n2build knows (n2build list --json; docs/build-targets.html#json) */
+export interface BuildTargetInfo {
+  name: string
+  displayName: string
+  hostSystems: string[]
+  /** Whether this machine's system can build it */
+  buildableHere: boolean
+  /** "targets/" for the engine's own; else the folder a private target came from */
+  source: string
+}
+
+/** One thing a target needs, as n2build doctor reports it */
+export interface DoctorCheck {
+  id: string
+  title: string
+  required: boolean
+  ok: boolean
+  version: string | null
+  detail: string
+  fix: string | null
+}
+
+export interface DoctorReport {
+  target: string
+  displayName: string
+  ok: boolean
+  checks: DoctorCheck[]
+}
+
+/** Where n2build is: the setting (settings.json's n2buildPath), N2BUILD_PATH, or beside the host's engine checkout */
+export interface N2BuildLocation {
+  path: string | null
+  source: "setting" | "env" | "host" | null
+  /** Why it can't be used (not found, or the editor connects to a remote host) */
+  problem: string | null
+}
+
+export interface BuildTargetList {
+  location: N2BuildLocation
+  targets: BuildTargetInfo[]
+}
+
+/** What the page asks to build: n2build's own arguments, checked again in the main process */
+export interface BuildRequest {
+  target: string
+  /** Absent: the target's build.targets config, else release (n2build decides) */
+  config?: string
+  /** Build and Run: n2build run (a desktop target starts the game; the web one serves it) */
+  run: boolean
+  /** A .zip or .7z beside the package (Build only) */
+  archive?: "zip" | "7z"
+}
+
+/** n2build's result line */
+export interface BuildResult {
+  type: "result"
+  ok: boolean
+  error?: string
+  output?: string
+  entry?: string
+  archive?: string
+  url?: string
+  serving?: boolean
+}
+
+/** n2build --json events (tools/n2build/lib/report.mjs) */
+export type BuildEvent =
+  | { type: "step"; id: string; title: string }
+  | { type: "log"; stream: "stdout" | "stderr"; text: string }
+  | { type: "warning"; text: string }
+  | ({ type: "doctor" } & DoctorReport)
+  | { type: "targets"; targets: BuildTargetInfo[] }
+  | BuildResult
+
+export type BuildStatus = "idle" | "running" | "succeeded" | "failed" | "cancelled"
+
+export interface BuildState {
+  status: BuildStatus
+  /** Counts builds: a higher one is a newer build (the page clears its log for it) */
+  id: number
+  request: BuildRequest | null
+  /** The step running now (or the last one) */
+  step: { id: string; title: string } | null
+  /** The last build's result line, once it ended */
+  result: BuildResult | null
+  /** Why the build ended without a result line (n2build crashed, or could not start) */
+  message: string | null
+}
+
+export const InitialBuildState: BuildState = { status: "idle", id: 0, request: null, step: null, result: null, message: null }
+
+/** main → page: the state, and the events of build state.id since the previous update (in order) */
+export interface BuildUpdate {
+  state: BuildState
+  events: BuildEvent[]
+}
+
+/** window.build: n2build, run by the main process for the open local project (never with a remote host) */
+export interface BuildApi {
+  state(): BuildState
+  /** Every update, in order: the state and the build's events since the last one */
+  onUpdate(listener: (update: BuildUpdate) => void): void
+  list(): Promise<BuildTargetList>
+  doctor(target: string): Promise<DoctorReport>
+  start(request: BuildRequest): Promise<BuildState>
+  cancel(): Promise<BuildState>
+}

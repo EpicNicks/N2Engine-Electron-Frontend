@@ -218,6 +218,42 @@ Roadmap phase FE9 (decision U6). A closable panel, **Project Settings** (a tab b
 - **Adding a section** (Network from B11 is still to come; Extensions registered itself this way): one `settingsSections.register({id, title, order, component, logic?, requires?})` call (`project-settings-registry.ts` documents the contract); the panel's code does not change. With `logic.build` the panel adds Apply, Revert, the host error and the restart note under the component.
 - **Not verified in a real Electron window or against a live host yet:** the look of the panel, and a round trip (apply a gravity, change a restart-only field and restart).
 
+## Build Settings
+
+Build targets stage 3 (engine design: `orchestrator/proposals/build-targets-design.md`, docs: `docs/build-targets.html`). **Build Settings** is a closable panel, a tab beside Project Settings that the Window menu also opens. It builds the open project for a target with the engine's `n2build`, and edits the project's per-target settings (`build.targets` in `project.n2proj`, protocol 1.29.0).
+
+- **The targets.** The list holds every target `n2build list` knows on this machine, then any target the project has settings for that this machine lacks (a private console target, say), marked with `?`.
+  - A target turned off (`enabled: false`) is hidden until **Show turned-off targets** is ticked.
+  - Selecting a target runs `n2build doctor` for it: what it needs, whether this machine has each thing, and the fix for each missing one. **Check again** asks again.
+- **The settings.** The fields are the name on that platform, app id, version, build number, default configuration, orientation, renderer, icon, the engine modules for that target (over `build.modules`) and a signing profile's name.
+  - **Apply** sends `SetBuildTargets` with only the changed keys. A field that is emptied is removed.
+  - The form checks the host's rules first (`1.2.3` versions, the build-number range, reverse-domain app ids, `res://….png` icons). The host refuses anything that looks like a secret and names the key; the edits are then kept.
+  - **Offered in the build list** turns a target on or off at once.
+  - A viewer, a read-only host or a host before 1.29.0 sees the settings read-only, with the reason.
+- **Building.** **Build** runs `n2build build`, and **Build and Run** runs `n2build run`. For a desktop target, Run starts the game; for the web target, it serves the package on `http://127.0.0.1:8080` and shows the address, until **Cancel** stops the server.
+  - The configuration can be the target's default, debug or release. Build can also write a .zip or .7z beside the package.
+  - Progress shows the current step. The log shows n2build's steps, warnings and the tools' output; it keeps the last 5,000 lines and scrolls to the end.
+  - **Cancel** ends n2build and everything it started: `taskkill /T` on Windows; n2build leads its own process group elsewhere.
+  - A failed build's log stays until the next build.
+  - Only one build runs at a time.
+  - A target with unapplied edits is not built until they are applied or reverted, because n2build reads the saved project.
+  - Quitting the editor ends a running build.
+- **How n2build runs** (`src/main/n2build-runner.ts`, `src/main/build-ipc.ts`):
+  - The main process spawns it with the editor's own executable as Node (`ELECTRON_RUN_AS_NODE=1`), so no Node is needed on PATH.
+  - There is no shell; the arguments are an array. The page sends only `{target, config?, run, archive?}`, and each field is checked again: a target and a configuration are lowercase names, the archive is zip or 7z. The project folder is always the one the editor opened, never one the page names.
+  - Its `--json` events are read line by line and checked. Any other line becomes a log line. Updates reach the page at most every 100 ms, but a build starting or ending is sent at once.
+- **Where n2build is.** In order, the editor looks at:
+  1. `n2buildPath` in `settings.json`;
+  2. `N2BUILD_PATH`;
+  3. the engine checkout the configured `N2EditorHost` sits in, looking up its folders for `tools/n2build/n2build.mjs`.
+
+  If none is found, the panel says how to set it.
+- **A remote host** (SSH or a direct address): the panel shows the targets and settings but has no Build button, and says why: builds run on this machine, from the project folder on its disk. Doctor is not asked.
+- **No secrets.** Signing is a profile's *name*. n2build resolves it from the user's own `n2build.json` at build time, so nothing secret passes through the editor, the protocol or the project.
+- **Not verified in a real Electron window yet:**
+  - the look of the panel;
+  - a real build launched from the editor. The runner was tested against a fake n2build run as a real child process: success, failure, a crash, and a cancel that ends the build's own child process. The real n2build was tested on its own.
+
 ## Layer collision matrix
 
 Roadmap phase FE9b. The Layers section of **Project Settings** has, under the 32 names, the collision matrix as a grid of checkboxes: a row and a column per layer, ticked where the two layers' colliders touch (contacts and triggers).

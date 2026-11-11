@@ -518,6 +518,29 @@
       .ps-matrix td { padding: 0; text-align: center; border: 1px solid #333; }
       .ps-matrix td input { margin: 2px; }
       .ps-matrix td.dirty { background: #4d3b00; }
+      .build-settings-panel .panel-content { display: flex; flex-direction: column; min-height: 0; }
+      .bs-off .ps-item-title { color: #888; font-style: italic; }
+      .bs-mark { font-size: 11px; color: #9cdcfe; }
+      .bs-show-off { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #888; padding: 4px 8px; }
+      .bs-heading { margin: 10px 0 4px; font-size: 12px; font-weight: 600; }
+      .bs-enable { margin-bottom: 8px; font-size: 12px; }
+      .bs-doctor { margin: 4px 0 8px; font-size: 12px; }
+      .bs-doctor-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .bs-checks { list-style: none; margin: 4px 0; padding: 0; }
+      .bs-checks li { padding: 2px 0; }
+      .bs-checks li.ok .bs-check-mark { color: #89d185; }
+      .bs-checks li.missing .bs-check-mark { color: #f48771; }
+      .bs-checks li.absent .bs-check-mark { color: #888; }
+      .bs-fix { color: #e2c08d; font-size: 11px; margin-left: 16px; white-space: pre-wrap; }
+      .bs-build { border-top: 1px solid #333; padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+      .bs-build-controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      .bs-status { font-size: 11px; color: #bbb; }
+      .bs-output { font-size: 11px; color: #bbb; word-break: break-all; }
+      .bs-log { margin: 0; max-height: 200px; overflow: auto; background: #1b1b1b; border: 1px solid #333; padding: 4px; font-family: Consolas, monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+      .bs-log-err { color: #f0a08a; }
+      .bs-log-step { color: #9cdcfe; font-weight: 600; }
+      .bs-log-warning { color: #e2c08d; }
+      .bs-log-result { color: #fff; font-weight: 600; }
       .ps-json { width: 100%; box-sizing: border-box; font-family: Consolas, monospace; font-size: 12px; resize: vertical; }
       .ps-actions { margin-top: 10px; }
       .ps-buttons { display: flex; gap: 6px; flex-wrap: wrap; }

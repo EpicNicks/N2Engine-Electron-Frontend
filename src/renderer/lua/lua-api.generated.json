@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "95e2736a3027aaacea89615a7149c275c808619b",
+  "engineRef": "df6b03ec8adba1d5501e9cdfc21af0b5d16cde8c",
   "runtime": {
     "available": true,
     "classes": {
@@ -663,6 +663,274 @@
           }
         }
       },
+      "BodyType2DValues": {
+        "name": "BodyType2DValues",
+        "description": "",
+        "fields": {
+          "Static": {
+            "name": "Static",
+            "type": "BodyType2D",
+            "description": ""
+          },
+          "Dynamic": {
+            "name": "Dynamic",
+            "type": "BodyType2D",
+            "description": ""
+          },
+          "Kinematic": {
+            "name": "Kinematic",
+            "type": "BodyType2D",
+            "description": ""
+          }
+        }
+      },
+      "ContactPoint2D": {
+        "name": "ContactPoint2D",
+        "description": "A point of a 2D contact. The normal points from the other collider to this one.",
+        "fields": {
+          "point": {
+            "name": "point",
+            "type": "Vector2",
+            "description": ""
+          },
+          "normal": {
+            "name": "normal",
+            "type": "Vector2",
+            "description": ""
+          },
+          "separation": {
+            "name": "separation",
+            "type": "number",
+            "description": ""
+          },
+          "normalImpulse": {
+            "name": "normalImpulse",
+            "type": "number",
+            "description": ""
+          },
+          "tangentImpulse": {
+            "name": "tangentImpulse",
+            "type": "number",
+            "description": ""
+          }
+        }
+      },
+      "Collision2D": {
+        "name": "Collision2D",
+        "description": "The argument of OnCollisionEnter2D/Stay2D/Exit2D. Safe to keep after the callback: its objects are checked references.\nrelativeVelocity is after this step's solve, so it is not the approach speed.",
+        "fields": {
+          "gameObject": {
+            "name": "gameObject",
+            "type": "GameObject|nil",
+            "description": "The object receiving the callback"
+          },
+          "otherGameObject": {
+            "name": "otherGameObject",
+            "type": "GameObject|nil",
+            "description": "The other object"
+          },
+          "rigidbody": {
+            "name": "rigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": "nil for a collider alone"
+          },
+          "otherRigidbody": {
+            "name": "otherRigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": "nil for a collider alone"
+          },
+          "collider": {
+            "name": "collider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": "nil when it was removed"
+          },
+          "otherCollider": {
+            "name": "otherCollider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": "nil when it was removed"
+          },
+          "relativeVelocity": {
+            "name": "relativeVelocity",
+            "type": "Vector2",
+            "description": ""
+          },
+          "impulse": {
+            "name": "impulse",
+            "type": "Vector2",
+            "description": ""
+          },
+          "contactCount": {
+            "name": "contactCount",
+            "type": "integer",
+            "description": ""
+          }
+        }
+      },
+      "Trigger2D": {
+        "name": "Trigger2D",
+        "description": "The argument of OnTriggerEnter2D/Stay2D/Exit2D; safe to keep, like Collision2D",
+        "fields": {
+          "gameObject": {
+            "name": "gameObject",
+            "type": "GameObject|nil",
+            "description": ""
+          },
+          "otherGameObject": {
+            "name": "otherGameObject",
+            "type": "GameObject|nil",
+            "description": ""
+          },
+          "rigidbody": {
+            "name": "rigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": ""
+          },
+          "otherRigidbody": {
+            "name": "otherRigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": ""
+          },
+          "collider": {
+            "name": "collider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": ""
+          },
+          "otherCollider": {
+            "name": "otherCollider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": ""
+          }
+        }
+      },
+      "RaycastHit2D": {
+        "name": "RaycastHit2D",
+        "description": "What a 2D ray or cast found",
+        "fields": {
+          "point": {
+            "name": "point",
+            "type": "Vector2",
+            "description": ""
+          },
+          "normal": {
+            "name": "normal",
+            "type": "Vector2",
+            "description": ""
+          },
+          "distance": {
+            "name": "distance",
+            "type": "number",
+            "description": ""
+          },
+          "gameObject": {
+            "name": "gameObject",
+            "type": "GameObject|nil",
+            "description": ""
+          },
+          "collider": {
+            "name": "collider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": ""
+          },
+          "rigidbody": {
+            "name": "rigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": "nil for a collider alone"
+          }
+        }
+      },
+      "OverlapHit2D": {
+        "name": "OverlapHit2D",
+        "description": "One collider a 2D overlap found",
+        "fields": {
+          "gameObject": {
+            "name": "gameObject",
+            "type": "GameObject|nil",
+            "description": ""
+          },
+          "collider": {
+            "name": "collider",
+            "type": "BoxCollider2D|CircleCollider2D|PolygonCollider2D|nil",
+            "description": ""
+          },
+          "rigidbody": {
+            "name": "rigidbody",
+            "type": "Rigidbody2D|nil",
+            "description": "nil for a collider alone"
+          }
+        }
+      },
+      "Physics2D": {
+        "name": "Physics2D",
+        "description": "2D physics on the loaded scene (docs/physics2d.html). Every query finds nothing when the scene has no 2D component, or in a\nbuild without Box2D. A layerMask of -1 means every layer; the default is every layer but Ignore Raycast.",
+        "fields": {}
+      },
+      "Rigidbody2D": {
+        "name": "Rigidbody2D",
+        "base": "Component",
+        "description": "A 2D body: uses the object's world x, y and rotation about z.",
+        "fields": {}
+      },
+      "Collider2D": {
+        "name": "Collider2D",
+        "base": "Component",
+        "description": "What every 2D collider has. Sizes ignore the transform's scale.",
+        "fields": {}
+      },
+      "BoxCollider2D": {
+        "name": "BoxCollider2D",
+        "base": "Collider2D",
+        "description": "",
+        "fields": {}
+      },
+      "CircleCollider2D": {
+        "name": "CircleCollider2D",
+        "base": "Collider2D",
+        "description": "",
+        "fields": {}
+      },
+      "PolygonCollider2D": {
+        "name": "PolygonCollider2D",
+        "base": "Collider2D",
+        "description": "A convex polygon of 3 to 8 points",
+        "fields": {}
+      },
+      "Sprite2DShapeValues": {
+        "name": "Sprite2DShapeValues",
+        "description": "",
+        "fields": {
+          "Rect": {
+            "name": "Rect",
+            "type": "Sprite2DShape",
+            "description": ""
+          },
+          "Triangle": {
+            "name": "Triangle",
+            "type": "Sprite2DShape",
+            "description": ""
+          },
+          "Circle": {
+            "name": "Circle",
+            "type": "Sprite2DShape",
+            "description": ""
+          },
+          "RegularPolygon": {
+            "name": "RegularPolygon",
+            "type": "Sprite2DShape",
+            "description": ""
+          },
+          "Polygon": {
+            "name": "Polygon",
+            "type": "Sprite2DShape",
+            "description": ""
+          }
+        }
+      },
+      "Sprite2D": {
+        "name": "Sprite2D",
+        "base": "Component",
+        "description": "A flat shape in the object's x, y plane (docs/sprite2d.html): filled or outlined, coloured, optionally textured. Lower sorting\norders draw first; equal ones back to front by depth.",
+        "fields": {}
+      },
       "PhysicsMaterial": {
         "name": "PhysicsMaterial",
         "description": "",
@@ -964,6 +1232,42 @@
       "Window": {
         "name": "Window",
         "description": "",
+        "fields": {}
+      },
+      "ScreenTint": {
+        "name": "ScreenTint",
+        "description": "The screen tint: a saturation change inside (or outside) a circle on the screen, applied to the scene and not to the\nscreen-space UI (the HUD stays in colour). For the time-stop effect (animate `radius` from 0 to the corner distance and\nback with `saturation = 0.2`; from the middle the corners are `math.sqrt((Window.GetWidth() / Window.GetHeight())^2 + 1)`\nhalf heights away: about 2.04 at 16:9, 2.54 at 21:9) and full-screen grey (`saturation = 0` with no radius). Every\nrenderer draws it (OpenGL, Vulkan, WebGPU and software), and the clear colour is tinted with the scene.",
+        "fields": {
+          "saturation": {
+            "name": "saturation",
+            "type": "number",
+            "description": "0 (grey) to 1 (no tint)"
+          },
+          "centre": {
+            "name": "centre",
+            "type": "Vector2",
+            "description": "the circle's centre, 0 to 1 of the screen from the bottom left (default (0.5, 0.5))"
+          },
+          "radius": {
+            "name": "radius",
+            "type": "number",
+            "description": "the circle's radius in half screen heights: 1 reaches the top and bottom edges from the middle (default: covers the screen)"
+          },
+          "inside": {
+            "name": "inside",
+            "type": "boolean",
+            "description": "true (the default): the tint applies inside the circle; false: outside it"
+          }
+        }
+      },
+      "Screen": {
+        "name": "Screen",
+        "description": "",
+        "fields": {}
+      },
+      "Graphics": {
+        "name": "Graphics",
+        "description": "What the renderer the game runs on can do",
         "fields": {}
       },
       "BoundingBox": {
@@ -3851,7 +4155,7 @@
         "owner": "GameObject",
         "method": true,
         "signature": "GameObject:AddComponent(typeName)",
-        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CharacterController\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
+        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CharacterController\", \"Rigidbody2D\", \"BoxCollider2D\",\n\"CircleCollider2D\", \"PolygonCollider2D\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"Sprite2D\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
         "params": [
           {
             "name": "typeName",
@@ -4527,11 +4831,11 @@
         "owner": "ParticleSystem",
         "method": true,
         "signature": "ParticleSystem:GetActiveBackend()",
-        "description": "The backend that simulates this system: \"CPU\", or \"PhysX\" when the GPU particle backend is in use",
+        "description": "The backend that simulates this system: \"CPU\", \"PhysX\" (the PhysX GPU particle backend) or \"WebGPU\" (the WebGPU compute backend, on the WebGPU renderer as in the browser)",
         "params": [],
         "returns": [
           {
-            "type": "\"CPU\"|\"PhysX\"|nil",
+            "type": "\"CPU\"|\"PhysX\"|\"WebGPU\"|nil",
             "description": "nil until the system has started (the scene is playing)"
           }
         ],
@@ -4546,8 +4850,8 @@
         "params": [
           {
             "name": "backend",
-            "type": "\"Auto\"|\"PhysX\"|\"CPU\"",
-            "description": "Auto: PhysX when the GPU physics scene is up, else CPU. PhysX falls back to CPU, with one warning, where there is no GPU backend. An unknown name raises an error."
+            "type": "\"Auto\"|\"PhysX\"|\"CPU\"|\"WebGPU\"",
+            "description": "Auto: PhysX when the GPU physics scene is up, else WebGPU when the renderer is WebGPU (the browser) and physics.gpu is auto or on (and physics.deterministic off), else CPU. PhysX and WebGPU fall back to CPU, with one warning, where that backend is not there. Read when the system starts. An unknown name raises an error."
           }
         ],
         "returns": [],
@@ -4562,7 +4866,7 @@
         "params": [],
         "returns": [
           {
-            "type": "\"Auto\"|\"PhysX\"|\"CPU\"",
+            "type": "\"Auto\"|\"PhysX\"|\"CPU\"|\"WebGPU\"",
             "description": "what was asked for (GetActiveBackend says what is used)"
           }
         ],
@@ -4578,7 +4882,7 @@
           {
             "name": "material",
             "type": "\"Water\"|\"Sand\"|\"Smoke\"",
-            "description": "what the particles are made of on the PhysX backend (a PBD material preset: Water flows and pools, Sand piles up, Smoke drifts); the CPU backend ignores it. Read when the system starts. An unknown name raises an error."
+            "description": "what the particles are made of on the PhysX and WebGPU backends (a PBD material preset: Water flows and pools, Sand piles up, Smoke drifts); the CPU backend ignores it. Read when the system starts. An unknown name raises an error."
           }
         ],
         "returns": [],
@@ -5238,7 +5542,7 @@
         "returns": [
           {
             "type": "string",
-            "description": "name \"CPU\" or \"PhysX\": the backend simulating the body; \"\" when it is inert (no MeshRenderer, a Rigidbody, a mesh that can't be tetrahedralised) or hasn't started"
+            "description": "name \"CPU\", \"PhysX\" or \"WebGPU\": the backend simulating the body; \"\" when it is inert (no MeshRenderer, a Rigidbody, a mesh that can't be tetrahedralised) or hasn't started"
           }
         ],
         "overloads": []
@@ -5252,8 +5556,8 @@
         "params": [
           {
             "name": "backend",
-            "type": "\"Auto\"|\"PhysX\"|\"CPU\"",
-            "description": "Auto: the PhysX GPU backend when there is one, else CPU. Read when the body starts. An unknown name raises an error."
+            "type": "\"Auto\"|\"PhysX\"|\"CPU\"|\"WebGPU\"",
+            "description": "Auto: the PhysX GPU backend when there is one, else WebGPU when the renderer is WebGPU (the browser) and physics.gpu is auto or on (and physics.deterministic off), else CPU. PhysX and WebGPU fall back to CPU, with one warning, where that backend is not there. Read when the body starts. An unknown name raises an error."
           }
         ],
         "returns": [],
@@ -5268,7 +5572,7 @@
         "params": [],
         "returns": [
           {
-            "type": "\"Auto\"|\"PhysX\"|\"CPU\"",
+            "type": "\"Auto\"|\"PhysX\"|\"CPU\"|\"WebGPU\"",
             "description": ""
           }
         ],
@@ -6669,6 +6973,68 @@
             "name": "raycastTarget",
             "type": "boolean",
             "description": "false lets the pointer through to what is underneath"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Image.GetSaturation": {
+        "name": "Image.GetSaturation",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:GetSaturation()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Image.SetSaturation": {
+        "name": "Image.SetSaturation",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:SetSaturation(saturation)",
+        "description": "1 (the default) draws the colour as it is, 0 grey, in between mixes, above 1 strengthens it (stored clamped to 0..4). Saved\nwith the scene.",
+        "params": [
+          {
+            "name": "saturation",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Image.GetFlash": {
+        "name": "Image.GetFlash",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:GetFlash()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Image.SetFlash": {
+        "name": "Image.SetFlash",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:SetFlash(flash)",
+        "description": "A colour mixed over the image by its alpha, after the saturation; Color.new(0, 0, 0, 0) (the default) is none. Saved with\nthe scene.",
+        "params": [
+          {
+            "name": "flash",
+            "type": "Color",
+            "description": ""
           }
         ],
         "returns": [],
@@ -8357,6 +8723,1430 @@
         "returns": [
           {
             "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collision2D.GetContact": {
+        "name": "Collision2D.GetContact",
+        "owner": "Collision2D",
+        "method": true,
+        "signature": "Collision2D:GetContact(index)",
+        "description": "A contact point, 1-based",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "ContactPoint2D|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collision2D.GetAverageContactPoint": {
+        "name": "Collision2D.GetAverageContactPoint",
+        "owner": "Collision2D",
+        "method": true,
+        "signature": "Collision2D:GetAverageContactPoint()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.Raycast": {
+        "name": "Physics2D.Raycast",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.Raycast(origin, direction, maxDistance, layerMask, ignoreTriggers)",
+        "description": "The nearest hit, or nil",
+        "params": [
+          {
+            "name": "origin",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "direction",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "maxDistance?",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit2D|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.RaycastAll": {
+        "name": "Physics2D.RaycastAll",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.RaycastAll(origin, direction, maxDistance, layerMask, ignoreTriggers)",
+        "description": "Every hit, nearest first",
+        "params": [
+          {
+            "name": "origin",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "direction",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "maxDistance?",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit2D[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.CircleCast": {
+        "name": "Physics2D.CircleCast",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.CircleCast(origin, radius, direction, maxDistance, layerMask, ignoreTriggers)",
+        "description": "",
+        "params": [
+          {
+            "name": "origin",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "direction",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "maxDistance?",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit2D|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.BoxCast": {
+        "name": "Physics2D.BoxCast",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.BoxCast(origin, halfExtents, angle, direction, maxDistance, layerMask, ignoreTriggers)",
+        "description": "",
+        "params": [
+          {
+            "name": "origin",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "halfExtents",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "angle",
+            "type": "number|nil",
+            "description": "Radians"
+          },
+          {
+            "name": "direction",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "maxDistance?",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "RaycastHit2D|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.OverlapCircle": {
+        "name": "Physics2D.OverlapCircle",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.OverlapCircle(center, radius, layerMask, ignoreTriggers)",
+        "description": "",
+        "params": [
+          {
+            "name": "center",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "radius",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "OverlapHit2D[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.OverlapBox": {
+        "name": "Physics2D.OverlapBox",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.OverlapBox(center, halfExtents, angle, layerMask, ignoreTriggers)",
+        "description": "",
+        "params": [
+          {
+            "name": "center",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "halfExtents",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "angle?",
+            "type": "number",
+            "description": "Radians"
+          },
+          {
+            "name": "layerMask?",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "ignoreTriggers?",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "OverlapHit2D[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Physics2D.SetGravity": {
+        "name": "Physics2D.SetGravity",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.SetGravity(gravity)",
+        "description": "The loaded scene's gravity; wakes its dynamic bodies. It ends with the scene. A top-down game sets it to zero.",
+        "params": [
+          {
+            "name": "gravity",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Physics2D.GetGravity": {
+        "name": "Physics2D.GetGravity",
+        "owner": "Physics2D",
+        "method": false,
+        "signature": "Physics2D.GetGravity()",
+        "description": "The loaded scene's gravity, or the default when it has no 2D world",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetBodyType": {
+        "name": "Rigidbody2D.SetBodyType",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetBodyType(bodyType)",
+        "description": "",
+        "params": [
+          {
+            "name": "bodyType",
+            "type": "BodyType2D",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetBodyType": {
+        "name": "Rigidbody2D.GetBodyType",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetBodyType()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "BodyType2D",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetMass": {
+        "name": "Rigidbody2D.SetMass",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetMass(mass)",
+        "description": "Overrides the mass worked out from the colliders' density",
+        "params": [
+          {
+            "name": "mass",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetMass": {
+        "name": "Rigidbody2D.GetMass",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetMass()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.UseAutoMass": {
+        "name": "Rigidbody2D.UseAutoMass",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:UseAutoMass()",
+        "description": "",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.UsesAutoMass": {
+        "name": "Rigidbody2D.UsesAutoMass",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:UsesAutoMass()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetLinearVelocity": {
+        "name": "Rigidbody2D.SetLinearVelocity",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetLinearVelocity(velocity)",
+        "description": "Kept and applied when the body exists, if it does not yet",
+        "params": [
+          {
+            "name": "velocity",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetLinearVelocity": {
+        "name": "Rigidbody2D.GetLinearVelocity",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetLinearVelocity()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetAngularVelocity": {
+        "name": "Rigidbody2D.SetAngularVelocity",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetAngularVelocity(radiansPerSecond)",
+        "description": "",
+        "params": [
+          {
+            "name": "radiansPerSecond",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetAngularVelocity": {
+        "name": "Rigidbody2D.GetAngularVelocity",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetAngularVelocity()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetLinearDamping": {
+        "name": "Rigidbody2D.SetLinearDamping",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetLinearDamping(damping)",
+        "description": "",
+        "params": [
+          {
+            "name": "damping",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetLinearDamping": {
+        "name": "Rigidbody2D.GetLinearDamping",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetLinearDamping()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetAngularDamping": {
+        "name": "Rigidbody2D.SetAngularDamping",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetAngularDamping(damping)",
+        "description": "",
+        "params": [
+          {
+            "name": "damping",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetAngularDamping": {
+        "name": "Rigidbody2D.GetAngularDamping",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetAngularDamping()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetGravityScale": {
+        "name": "Rigidbody2D.SetGravityScale",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetGravityScale(scale)",
+        "description": "",
+        "params": [
+          {
+            "name": "scale",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.GetGravityScale": {
+        "name": "Rigidbody2D.GetGravityScale",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:GetGravityScale()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetFixedRotation": {
+        "name": "Rigidbody2D.SetFixedRotation",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetFixedRotation(fixed)",
+        "description": "",
+        "params": [
+          {
+            "name": "fixed",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.IsFixedRotation": {
+        "name": "Rigidbody2D.IsFixedRotation",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:IsFixedRotation()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.SetBullet": {
+        "name": "Rigidbody2D.SetBullet",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:SetBullet(bullet)",
+        "description": "Continuous collision against other moving bodies, for fast projectiles",
+        "params": [
+          {
+            "name": "bullet",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.IsBullet": {
+        "name": "Rigidbody2D.IsBullet",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:IsBullet()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Rigidbody2D.AddForce": {
+        "name": "Rigidbody2D.AddForce",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:AddForce(force)",
+        "description": "",
+        "params": [
+          {
+            "name": "force",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.AddImpulse": {
+        "name": "Rigidbody2D.AddImpulse",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:AddImpulse(impulse)",
+        "description": "",
+        "params": [
+          {
+            "name": "impulse",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.AddTorque": {
+        "name": "Rigidbody2D.AddTorque",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:AddTorque(torque)",
+        "description": "",
+        "params": [
+          {
+            "name": "torque",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Rigidbody2D.AddAngularImpulse": {
+        "name": "Rigidbody2D.AddAngularImpulse",
+        "owner": "Rigidbody2D",
+        "method": true,
+        "signature": "Rigidbody2D:AddAngularImpulse(impulse)",
+        "description": "",
+        "params": [
+          {
+            "name": "impulse",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.SetIsTrigger": {
+        "name": "Collider2D.SetIsTrigger",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:SetIsTrigger(isTrigger)",
+        "description": "A trigger reports overlaps and does not collide. Toggling it ends and restarts its pairs.",
+        "params": [
+          {
+            "name": "isTrigger",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.IsTrigger": {
+        "name": "Collider2D.IsTrigger",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:IsTrigger()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collider2D.SetMaterial": {
+        "name": "Collider2D.SetMaterial",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:SetMaterial(material)",
+        "description": "dynamicFriction and restitution apply",
+        "params": [
+          {
+            "name": "material",
+            "type": "PhysicsMaterial",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.GetMaterial": {
+        "name": "Collider2D.GetMaterial",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:GetMaterial()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "PhysicsMaterial",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collider2D.SetOffset": {
+        "name": "Collider2D.SetOffset",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:SetOffset(offset)",
+        "description": "",
+        "params": [
+          {
+            "name": "offset",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.GetOffset": {
+        "name": "Collider2D.GetOffset",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:GetOffset()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collider2D.SetDensity": {
+        "name": "Collider2D.SetDensity",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:SetDensity(density)",
+        "description": "",
+        "params": [
+          {
+            "name": "density",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.GetDensity": {
+        "name": "Collider2D.GetDensity",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:GetDensity()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Collider2D.SetSurfaceSpeed": {
+        "name": "Collider2D.SetSurfaceSpeed",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:SetSurfaceSpeed(speed)",
+        "description": "Moves what touches this surface along it, for conveyors",
+        "params": [
+          {
+            "name": "speed",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Collider2D.GetSurfaceSpeed": {
+        "name": "Collider2D.GetSurfaceSpeed",
+        "owner": "Collider2D",
+        "method": true,
+        "signature": "Collider2D:GetSurfaceSpeed()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "BoxCollider2D.SetSize": {
+        "name": "BoxCollider2D.SetSize",
+        "owner": "BoxCollider2D",
+        "method": true,
+        "signature": "BoxCollider2D:SetSize(size)",
+        "description": "",
+        "params": [
+          {
+            "name": "size",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "BoxCollider2D.GetSize": {
+        "name": "BoxCollider2D.GetSize",
+        "owner": "BoxCollider2D",
+        "method": true,
+        "signature": "BoxCollider2D:GetSize()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "BoxCollider2D.SetHalfExtents": {
+        "name": "BoxCollider2D.SetHalfExtents",
+        "owner": "BoxCollider2D",
+        "method": true,
+        "signature": "BoxCollider2D:SetHalfExtents(halfExtents)",
+        "description": "",
+        "params": [
+          {
+            "name": "halfExtents",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "BoxCollider2D.GetHalfExtents": {
+        "name": "BoxCollider2D.GetHalfExtents",
+        "owner": "BoxCollider2D",
+        "method": true,
+        "signature": "BoxCollider2D:GetHalfExtents()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "CircleCollider2D.SetRadius": {
+        "name": "CircleCollider2D.SetRadius",
+        "owner": "CircleCollider2D",
+        "method": true,
+        "signature": "CircleCollider2D:SetRadius(radius)",
+        "description": "",
+        "params": [
+          {
+            "name": "radius",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "CircleCollider2D.GetRadius": {
+        "name": "CircleCollider2D.GetRadius",
+        "owner": "CircleCollider2D",
+        "method": true,
+        "signature": "CircleCollider2D:GetRadius()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "PolygonCollider2D.SetVertices": {
+        "name": "PolygonCollider2D.SetVertices",
+        "owner": "PolygonCollider2D",
+        "method": true,
+        "signature": "PolygonCollider2D:SetVertices(vertices)",
+        "description": "",
+        "params": [
+          {
+            "name": "vertices",
+            "type": "Vector2[]",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "PolygonCollider2D.GetVertices": {
+        "name": "PolygonCollider2D.GetVertices",
+        "owner": "PolygonCollider2D",
+        "method": true,
+        "signature": "PolygonCollider2D:GetVertices()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetShape": {
+        "name": "Sprite2D.SetShape",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetShape(shape)",
+        "description": "",
+        "params": [
+          {
+            "name": "shape",
+            "type": "Sprite2DShape",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetShape": {
+        "name": "Sprite2D.GetShape",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetShape()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Sprite2DShape",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetSize": {
+        "name": "Sprite2D.SetSize",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetSize(size)",
+        "description": "World units; for a circle or regular polygon, the diameter on each axis",
+        "params": [
+          {
+            "name": "size",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetSize": {
+        "name": "Sprite2D.GetSize",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetSize()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetSides": {
+        "name": "Sprite2D.SetSides",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetSides(sides)",
+        "description": "RegularPolygon: 3 to 64",
+        "params": [
+          {
+            "name": "sides",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetSides": {
+        "name": "Sprite2D.GetSides",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetSides()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetVertices": {
+        "name": "Sprite2D.SetVertices",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetVertices(vertices)",
+        "description": "Polygon: 3 to 64 convex points, in units of the size",
+        "params": [
+          {
+            "name": "vertices",
+            "type": "Vector2[]",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetVertices": {
+        "name": "Sprite2D.GetVertices",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetVertices()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetOutline": {
+        "name": "Sprite2D.SetOutline",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetOutline(width)",
+        "description": "0 fills; above 0, only a border this wide, in world units",
+        "params": [
+          {
+            "name": "width",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetOutline": {
+        "name": "Sprite2D.GetOutline",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetOutline()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetColor": {
+        "name": "Sprite2D.SetColor",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetColor(color)",
+        "description": "",
+        "params": [
+          {
+            "name": "color",
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetColor": {
+        "name": "Sprite2D.GetColor",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetColor()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetSaturation": {
+        "name": "Sprite2D.SetSaturation",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetSaturation(saturation)",
+        "description": "1 (the default) draws the colour as it is, 0 grey (its own luminance), in between mixes, above 1 strengthens it\n(stored clamped to 0..4). sprite:SetSaturation(0) is a greyed-out icon. Saved with the scene.",
+        "params": [
+          {
+            "name": "saturation",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetSaturation": {
+        "name": "Sprite2D.GetSaturation",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetSaturation()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetFlash": {
+        "name": "Sprite2D.SetFlash",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetFlash(flash)",
+        "description": "A colour mixed over the sprite by its alpha, after the saturation; the sprite's own alpha (its shape) is unchanged.\nColor.new(1, 1, 1, 0.8) for a few frames is a hit flash; a hue that cycles each frame is a rainbow. Color.new(0, 0, 0, 0) (the\ndefault) is none. Saved with the scene.",
+        "params": [
+          {
+            "name": "flash",
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetFlash": {
+        "name": "Sprite2D.GetFlash",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetFlash()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetTexture": {
+        "name": "Sprite2D.SetTexture",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetTexture(path)",
+        "description": "A res:// path to an image, or nil for a plain colour",
+        "params": [
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.HasTexture": {
+        "name": "Sprite2D.HasTexture",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:HasTexture()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetRegion": {
+        "name": "Sprite2D.SetRegion",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetRegion(offset, size)",
+        "description": "The part of the texture shown, in uv with v up: its lower-left corner and its size",
+        "params": [
+          {
+            "name": "offset",
+            "type": "Vector2",
+            "description": ""
+          },
+          {
+            "name": "size",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetRegionOffset": {
+        "name": "Sprite2D.GetRegionOffset",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetRegionOffset()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.GetRegionSize": {
+        "name": "Sprite2D.GetRegionSize",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetRegionSize()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetFlipX": {
+        "name": "Sprite2D.SetFlipX",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetFlipX(flip)",
+        "description": "",
+        "params": [
+          {
+            "name": "flip",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetFlipX": {
+        "name": "Sprite2D.GetFlipX",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetFlipX()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetFlipY": {
+        "name": "Sprite2D.SetFlipY",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetFlipY(flip)",
+        "description": "",
+        "params": [
+          {
+            "name": "flip",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetFlipY": {
+        "name": "Sprite2D.GetFlipY",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetFlipY()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetPivot": {
+        "name": "Sprite2D.SetPivot",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetPivot(pivot)",
+        "description": "Where the object's position sits within the size: (0.5, 0.5) is the middle",
+        "params": [
+          {
+            "name": "pivot",
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetPivot": {
+        "name": "Sprite2D.GetPivot",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetPivot()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetSortingOrder": {
+        "name": "Sprite2D.SetSortingOrder",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetSortingOrder(order)",
+        "description": "Lower draws first",
+        "params": [
+          {
+            "name": "order",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetSortingOrder": {
+        "name": "Sprite2D.GetSortingOrder",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetSortingOrder()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
             "description": ""
           }
         ],
@@ -10444,12 +12234,90 @@
         ],
         "overloads": []
       },
+      "Input.GetKey": {
+        "name": "Input.GetKey",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetKey(name)",
+        "description": "A key held this frame, by its action-map name (\"A\", \"Space\", \"LeftShift\", \"Enter\"). An unknown name is a Lua error.",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.GetKeyDown": {
+        "name": "Input.GetKeyDown",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetKeyDown(name)",
+        "description": "A key that went down this frame",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.GetKeyUp": {
+        "name": "Input.GetKeyUp",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetKeyUp(name)",
+        "description": "A key that went up this frame",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.GetTypedText": {
+        "name": "Input.GetTypedText",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetTypedText()",
+        "description": "The characters typed since the previous frame (UTF-8), \"\" when none",
+        "params": [],
+        "returns": [
+          {
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "Input.CreateActionMap": {
         "name": "Input.CreateActionMap",
         "owner": "Input",
         "method": false,
         "signature": "Input.CreateActionMap(mapName, actions)",
-        "description": "Create (or replace) an action map. Each action lists bindings; fields and names follow the action map JSON format:\n{ type = \"KeyboardButton\", key = \"Escape\" }\n{ type = \"Vector2Composite\", up = \"W\", down = \"S\", left = \"A\", right = \"D\" }\n{ type = \"GamepadStick\", xAxis = \"LeftX\", yAxis = \"LeftY\", deadzone = 0.25, invertX = false, invertY = true }\n{ type = \"GamepadButton\", button = \"South\" }, { type = \"GamepadAxis\", axis = \"LeftTrigger\" }, { type = \"MouseButton\", button = \"Left\" }",
+        "description": "Create (or replace) an action map. Each action lists bindings; fields and names follow the action map JSON format:\n{ type = \"KeyboardButton\", key = \"Escape\" }\n{ type = \"Vector2Composite\", up = \"W\", down = \"S\", left = \"A\", right = \"D\" }\n{ type = \"GamepadStick\", xAxis = \"LeftX\", yAxis = \"LeftY\", deadzone = 0.25, invertX = false, invertY = true }\n{ type = \"GamepadButton\", button = \"South\" }, { type = \"GamepadAxis\", axis = \"LeftTrigger\" }, { type = \"MouseButton\", button = \"Left\" }\n{ type = \"GamepadAxis\", axis = \"LeftX\", direction = \"Negative\", pressPoint = 0.5 } (one half of an axis, as a button)\n{ type = \"GamepadButtonComposite\", up = \"DpadUp\", down = \"DpadDown\", left = \"DpadLeft\", right = \"DpadRight\" }\n{ type = \"Chord\", modifier = { type = \"GamepadButton\", button = \"LeftThumb\" }, binding = { type = \"GamepadButton\", button = \"RightThumb\" } }",
         "params": [
           {
             "name": "mapName",
@@ -10925,6 +12793,62 @@
           }
         ],
         "returns": [],
+        "overloads": []
+      },
+      "Screen.SetTint": {
+        "name": "Screen.SetTint",
+        "owner": "Screen",
+        "method": false,
+        "signature": "Screen.SetTint(tint)",
+        "description": "Set the screen tint for every frame drawn from now on, until it is changed or cleared. `saturation` is required; the other fields\nare optional and take their defaults on every call (not the previous tint's values). A field of the wrong type, out of\nrange (saturation outside 0..1, a negative radius) or unknown is an error, and the tint is left as it was.",
+        "params": [
+          {
+            "name": "tint",
+            "type": "ScreenTint",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Screen.ClearTint": {
+        "name": "Screen.ClearTint",
+        "owner": "Screen",
+        "method": false,
+        "signature": "Screen.ClearTint()",
+        "description": "Remove the screen tint",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "Screen.GetTint": {
+        "name": "Screen.GetTint",
+        "owner": "Screen",
+        "method": false,
+        "signature": "Screen.GetTint()",
+        "description": "The screen tint as it is now (saturation 1 when there is none)",
+        "params": [],
+        "returns": [
+          {
+            "type": "ScreenTint",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Graphics.CanBlend": {
+        "name": "Graphics.CanBlend",
+        "owner": "Graphics",
+        "method": false,
+        "signature": "Graphics.CanBlend()",
+        "description": "False on the software renderer (the web player's fallback when the browser has no WebGPU), which cannot blend: a\nhalf-transparent pixel is drawn opaque or not at all, so a soft glow sprite becomes a hard disc. Skip such sprites\nwhen it is false. True on OpenGL, Vulkan and WebGPU, and without a renderer.",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
         "overloads": []
       },
       "BoundingBox.new": {
@@ -11905,6 +13829,61 @@
         "type": "OverlapHit",
         "description": ""
       },
+      "BodyType2D": {
+        "name": "BodyType2D",
+        "type": "BodyType2DValues",
+        "description": ""
+      },
+      "ContactPoint2D": {
+        "name": "ContactPoint2D",
+        "type": "ContactPoint2D",
+        "description": ""
+      },
+      "Collision2D": {
+        "name": "Collision2D",
+        "type": "Collision2D",
+        "description": ""
+      },
+      "Trigger2D": {
+        "name": "Trigger2D",
+        "type": "Trigger2D",
+        "description": ""
+      },
+      "Physics2D": {
+        "name": "Physics2D",
+        "type": "Physics2D",
+        "description": ""
+      },
+      "Rigidbody2D": {
+        "name": "Rigidbody2D",
+        "type": "Rigidbody2D",
+        "description": ""
+      },
+      "BoxCollider2D": {
+        "name": "BoxCollider2D",
+        "type": "BoxCollider2D",
+        "description": ""
+      },
+      "CircleCollider2D": {
+        "name": "CircleCollider2D",
+        "type": "CircleCollider2D",
+        "description": ""
+      },
+      "PolygonCollider2D": {
+        "name": "PolygonCollider2D",
+        "type": "PolygonCollider2D",
+        "description": ""
+      },
+      "Sprite2DShape": {
+        "name": "Sprite2DShape",
+        "type": "Sprite2DShapeValues",
+        "description": ""
+      },
+      "Sprite2D": {
+        "name": "Sprite2D",
+        "type": "Sprite2D",
+        "description": ""
+      },
       "PhysicsMaterial": {
         "name": "PhysicsMaterial",
         "type": "PhysicsMaterial",
@@ -12010,6 +13989,16 @@
         "type": "Window",
         "description": ""
       },
+      "Screen": {
+        "name": "Screen",
+        "type": "Screen",
+        "description": ""
+      },
+      "Graphics": {
+        "name": "Graphics",
+        "type": "Graphics",
+        "description": ""
+      },
       "BoundingBox": {
         "name": "BoundingBox",
         "type": "BoundingBox",
@@ -12074,6 +14063,17 @@
       "RaycastHit": "RaycastHit",
       "Physics": "Physics",
       "OverlapHit": "OverlapHit",
+      "BodyType2D": "BodyType2DValues",
+      "ContactPoint2D": "ContactPoint2D",
+      "Collision2D": "Collision2D",
+      "Trigger2D": "Trigger2D",
+      "Physics2D": "Physics2D",
+      "Rigidbody2D": "Rigidbody2D",
+      "BoxCollider2D": "BoxCollider2D",
+      "CircleCollider2D": "CircleCollider2D",
+      "PolygonCollider2D": "PolygonCollider2D",
+      "Sprite2DShape": "Sprite2DShapeValues",
+      "Sprite2D": "Sprite2D",
       "PhysicsMaterial": "PhysicsMaterial",
       "Rigidbody": "Rigidbody",
       "BoxCollider": "BoxCollider",
@@ -12095,6 +14095,8 @@
       "Network": "Network",
       "Application": "Application",
       "Window": "Window",
+      "Screen": "Screen",
+      "Graphics": "Graphics",
       "BoundingBox": "BoundingBox",
       "Frustum": "Frustum",
       "Ray": "Ray",
