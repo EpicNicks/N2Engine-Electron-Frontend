@@ -7,6 +7,9 @@
 // it the host picks its own default.
 //
 // readyTimeoutMs: how long a launched host may take to print its ready line (default 30 s).
+//
+// n2buildPath: the engine's tools/n2build/n2build.mjs, for the Build Settings panel (else N2BUILD_PATH, else found beside
+// the host's engine checkout; n2build-runner.ts).
 import * as fs from "fs"
 import * as path from "path"
 import { randomUUID } from "crypto"
@@ -69,6 +72,11 @@ export class HostSettings {
     const problem = hostPathProblem(resolved)
     if (problem !== null) throw new Error(problem)
     this.write({ ...this.read(), hostPath: resolved })
+  }
+
+  /** settings.json's n2buildPath (the engine's tools/n2build/n2build.mjs), as written; n2build-runner.ts checks it */
+  n2buildPath(): unknown {
+    return this.read().n2buildPath
   }
 
   /** settings.json's readyTimeoutMs when it is a positive number of milliseconds, else DefaultReadyTimeoutMs */

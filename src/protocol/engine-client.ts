@@ -591,6 +591,16 @@ export class EngineClient {
     return this.send(Commands.SetStartupScene, { path })
   }
 
+  // ==================== Build targets (protocol 1.29.0) ====================
+
+  /**
+   * Changes project.n2proj's build.targets with a JSON merge patch (RFC 7386); answers the project saved. A Write command
+   * (buildTargets capability): a viewer gets forbidden, a --read-only host readOnly, and a secret-looking key is refused.
+   */
+  setBuildTargets(targets: unknown): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetBuildTargets, { targets })
+  }
+
   // ==================== Physics backend (protocol 1.20.0) ====================
 
   /** The 3D physics backends the host was built with, what each declares, and which one the project uses (a Read command; physicsBackends capability) */

@@ -18,6 +18,8 @@ import { PlaySession } from "./play-session"
 import { registerPlayIpc } from "./play-ipc"
 import { registerPreferencesIpc } from "./preferences-ipc"
 import { registerProjectIpc } from "./project-ipc"
+import { pageUpdates, registerBuildIpc } from "./build-ipc"
+import { N2BuildRunner, locateN2Build } from "./n2build-runner"
 import { registerRemoteIpc } from "./remote-ipc"
 import { ProjectFiles } from "./project-files"
 import { ProjectSession } from "./project-session"
@@ -190,6 +192,19 @@ handleResult(ipcMain, Channels.editMenuLabels, page, (labels) => {
 })
 
 registerProjectIpc(ipcMain, { getWindow, page, files, recent, settings, session: projectSession })
+
+// Builds (the Build Settings panel): the engine's n2build, run with this executable as Node, for the open local project
+const buildUpdates = pageUpdates(page)
+const builds = new N2BuildRunner({ onUpdate: (update) => buildUpdates.push(update) })
+registerBuildIpc(ipcMain, {
+  page,
+  runner: builds,
+  hostState: () => projectSession.state,
+  locate: () => {
+    const host = settings.locate()
+    return locateN2Build({ setting: settings.n2buildPath(), env: process.env, hostPath: host.problem === null ? host.path : null })
+  },
+})
 registerPreferencesIpc(ipcMain, { page, settings, chooseHostPath: async () => {
   const window = getWindow()
   if (!window) return null
@@ -278,6 +293,8 @@ app.whenReady().then(() => {
 /** Kills the game and the editor host, synchronously (the game first: it is the one that depends on the other) */
 function shutdownAll(): void {
   agent?.dispose()
+  // A build (CMake, the compiler, a game it started) does not outlive the editor either
+  builds.shutdown()
   play.shutdown()
   projectSession.shutdown()
 }

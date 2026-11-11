@@ -1,6 +1,6 @@
 {
   "description": "Golden vectors, generated from protocol.json by generators/generate_test_vectors.py - do not edit. payload is the hex of the payload (no frame header) that fields encode to. bytes fields are hex strings, mat4 16 numbers (column-major), json fields their parsed value (encoded as compact JSON with sorted keys only so this file is deterministic: compare json fields as parsed values, never as bytes); Error's payload is its message's raw UTF-8 bytes. shortPayloads are what a peer from before a message's optional trailing fields sends: the payload ends before the omitted fields (the last one to all of the message's optional ones) and fields holds what a reader decodes (the omitted ones at their zero defaults: false, 0, the empty string or a vec3 of zeros).",
-  "protocolVersion": "1.28.0",
+  "protocolVersion": "1.29.0",
   "requests": [
     {
       "command": "SetViewportSize",
@@ -461,6 +461,24 @@
         "path": "path 0 ✓ é"
       },
       "payload": "0d00000070617468203020e29c9320c3a9"
+    },
+    {
+      "command": "SetBuildTargets",
+      "id": "0x73",
+      "fields": {
+        "targets": {
+          "list": [
+            0,
+            "two ✓",
+            true,
+            null
+          ],
+          "nested": {
+            "value": 1.5
+          }
+        }
+      },
+      "payload": "370000007b226c697374223a5b302c2274776f20e29c93222c747275652c6e756c6c5d2c226e6573746564223a7b2276616c7565223a312e357d7d"
     },
     {
       "command": "InvokeMenuItem",
