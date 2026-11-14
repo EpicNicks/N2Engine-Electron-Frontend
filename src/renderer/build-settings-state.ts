@@ -53,6 +53,12 @@ export const BuildFields = [
   "modules.physics2d",
   "modules.particles",
   "modules.softbodies",
+  "modules.audio",
+  "modules.ui",
+  "modules.network",
+  "modules.scripting",
+  "modules.vulkan",
+  "modules.webgpu",
   "signing.profile",
 ] as const
 export type BuildField = (typeof BuildFields)[number]
@@ -67,9 +73,26 @@ export const Choices: Partial<Record<BuildField, readonly string[]>> = {
   "modules.physics2d": ["true", "false"],
   "modules.particles": ["true", "false"],
   "modules.softbodies": ["true", "false"],
+  "modules.audio": ["true", "false"],
+  "modules.ui": ["true", "false"],
+  "modules.network": ["true", "false"],
+  "modules.scripting": ["true", "false"],
+  "modules.vulkan": ["true", "false"],
+  "modules.webgpu": ["true", "false"],
 }
 
-const BooleanFields = new Set<BuildField>(["enabled", "modules.physics2d", "modules.particles", "modules.softbodies"])
+const BooleanFields = new Set<BuildField>([
+  "enabled",
+  "modules.physics2d",
+  "modules.particles",
+  "modules.softbodies",
+  "modules.audio",
+  "modules.ui",
+  "modules.network",
+  "modules.scripting",
+  "modules.vulkan",
+  "modules.webgpu",
+])
 
 /** The rules SetBuildTargets applies (engine IO::BuildTargets), checked before sending so the form can say what is wrong */
 export function fieldError(field: BuildField, text: string): string | null {

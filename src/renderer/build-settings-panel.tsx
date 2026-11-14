@@ -52,6 +52,12 @@ const Labels: Record<BuildField, string> = {
   "modules.physics2d": "2D physics",
   "modules.particles": "Particles",
   "modules.softbodies": "Soft bodies",
+  "modules.audio": "Audio",
+  "modules.ui": "UI",
+  "modules.network": "Network",
+  "modules.scripting": "Scripting (Lua)",
+  "modules.vulkan": "Vulkan renderer",
+  "modules.webgpu": "WebGPU renderer",
   "signing.profile": "Signing profile",
 }
 
@@ -64,6 +70,12 @@ const Help: Partial<Record<BuildField, string>> = {
   pack: "How the game's files are packaged: zip, stored (no compression; the web's default), 7z (needs 7-Zip) or the folder as it is",
   icon: "res://... .png",
   "modules.physics3d": "Over build.modules; empty: the project's list",
+  "modules.audio": "false: the audio module is left out of the build",
+  "modules.ui": "false: the UI module is left out of the build",
+  "modules.network": "false removes the netcode sessions (server, client, lockstep, rollback, replication) and N2Server",
+  "modules.scripting": "false removes Lua: the game needs a startupScene and no .lua files",
+  "modules.vulkan": "false turns the Vulkan backend off (Android and Apple build without it); the software renderer is always built",
+  "modules.webgpu": "false turns the web build's WebGPU backend off; the software renderer is always built",
   "signing.profile": "The NAME of a profile in your own n2build.json. Keys and passwords never go in the project.",
 }
 
