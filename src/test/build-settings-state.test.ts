@@ -8,10 +8,13 @@ import type { BuildApi, BuildRequest, BuildState, BuildTargetList, BuildUpdate, 
 import { InitialBuildState } from "../shared/api"
 import {
   BuildSettingsModel,
+  type BuildField,
   MaxLogLines,
   OldHostNote,
   RemoteBuildNote,
   UnappliedNote,
+  BuildFields,
+  Choices,
   buildPatch,
   fieldError,
   savedText,
@@ -130,6 +133,18 @@ describe("the SetBuildTargets patch", () => {
     assert.ok(fieldError("pack", "rar"), "a pack is zip, stored, 7z or folder")
     assert.ok(fieldError("signing.profile", "-----BEGIN PRIVATE KEY-----"), "a key is not a profile name")
     assert.deepEqual(Object.keys(buildPatch({}, { version: "x" }).errors), ["version"])
+  })
+
+  test("the boolean module keys are true/false toggles that send real booleans", () => {
+    for (const k of ["audio", "ui", "network", "scripting", "vulkan", "webgpu"]) {
+      const f = `modules.${k}` as BuildField
+      assert.ok(BuildFields.includes(f), `${f} is a field`)
+      assert.deepEqual(Choices[f], ["true", "false"])
+      assert.equal(fieldError(f, "maybe") !== null, true)
+      assert.deepEqual(buildPatch({}, { [f]: "false" }).patch, { modules: { [k]: false } })
+      assert.deepEqual(buildPatch({ modules: { [k]: false } }, { [f]: "" }).patch, { modules: { [k]: null } })
+      assert.equal(savedText({ modules: { [k]: false } }, f), "false")
+    }
   })
 
   test("saved values as the form's text", () => {
