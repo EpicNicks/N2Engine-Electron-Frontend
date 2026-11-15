@@ -81,18 +81,8 @@ export const Choices: Partial<Record<BuildField, readonly string[]>> = {
   "modules.webgpu": ["true", "false"],
 }
 
-const BooleanFields = new Set<BuildField>([
-  "enabled",
-  "modules.physics2d",
-  "modules.particles",
-  "modules.softbodies",
-  "modules.audio",
-  "modules.ui",
-  "modules.network",
-  "modules.scripting",
-  "modules.vulkan",
-  "modules.webgpu",
-])
+/** Every field whose only choices are true and false is sent as a boolean */
+const BooleanFields = new Set<BuildField>(BuildFields.filter((f) => Choices[f]?.join() === "true,false"))
 
 /** The rules SetBuildTargets applies (engine IO::BuildTargets), checked before sending so the form can say what is wrong */
 export function fieldError(field: BuildField, text: string): string | null {
