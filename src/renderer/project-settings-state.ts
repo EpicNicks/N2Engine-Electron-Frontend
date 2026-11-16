@@ -127,8 +127,10 @@ export class ProjectSettingsModel {
       }
       void this.refresh()
     })
+    const stopScene = this.deps.network?.watchScene() ?? (() => {})
     this.disposer = () => {
       stop()
+      stopScene()
       this.disposer = null
     }
     return this.disposer
