@@ -7,6 +7,7 @@ import { HierarchyPanel } from "../hierarchy-panel"
 import { HistoryPanel } from "../history-panel"
 import { InspectorPanel } from "../inspector-panel"
 import { ProjectSettingsPanel } from "../project-settings-panel"
+import { BuildSettingsPanel } from "../build-settings-panel"
 import { EnginePanel } from "../panels"
 import { ProfilerPanel } from "../profiler-panel"
 import { Viewport } from "../viewport-panel"
@@ -96,6 +97,17 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     title: "Project Settings",
     icon: "🛠",
     component: ProjectSettingsPanel as PanelComponent,
+    defaultRegion: "right",
+    defaultGroup: 1,
+    closable: true,
+    singleton: true,
+  })
+  // Build Settings (build targets stage 3) is a tab beside the project settings: the targets, their settings and n2build
+  registry.register({
+    id: "buildSettings",
+    title: "Build Settings",
+    icon: "📦",
+    component: BuildSettingsPanel as PanelComponent,
     defaultRegion: "right",
     defaultGroup: 1,
     closable: true,
