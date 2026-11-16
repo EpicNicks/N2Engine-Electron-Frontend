@@ -18,7 +18,7 @@
 //    (its drafts are in drafts, keyed network.authoritative.timeDilation.<field>; the key itself drafted null removes the
 //    whole object) and checked against the engine's scale ranges before it is sent;
 //  - the newest read wins.
-import { signal, type ReadonlySignal } from "@preact/signals-core"
+import { effect, signal, type ReadonlySignal } from "@preact/signals-core"
 import {
   NetworkPresetIds,
   TimeDilationDefaults,
@@ -59,6 +59,11 @@ export interface NetworkPanelDeps {
   supported: ReadonlySignal<boolean>
   /** EditorStore.readOnlyReason: a play session, a read-only host, a viewer; null when writes work */
   readOnlyReason: ReadonlySignal<string | null>
+  /**
+   * EditorStore.sceneChangeCount: the open scene changed. The nudge counts the scene's NetworkObject components, which a
+   * project save does not announce, so the answer is read again (after a pause) when the scene changes. Absent: no reading.
+   */
+  sceneChangeCount?: ReadonlySignal<number>
 }
 
 export const NetworkUnsupportedReason =
@@ -117,6 +122,34 @@ export class NetworkPanelModel {
   get viewedPreset(): NetworkPresetInfo | null {
     const info = this.info.value
     return info?.presets.find((p) => p.id === this.viewedId) ?? null
+  }
+
+  /**
+   * Reads again, delayMs after the last change, whenever the scene changes (the nudge appears when the first NetworkObject is
+   * added, and goes when the last is removed, without the project being saved). Returns what stops it.
+   */
+  watchScene(delayMs = 400): () => void {
+    const count = this.deps.sceneChangeCount
+    if (count === undefined) return () => {}
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let first = true
+    const stop = effect(() => {
+      void count.value
+      if (first) {
+        first = false // the read of showing the panel is the caller's
+        return
+      }
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        void this.refresh()
+      }, delayMs)
+    })
+    return () => {
+      stop()
+      if (timer !== null) clearTimeout(timer)
+      timer = null
+    }
   }
 
   /** Whether the shown bundle is the project's own: only then its rows are editable */

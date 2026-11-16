@@ -46,6 +46,7 @@ export function ProjectSettingsPanel() {
             connected: store.connected,
             supported: computed(() => hasCapability(store.serverInfo.value?.capabilities, NetworkPanelCapability)),
             readOnlyReason: store.readOnlyReason,
+            sceneChangeCount: store.sceneChangeCount,
           }),
         },
         settingsSections as SectionRegistry<unknown>
