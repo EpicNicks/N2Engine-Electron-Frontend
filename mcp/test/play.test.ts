@@ -264,7 +264,7 @@ describe("control, input and observe", () => {
       ["n2_play_script", { ops: [{ step: { frames: 2 } }, { screenshot: { width: 32, height: 32 } }, { expectLog: { contains: "x", absent: true } }] }],
       ["n2_play_stop", {}],
     ]
-    assert.equal(calls.length, PlayTools.length, "every play tool is exercised")
+    assert.equal(calls.length, PlayTools.length - 1, "every play tool is exercised (n2_create_project has its own tests below)")
     for (const [name, args] of calls) {
       const r = await h.call(name, args)
       assert.ok(!r.isError, `${name}: ${textOf(r)}`)
@@ -462,6 +462,68 @@ describe("n2_play_script", () => {
     const begun = await h.call("n2_begin_session", { label: "second" })
     const again = await h.call("n2_play_script", { ops: full, sessionId: begun.structuredContent.data.sessionId })
     assert.ok(!again.isError, textOf(again))
+    await h.close()
+  })
+})
+
+const allowAll = { readOnly: false, allowIrreversible: true, maxWrites: 2000, writeTools: null, disabledTools: new Set<string>(), keepJournal: false }
+
+describe("n2_create_project", () => {
+  const dir = process.platform === "win32" ? "C:\\Games\\New Game" : "/games/new-game"
+  const createdLine = "N2EditorHost created projectId=8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10 startupScene=res://scenes/Main.scene\r\n"
+
+  test("runs N2EditorHost --create <dir> [--name] [--networked] after the person confirms, and answers the id", async () => {
+    const h = await startPlayHarness({
+      elicit: "form",
+      onSpawn: (child) => setImmediate(() => (child.stdout.write(createdLine), child.exit(0))),
+    })
+    const r = await h.call("n2_create_project", { directory: dir, name: "My Game", networked: true })
+    assert.ok(!r.isError, textOf(r))
+    assert.equal(h.asked.length, 1)
+    assert.match(h.asked[0], /Create a new project in the folder .*networked: build\.strictFp true/)
+    assert.deepEqual(h.spawned.map((s) => [s.command, s.args]), [["N2EditorHost", ["--create", dir, "--name", "My Game", "--networked"]]])
+    assert.deepEqual(r.structuredContent.data, { projectId: "8e0c3a8e-0b1f-4f5e-9d0e-3f6f1c7d2a10", startupScene: "res://scenes/Main.scene", networked: true })
+    await h.close()
+  })
+
+  test("without networked there is no --networked flag", async () => {
+    const h = await startPlayHarness({
+      bridge: { policy: allowAll },
+      onSpawn: (child) => setImmediate(() => (child.stdout.write(createdLine), child.exit(0))),
+    })
+    const r = await h.call("n2_create_project", { directory: dir })
+    assert.ok(!r.isError, textOf(r))
+    assert.deepEqual(h.spawned[0].args, ["--create", dir])
+    assert.equal(r.structuredContent.data.networked, false)
+    await h.close()
+  })
+
+  test("a relative path and a dash-led name are refused without starting a host; a folder that already is a project is an error", async () => {
+    let exitCode = 2
+    const h = await startPlayHarness({
+      bridge: { policy: allowAll },
+      onSpawn: (child) => setImmediate(() => (child.stderr.write("N2EditorHost --create: x already has a project.n2proj; nothing was changed\n"), child.exit(exitCode))),
+    })
+    for (const args of [{ directory: "relative/dir" }, { directory: dir, name: "--evil" }]) {
+      const r = await h.call("n2_create_project", args)
+      assert.equal(r.isError, true)
+    }
+    assert.equal(h.spawned.length, 0)
+    const dup = await h.call("n2_create_project", { directory: dir })
+    assert.equal(dup.isError, true)
+    assert.match(textOf(dup), /already is a project/)
+    exitCode = 1
+    const failed = await h.call("n2_create_project", { directory: dir })
+    assert.equal(failed.isError, true)
+    await h.close()
+  })
+
+  test("a client that can't ask the person is refused", async () => {
+    const h = await startPlayHarness({ onSpawn: (child) => child.exit(0) })
+    const r = await h.call("n2_create_project", { directory: dir })
+    assert.equal(r.isError, true)
+    assert.equal(code(r), "irreversible_refused")
+    assert.equal(h.spawned.length, 0)
     await h.close()
   })
 })

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "df6b03ec8adba1d5501e9cdfc21af0b5d16cde8c",
+  "engineRef": "b2d37be25c247c505190b5542099582490ce8da1",
   "runtime": {
     "available": true,
     "classes": {
@@ -43,6 +43,11 @@
       "Random": {
         "name": "Random",
         "description": "",
+        "fields": {}
+      },
+      "RandomStream": {
+        "name": "RandomStream",
+        "description": "An independent, seeded random stream: the algorithm of the seeded global Random, so RandomStream(n) draws what\nRandom.* draws after Random.Seed(n), on every platform. Its whole state is one integer (GetState/SetState).",
         "fields": {}
       },
       "Vector2": {
@@ -383,6 +388,11 @@
         "name": "LuaComponent",
         "base": "Component",
         "description": "Runs a behaviour script: a file returning a table whose __index is itself, with optional\nOnAttach, OnUpdate, OnFixedUpdate, OnLateUpdate, OnDestroy, OnEnable, OnDisable, collision methods and\nthe pointer methods OnMouseEnter, OnMouseOver, OnMouseExit, OnMouseDown, OnMouseDrag, OnMouseUp and\nOnMouseUpAsButton (no arguments; sent before OnUpdate to the object under the cursor, left button only).\nInside those methods, self.gameObject and self.component are set.",
+        "fields": {}
+      },
+      "ScriptCoroutine": {
+        "name": "ScriptCoroutine",
+        "description": "",
         "fields": {}
       },
       "Component": {
@@ -999,6 +1009,16 @@
         "description": "",
         "fields": {}
       },
+      "SaveData": {
+        "name": "SaveData",
+        "description": "Small text files in the project's user://saves folder. Names are plain file names (letters, digits, _ - .,\nat most 64 characters, not starting with '.'); anything else is a Lua error. Files are at most 1 MiB.",
+        "fields": {}
+      },
+      "Json": {
+        "name": "Json",
+        "description": "",
+        "fields": {}
+      },
       "InputValue": {
         "name": "InputValue",
         "description": "",
@@ -1447,6 +1467,223 @@
         "returns": [
           {
             "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Random.Seed": {
+        "name": "Random.Seed",
+        "owner": "Random",
+        "method": false,
+        "signature": "Random.Seed(seed)",
+        "description": "Switch Random.* to the deterministic generator and restart it from `seed` (taken modulo 2^32): the same seed gives\nthe same sequence on every platform. One global stream, shared by every script.",
+        "params": [
+          {
+            "name": "seed",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Random.NewStream": {
+        "name": "Random.NewStream",
+        "owner": "Random",
+        "method": false,
+        "signature": "Random.NewStream(seed)",
+        "description": "A random stream of its own, independent of Random.* and of every other stream (same as RandomStream(seed))",
+        "params": [
+          {
+            "name": "seed",
+            "type": "integer",
+            "description": "Any integer, taken modulo 2^32"
+          }
+        ],
+        "returns": [
+          {
+            "type": "RandomStream",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.new": {
+        "name": "RandomStream.new",
+        "owner": "RandomStream",
+        "method": false,
+        "signature": "RandomStream.new(seed)",
+        "description": "Create a stream (RandomStream(seed) works too)",
+        "params": [
+          {
+            "name": "seed",
+            "type": "integer",
+            "description": "Any integer, taken modulo 2^32"
+          }
+        ],
+        "returns": [
+          {
+            "type": "RandomStream",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.Float": {
+        "name": "RandomStream.Float",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:Float()",
+        "description": "A float in [0, 1)",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.Range": {
+        "name": "RandomStream.Range",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:Range(min, max)",
+        "description": "min + Float() * (max - min), in float (as Random.Range)",
+        "params": [
+          {
+            "name": "min",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "max",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.Int": {
+        "name": "RandomStream.Int",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:Int(min, max)",
+        "description": "An integer in [min, max], both ends included, without modulo bias; min when max <= min. Both must fit 32 bits.",
+        "params": [
+          {
+            "name": "min",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "max",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.InUnitCircle": {
+        "name": "RandomStream.InUnitCircle",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:InUnitCircle()",
+        "description": "A point uniform over the unit disc",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.OnUnitCircle": {
+        "name": "RandomStream.OnUnitCircle",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:OnUnitCircle()",
+        "description": "A point uniform on the unit circle",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.Seed": {
+        "name": "RandomStream.Seed",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:Seed(seed)",
+        "description": "Restart the stream from `seed` (taken modulo 2^32), as RandomStream(seed) starts",
+        "params": [
+          {
+            "name": "seed",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "RandomStream.GetState": {
+        "name": "RandomStream.GetState",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:GetState()",
+        "description": "The whole state: an integer in [0, 2^32). SetState(GetState()) later puts the stream back to this point.",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "RandomStream.SetState": {
+        "name": "RandomStream.SetState",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:SetState(state)",
+        "description": "Put the stream at a state GetState returned (any integer, taken modulo 2^32)",
+        "params": [
+          {
+            "name": "state",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "RandomStream.Clone": {
+        "name": "RandomStream.Clone",
+        "owner": "RandomStream",
+        "method": true,
+        "signature": "RandomStream:Clone()",
+        "description": "A second, independent stream at the same point",
+        "params": [],
+        "returns": [
+          {
+            "type": "RandomStream",
             "description": ""
           }
         ],
@@ -4192,6 +4429,27 @@
         ],
         "overloads": []
       },
+      "GameObject.GetScript": {
+        "name": "GameObject.GetScript",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetScript(path)",
+        "description": "The instance table (self) of the first LuaComponent here whose script runs, or of the first running `path`.\nHow one script calls another: obj:GetScript(\"res://scripts/Enemy.lua\"):Damage(1)",
+        "params": [
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": "e.g. \"res://scripts/Enemy.lua\""
+          }
+        ],
+        "returns": [
+          {
+            "type": "table|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "CubeRenderer.SetColor": {
         "name": "CubeRenderer.SetColor",
         "owner": "CubeRenderer",
@@ -6469,6 +6727,82 @@
         ],
         "overloads": []
       },
+      "LuaComponent.GetScript": {
+        "name": "LuaComponent.GetScript",
+        "owner": "LuaComponent",
+        "method": true,
+        "signature": "LuaComponent:GetScript()",
+        "description": "The running script's instance table (its self), or nil when no script runs. The same table each call; once the\ncomponent is destroyed its gameObject and component fields are nil.",
+        "params": [],
+        "returns": [
+          {
+            "type": "table|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "LuaComponent.StartCoroutine": {
+        "name": "LuaComponent.StartCoroutine",
+        "owner": "LuaComponent",
+        "method": true,
+        "signature": "LuaComponent:StartCoroutine(fn, ...)",
+        "description": "Runs fn(...) as a coroutine of this object, resumed once per frame by its scheduler (the first resume is on the next\nupdate, not inside this call). Inside it, coroutine.yield() waits a frame and coroutine.yield(seconds) waits that long.\nStops with the object. Returns nil when none started (inactive object, script switched off).",
+        "params": [
+          {
+            "name": "fn",
+            "type": "function",
+            "description": ""
+          },
+          {
+            "name": "...",
+            "type": "any",
+            "description": "passed to fn"
+          }
+        ],
+        "returns": [
+          {
+            "type": "ScriptCoroutine|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "LuaComponent.StopAllCoroutines": {
+        "name": "LuaComponent.StopAllCoroutines",
+        "owner": "LuaComponent",
+        "method": true,
+        "signature": "LuaComponent:StopAllCoroutines()",
+        "description": "Stops every coroutine this component started.",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "ScriptCoroutine.Stop": {
+        "name": "ScriptCoroutine.Stop",
+        "owner": "ScriptCoroutine",
+        "method": true,
+        "signature": "ScriptCoroutine:Stop()",
+        "description": "Stops it: no further part of its body runs.",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "ScriptCoroutine.IsRunning": {
+        "name": "ScriptCoroutine.IsRunning",
+        "owner": "ScriptCoroutine",
+        "method": true,
+        "signature": "ScriptCoroutine:IsRunning()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "true until it has finished, failed or been stopped"
+          }
+        ],
+        "overloads": []
+      },
       "Component.IsValid": {
         "name": "Component.IsValid",
         "owner": "Component",
@@ -7464,6 +7798,104 @@
         "method": true,
         "signature": "UIText:ClearEffectPasses()",
         "description": "Removes every extra pass; the shadow, outline and softness settings stay.",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.SetCharacterOffset": {
+        "name": "UIText.SetCharacterOffset",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:SetCharacterOffset(index, x, y)",
+        "description": "Moves character `index` (1-based, in characters of the text) by (x, y) canvas units, +y up (TextMeshPro-style\nvertex effects: wave, shake). Not saved with the scene; kept across SetText",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "x",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "y",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.ClearCharacterOffsets": {
+        "name": "UIText.ClearCharacterOffsets",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:ClearCharacterOffsets()",
+        "description": "Puts every character back where the layout places it",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.SetCharacterColor": {
+        "name": "UIText.SetCharacterColor",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:SetCharacterColor(index, color)",
+        "description": "Colours character `index` (1-based, as SetCharacterOffset): the colour multiplies the text's colour on that\ncharacter's face, and its alpha also fades the character's outline, shadow and extra passes. Components are clamped\nto 0..1. On the software renderer (Graphics.CanBlend() false) a character is drawn solid until its alpha is below the\ntext's minimum. Not saved with the scene; kept across SetText",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "color",
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.ClearCharacterColors": {
+        "name": "UIText.ClearCharacterColors",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:ClearCharacterColors()",
+        "description": "Every character back to the text's own colour",
+        "params": [],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.SetCharacterScale": {
+        "name": "UIText.SetCharacterScale",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:SetCharacterScale(index, scale)",
+        "description": "Scales character `index` (1-based, as SetCharacterOffset) about the centre of its glyph: 1 is its size, 0 hides it,\na negative scale counts as 0. Neighbours do not move. Not saved with the scene; kept across SetText",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "scale",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "UIText.ClearCharacterScales": {
+        "name": "UIText.ClearCharacterScales",
+        "owner": "UIText",
+        "method": true,
+        "signature": "UIText:ClearCharacterScales()",
+        "description": "Every character back to its laid-out size",
         "params": [],
         "returns": [],
         "overloads": []
@@ -9977,6 +10409,47 @@
         ],
         "overloads": []
       },
+      "Sprite2D.GetTextureSize": {
+        "name": "Sprite2D.GetTextureSize",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetTextureSize()",
+        "description": "The texture's size in pixels, or nil without a texture",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector2|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.SetOutlineTextureOf": {
+        "name": "Sprite2D.SetOutlineTextureOf",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetOutlineTextureOf(source, widthPixels, color)",
+        "description": "Makes this sprite's texture an outline of `source` (a res:// path, or a Sprite2D whose texture it takes): the source's\nshape grown by `widthPixels` (a whole number, 0 to 256) and padded by it on every side, in `color`, transparent elsewhere.\nMade once on the CPU and cached, so asking again is cheap. Draw it behind the source (a lower sorting order), sized up by\nthe padding: see docs/sprite2d.html#texture-outline. A bad source or width raises an error and keeps the texture.",
+        "params": [
+          {
+            "name": "source",
+            "type": "string|Sprite2D",
+            "description": ""
+          },
+          {
+            "name": "widthPixels",
+            "type": "integer",
+            "description": ""
+          },
+          {
+            "name": "color",
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
       "Sprite2D.SetRegion": {
         "name": "Sprite2D.SetRegion",
         "owner": "Sprite2D",
@@ -11564,6 +12037,68 @@
         "returns": [],
         "overloads": []
       },
+      "AudioSource.SetClip": {
+        "name": "AudioSource.SetClip",
+        "owner": "AudioSource",
+        "method": true,
+        "signature": "AudioSource:SetClip(path)",
+        "description": "Set the clip by path, loaded through the resource cache; a clip that does not load is a Lua error",
+        "params": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "e.g. \"res://audio/music.ogg\""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "AudioSource.HasClip": {
+        "name": "AudioSource.HasClip",
+        "owner": "AudioSource",
+        "method": true,
+        "signature": "AudioSource:HasClip()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "AudioSource.SetPlayOnAwake": {
+        "name": "AudioSource.SetPlayOnAwake",
+        "owner": "AudioSource",
+        "method": true,
+        "signature": "AudioSource:SetPlayOnAwake(playOnAwake)",
+        "description": "",
+        "params": [
+          {
+            "name": "playOnAwake",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "AudioSource.GetPlayOnAwake": {
+        "name": "AudioSource.GetPlayOnAwake",
+        "owner": "AudioSource",
+        "method": true,
+        "signature": "AudioSource:GetPlayOnAwake()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "Audio.SetMasterVolume": {
         "name": "Audio.SetMasterVolume",
         "owner": "Audio",
@@ -11660,6 +12195,328 @@
           }
         ],
         "returns": [],
+        "overloads": []
+      },
+      "Audio.PlayOneShot": {
+        "name": "Audio.PlayOneShot",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.PlayOneShot(path, volume, pitch, group)",
+        "description": "Fire-and-forget playback. Returns a handle id, 0 when the sound was dropped. A clip that does not load is a Lua error.",
+        "params": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": "e.g. \"res://audio/shoot.ogg\""
+          },
+          {
+            "name": "volume",
+            "type": "number|nil",
+            "description": "default 1"
+          },
+          {
+            "name": "pitch",
+            "type": "number|nil",
+            "description": "default 1"
+          },
+          {
+            "name": "group",
+            "type": "string|nil",
+            "description": "mixer group, default \"SFX\""
+          }
+        ],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Audio.StopOneShot": {
+        "name": "Audio.StopOneShot",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.StopOneShot(id)",
+        "description": "",
+        "params": [
+          {
+            "name": "id",
+            "type": "integer",
+            "description": "a PlayOneShot handle"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Audio.IsOneShotPlaying": {
+        "name": "Audio.IsOneShotPlaying",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.IsOneShotPlaying(id)",
+        "description": "",
+        "params": [
+          {
+            "name": "id",
+            "type": "integer",
+            "description": "a PlayOneShot handle"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Audio.SetGroupVolume": {
+        "name": "Audio.SetGroupVolume",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.SetGroupVolume(group, volume)",
+        "description": "Mixer group volume, clamped to 0..1 (groups: Master, Music, SFX, UI, Voice, Ambient). Unknown groups are ignored.",
+        "params": [
+          {
+            "name": "group",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "volume",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Audio.GetGroupVolume": {
+        "name": "Audio.GetGroupVolume",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.GetGroupVolume(group)",
+        "description": "",
+        "params": [
+          {
+            "name": "group",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "number",
+            "description": "1 for an unknown group"
+          }
+        ],
+        "overloads": []
+      },
+      "Audio.SetGroupMuted": {
+        "name": "Audio.SetGroupMuted",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.SetGroupMuted(group, muted)",
+        "description": "",
+        "params": [
+          {
+            "name": "group",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "muted",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Audio.IsGroupMuted": {
+        "name": "Audio.IsGroupMuted",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.IsGroupMuted(group)",
+        "description": "",
+        "params": [
+          {
+            "name": "group",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Audio.HasGroup": {
+        "name": "Audio.HasGroup",
+        "owner": "Audio",
+        "method": false,
+        "signature": "Audio.HasGroup(group)",
+        "description": "",
+        "params": [
+          {
+            "name": "group",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "SaveData.Write": {
+        "name": "SaveData.Write",
+        "owner": "SaveData",
+        "method": false,
+        "signature": "SaveData.Write(name, text)",
+        "description": "Write the whole file (atomically: a temporary file is renamed over the old one)",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "text",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          },
+          {
+            "type": "string|nil",
+            "description": "message"
+          }
+        ],
+        "overloads": []
+      },
+      "SaveData.Read": {
+        "name": "SaveData.Read",
+        "owner": "SaveData",
+        "method": false,
+        "signature": "SaveData.Read(name)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "string|nil",
+            "description": "text nil when the file does not exist"
+          }
+        ],
+        "overloads": []
+      },
+      "SaveData.Exists": {
+        "name": "SaveData.Exists",
+        "owner": "SaveData",
+        "method": false,
+        "signature": "SaveData.Exists(name)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "SaveData.Delete": {
+        "name": "SaveData.Delete",
+        "owner": "SaveData",
+        "method": false,
+        "signature": "SaveData.Delete(name)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "existed"
+          }
+        ],
+        "overloads": []
+      },
+      "Json.Encode": {
+        "name": "Json.Encode",
+        "owner": "Json",
+        "method": false,
+        "signature": "Json.Encode(value, pretty)",
+        "description": "A Lua value as JSON text (a table with keys 1..n is an array; object keys are sorted)",
+        "params": [
+          {
+            "name": "value",
+            "type": "any",
+            "description": ""
+          },
+          {
+            "name": "pretty",
+            "type": "boolean|nil",
+            "description": "indent with two spaces"
+          }
+        ],
+        "returns": [
+          {
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Json.Decode": {
+        "name": "Json.Decode",
+        "owner": "Json",
+        "method": false,
+        "signature": "Json.Decode(text)",
+        "description": "JSON text as a Lua value (null is nil), or nil and a message",
+        "params": [
+          {
+            "name": "text",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "any",
+            "description": "value"
+          },
+          {
+            "type": "string|nil",
+            "description": "message"
+          }
+        ],
         "overloads": []
       },
       "InputValue.GetBool": {
@@ -12175,6 +13032,94 @@
             "description": ""
           }
         ],
+        "overloads": []
+      },
+      "Input.GetTouchCount": {
+        "name": "Input.GetTouchCount",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetTouchCount()",
+        "description": "The number of touches this frame (Input.touchCount); 0 on desktop (GLFW has no touch)",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.GetTouch": {
+        "name": "Input.GetTouch",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.GetTouch(index)",
+        "description": "Touch `index` (1-based) this frame: { id, x, y, phase } with phase \"Began\", \"Moved\", \"Stationary\", \"Ended\" or \"Canceled\"; nil past the count",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "{id: integer, x: number, y: number, phase: string}|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.SetGamepadRumble": {
+        "name": "Input.SetGamepadRumble",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.SetGamepadRumble(low, high, seconds, gamepad)",
+        "description": "Gamepad rumble (Gamepad.SetMotorSpeeds): low- and high-frequency motors 0..1, for `seconds` of real time (nil or 0:\nuntil StopGamepadRumble), on `gamepad` (default 0). False when there is no rumble there (Linux, macOS, no pad)",
+        "params": [
+          {
+            "name": "low",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "high",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "seconds?",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "gamepad?",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Input.StopGamepadRumble": {
+        "name": "Input.StopGamepadRumble",
+        "owner": "Input",
+        "method": false,
+        "signature": "Input.StopGamepadRumble(gamepad)",
+        "description": "Stops `gamepad`'s rumble, or every gamepad's without an argument",
+        "params": [
+          {
+            "name": "gamepad?",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [],
         "overloads": []
       },
       "Input.IsPointerOverUI": {
@@ -13649,6 +14594,11 @@
         "type": "Random",
         "description": ""
       },
+      "RandomStream": {
+        "name": "RandomStream",
+        "type": "RandomStream",
+        "description": ""
+      },
       "Vector2": {
         "name": "Vector2",
         "type": "Vector2",
@@ -13742,6 +14692,11 @@
       "LuaComponent": {
         "name": "LuaComponent",
         "type": "LuaComponent",
+        "description": ""
+      },
+      "ScriptCoroutine": {
+        "name": "ScriptCoroutine",
+        "type": "ScriptCoroutine",
         "description": ""
       },
       "Component": {
@@ -13929,6 +14884,16 @@
         "type": "Audio",
         "description": ""
       },
+      "SaveData": {
+        "name": "SaveData",
+        "type": "SaveData",
+        "description": ""
+      },
+      "Json": {
+        "name": "Json",
+        "type": "Json",
+        "description": ""
+      },
       "InputValue": {
         "name": "InputValue",
         "type": "InputValue",
@@ -14028,6 +14993,7 @@
     "aliases": {
       "Math": "Math",
       "Random": "Random",
+      "RandomStream": "RandomStream",
       "Vector2": "Vector2",
       "Vector3": "Vector3",
       "Vector4": "Vector4",
@@ -14046,6 +15012,7 @@
       "Prefab": "Prefab",
       "TextRenderer": "TextRenderer",
       "LuaComponent": "LuaComponent",
+      "ScriptCoroutine": "ScriptCoroutine",
       "Component": "Component",
       "Rect": "Rect",
       "RectTransform": "RectTransform",
@@ -14083,6 +15050,8 @@
       "AudioSource": "AudioSource",
       "AudioListener": "AudioListener",
       "Audio": "Audio",
+      "SaveData": "SaveData",
+      "Json": "Json",
       "InputValue": "InputValue",
       "InputAction": "InputAction",
       "ActionMap": "ActionMap",

@@ -398,6 +398,8 @@ export interface CreateOptions {
    * (adopting an existing folder). The host's default is a new random id.
    */
   projectId?: string
+  /** --networked: also writes build.strictFp true (the strict floating-point profile networked games need) */
+  networked?: boolean
   timeoutMs?: number
   spawn?: SpawnFunction
   /** Called as soon as the process is spawned, with a function that kills it (the editor quits meanwhile) */
@@ -433,6 +435,7 @@ export function createProjectWithHost(options: CreateOptions): Promise<CreatedPr
   const args = ["--create", options.projectDir]
   if (options.name !== undefined) args.push("--name", options.name)
   if (options.projectId !== undefined) args.push("--project-id", options.projectId)
+  if (options.networked === true) args.push("--networked")
 
   return new Promise((resolve, reject) => {
     let child: ChildProcess

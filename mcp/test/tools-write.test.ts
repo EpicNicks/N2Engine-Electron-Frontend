@@ -689,6 +689,52 @@ describe("scenes and project settings", () => {
   })
 })
 
+describe("n2_set_build_settings", () => {
+  test("a merge patch of build.strictFp, asked first; null removes the key; the other build keys stay", async () => {
+    const { h, world } = await setup({ host: { capabilities: ["buildSettings"] } })
+    const r = await h.call("n2_set_build_settings", { settings: { strictFp: true } })
+    ok(r)
+    assert.equal(h.asked.length, 1)
+    assert.match(h.asked[0], /Change the project's build settings \(project.n2proj\) at: strictFp/)
+    assert.deepEqual(data(r).build, { modules: [], strictFp: true })
+    assert.deepEqual(data(r).changedKeys, ["strictFp"])
+    assert.deepEqual(h.host.received.find((m) => m.name === "SetBuildSettings")?.request, { settings: { strictFp: true } })
+    const off = await h.call("n2_set_build_settings", { settings: { strictFp: null } })
+    ok(off)
+    assert.deepEqual(data(off).build, { modules: [] })
+    assert.equal(h.host.count("SetBuildSettings"), 2)
+    assert.deepEqual(world.settings, { window: { title: "Demo" } }, "the settings block is untouched")
+    await h.close()
+  })
+
+  test("an empty patch, another key and a non-boolean are refused before the host is touched", async () => {
+    const { h } = await setup({ host: { capabilities: ["buildSettings"] } })
+    for (const settings of [{}, { modules: [] }, { strictFp: "yes" }]) {
+      const r = await h.call("n2_set_build_settings", { settings })
+      assert.equal(r.isError, true, JSON.stringify(settings))
+    }
+    assert.equal(h.host.count("SetBuildSettings"), 0)
+    assert.equal(h.asked.length, 0)
+    await h.close()
+  })
+
+  test("a host without the buildSettings capability is refused without sending", async () => {
+    const { h } = await setup({ host: { protocolVersion: "1.29.0" } })
+    const r = await h.call("n2_set_build_settings", { settings: { strictFp: true } })
+    assert.equal(r.isError, true)
+    assert.match(textOf(r), /incompatible_protocol|buildSettings/)
+    assert.equal(h.host.count("SetBuildSettings"), 0)
+    await h.close()
+  })
+
+  test("a viewer does not get the tool", async () => {
+    const { h } = await setup({ host: { capabilities: ["buildSettings"] } }, "viewer")
+    const { tools } = await h.client.listTools()
+    assert.ok(!tools.some((t) => t.name === "n2_set_build_settings"))
+    await h.close()
+  })
+})
+
 describe("the write tools list", () => {
   test("the tools are the ones WriteTools names, with real descriptions and the right hints", async () => {
     const { h } = await setup()

@@ -410,6 +410,15 @@ describe("createProjectWithHost (engine #90's --create)", () => {
     await creating
   })
 
+  test("passes --networked", async () => {
+    const { calls, spawn } = fakeSpawn()
+    const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", name: "n", networked: true, spawn })
+    assert.deepEqual(calls[0].args, ["--create", "d", "--name", "n", "--networked"])
+    calls[0].child.stdout.write(createdLine)
+    calls[0].child.exit(0)
+    await creating
+  })
+
   test("exit 0 without a created line is a failure", async () => {
     const { calls, spawn } = fakeSpawn()
     const creating = createProjectWithHost({ hostPath: "h", projectDir: "d", spawn })

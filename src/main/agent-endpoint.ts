@@ -33,6 +33,7 @@ import {
   decodeReadTextAssetRequest,
   decodeSaveSceneToFileRequest,
   decodeSetImportSettingsRequest,
+  decodeSetBuildSettingsRequest,
   decodeSetProjectSettingsRequest,
   decodeSetStartupSceneRequest,
   decodeWriteTextAssetRequest,
@@ -580,6 +581,11 @@ export class AgentEndpoint {
         const { settings } = decodeSetProjectSettingsRequest(payload)
         const keys = settings !== null && typeof settings === "object" ? Object.keys(settings).slice(0, 8).map((k) => dialogText(k, 40)).join(", ") : ""
         return { message: `Change the project's settings${keys ? ` (${keys})` : ""}`, detail }
+      }
+      case CommandType.SetBuildSettings: {
+        const { settings } = decodeSetBuildSettingsRequest(payload)
+        const keys = settings !== null && typeof settings === "object" ? Object.keys(settings).slice(0, 8).map((k) => dialogText(k, 40)).join(", ") : ""
+        return { message: `Change the project's build settings${keys ? ` (${keys})` : ""}`, detail }
       }
       case CommandType.SetStartupScene: {
         const { path } = decodeSetStartupSceneRequest(payload)
