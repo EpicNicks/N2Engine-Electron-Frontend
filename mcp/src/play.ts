@@ -11,8 +11,9 @@
 // notification between them; n2_play_script checks for cancellation between ops, and a script that ends early (an
 // error, a cancellation) releases every key and button it may have left down, so the game is left paused and with no
 // input held: a consistent state the next call can build on.
+import * as path from "node:path"
 import { z } from "zod"
-import { DefaultReadyTimeoutMs, HostProcess, type SpawnFunction } from "../../src/main/host-launcher"
+import { CreateProjectError, DefaultReadyTimeoutMs, HostProcess, createProjectWithHost, type SpawnFunction } from "../../src/main/host-launcher"
 import { PlaySession, type PlayConnection } from "../../src/main/play-session"
 import { EngineClient, EngineError } from "../../src/protocol/engine-client"
 import type { EditorEvent, InputEvent } from "../../src/protocol/protocol.generated"
@@ -79,7 +80,7 @@ export class PlayController {
   private readonly budgets = new Map<string, PlayBudget>()
 
   constructor(
-    options: PlayOptions,
+    readonly options: PlayOptions,
     private readonly scrubber: Scrubber,
     log: (message: string) => void = () => undefined
   ) {
@@ -775,7 +776,62 @@ const playScript = tool({
   },
 })
 
-/** The play tools in the order they are listed, after the write tools */
-export const PlayTools: readonly ToolDef[] = [playStart, playStop, playControl, playInput, playObserve, playScript]
+// ===== n2_create_project =====
+
+const createProject = tool({
+  name: "n2_create_project",
+  title: "Create a project",
+  description:
+    "Creates a new N2Engine project in a folder with the host's own `N2EditorHost --create` flow, which writes project.n2proj and the project's layout (assets/, a startup scene) without starting the engine. It does not open the project: the bridge stays connected to the project it was started with, so the person starts a bridge or editor on the new folder. directory must be an absolute path on this computer; the folder is created when missing, and an existing folder is adopted with its files kept, but a folder that already has a project.n2proj is refused and nothing is changed. networked: true adds `--networked`, which also writes build.strictFp true (the strict floating-point profile networked games need); leave it out for a single-player project. Only available when the bridge launched its own host (--launch). This writes outside the open project, so the person is asked to confirm (or the operator allowed it with --allow-irreversible). Answers the project id and startup scene.",
+  input: z
+    .object({
+      directory: z.string().min(1).max(1024).describe("The new project's folder: an absolute path on this computer."),
+      name: z.string().min(1).max(128).optional().describe("The project's name (default: the folder's name)."),
+      networked: z.boolean().optional().describe("true: a networked project (--networked: build.strictFp true). Default false."),
+      sessionId: sessionIdField,
+    })
+    .strict(),
+  output: envelopeSchema(z.object({ projectId: z.string(), startupScene: z.string().nullable(), networked: z.boolean() })),
+  annotations: play("Create a project", { destructive: false }),
+  write: true,
+  async irreversible(_ctx, args) {
+    return `Create a new project in the folder ${JSON.stringify(args.directory)}${args.networked === true ? " (networked: build.strictFp true)" : ""}. Files are written there and the editor's undo cannot remove them.`
+  },
+  async handler(ctx, args) {
+    const c = controller(ctx)
+    if (!path.isAbsolute(args.directory) || args.directory.includes(" ")) {
+      throw invalidArgument("directory must be an absolute path.")
+    }
+    if (args.name !== undefined && args.name.startsWith("-")) throw invalidArgument("name must not start with a dash.")
+    const agent = ctx.sessions.resolve(args.sessionId)
+    agent.spend(1)
+    try {
+      const created = await createProjectWithHost({
+        hostPath: c.options.hostPath,
+        projectDir: args.directory,
+        name: args.name,
+        networked: args.networked === true,
+        spawn: c.options.spawn,
+      })
+      const networked = args.networked === true
+      return {
+        source: "host",
+        untrusted: false,
+        summary: `Created a ${networked ? "networked " : ""}project (id ${created.projectId}).`,
+        data: { projectId: created.projectId, startupScene: created.startupScene, networked },
+      }
+    } catch (e) {
+      if (e instanceof CreateProjectError) {
+        const reason = ctx.scrubber.message(e.message, 600)
+        if (e.kind === "alreadyAProject") throw invalidArgument(`That folder already is a project: ${reason}`)
+        throw new BridgeError("host_unavailable", "N2EditorHost could not create the project.", BridgeAdvice.unavailable, reason, e)
+      }
+      throw e
+    }
+  },
+})
+
+/** The tools of a --launch bridge in the order they are listed, after the write tools: the play tools, then n2_create_project (it needs the host executable the bridge launched) */
+export const PlayTools: readonly ToolDef[] = [playStart, playStop, playControl, playInput, playObserve, playScript, createProject]
 
 export const PlayToolNames: readonly string[] = PlayTools.map((t) => t.name)

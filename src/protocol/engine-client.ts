@@ -586,6 +586,14 @@ export class EngineClient {
     return this.send(Commands.SetProjectSettings, { settings })
   }
 
+  /**
+   * Protocol 1.30.0 (buildSettings capability): changes the project's build-wide settings (project.n2proj's build block)
+   * with a JSON merge patch; the only key is strictFp (true or false sets it, null removes it: automatic). Answers the project saved.
+   */
+  setBuildSettings(settings: unknown): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetBuildSettings, { settings })
+  }
+
   /** Sets the scene the host opens first (an existing scene file, or empty for none); answers the project saved */
   setStartupScene(path: string): Promise<ProjectInfoResponse> {
     return this.send(Commands.SetStartupScene, { path })

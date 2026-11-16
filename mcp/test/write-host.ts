@@ -53,6 +53,8 @@ export class FakeWorld {
   sceneName = "Main"
   scenes = new Map<string, SceneFile>()
   settings: Record<string, unknown> = { window: { title: "Demo" } }
+  /** project.n2proj's build block */
+  build: Record<string, unknown> = { modules: [] }
   counter = 100
   /** Commands that changed the world, by name: to see that a refused call changed nothing */
   mutations: string[] = []
@@ -433,7 +435,7 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
   const projectInfo = () => ({
     rootPath: ProjectRoot,
     userDataPath: UserDataRoot,
-    project: { formatVersion: 1, name: host.projectName, projectId: "22222222-0000-0000-0000-000000000000", engineVersion: "0.9.0", startupScene: "res://scenes/Main.scene", scenes: [...world.scenes.keys()], settings: world.settings },
+    project: { formatVersion: 1, name: host.projectName, projectId: "22222222-0000-0000-0000-000000000000", engineVersion: "0.9.0", startupScene: "res://scenes/Main.scene", scenes: [...world.scenes.keys()], settings: world.settings, build: world.build },
   })
   h("GetProjectInfo", projectInfo)
   const merge = (target: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> => {
@@ -450,6 +452,17 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
     if ("determinism" in patch && role !== "admin") throw new Refusal("The determinism settings need the admin role", "forbidden")
     world.settings = merge(world.settings, patch)
     world.mutations.push("SetProjectSettings")
+    return projectInfo()
+  })
+  h("SetBuildSettings", (r) => {
+    const patch = r.settings as Record<string, unknown>
+    if (patch === null || typeof patch !== "object" || Array.isArray(patch)) throw new Refusal("settings must be an object", "invalid")
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== "strictFp") throw new Refusal(`build setting "${key}" is not changeable`, "invalid")
+      if (value !== null && typeof value !== "boolean") throw new Refusal("build.strictFp must be true, false or null", "invalid")
+    }
+    world.build = merge(world.build, patch)
+    world.mutations.push("SetBuildSettings")
     return projectInfo()
   })
   return world

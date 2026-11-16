@@ -773,6 +773,54 @@ function checkSettings(ctx: HostContext, settings: Record<string, unknown>): voi
   if (settingsDepth(settings) > MaxSettingsDepth) throw invalidArgument(`The patch is nested deeper than ${MaxSettingsDepth} levels.`)
 }
 
+// ===== build settings =====
+
+const setBuildSettings = tool({
+  name: "n2_set_build_settings",
+  title: "Change the project's build settings",
+  description:
+    "Changes the project's build-wide settings (the build block of project.n2proj) with a JSON merge patch (RFC 7386). The only setting is strictFp: true or false sets build.strictFp (the strict floating-point profile, N2ENGINE_STRICT_FP, for the game's builds: networked games with rollback or lockstep need it), null removes it (automatic: the build turns it on for a game that uses networking). For example {\"settings\":{\"strictFp\":true}}. Any other key is refused by the host. build.modules and build.targets are left as they are. Build settings changes cannot be undone by the editor, so the person is asked to confirm (or the operator allowed it with --allow-irreversible). Needs a host with the buildSettings capability (protocol 1.30.0). Answers the build block as saved.",
+  input: z
+    .object({
+      settings: z
+        .object({ strictFp: z.boolean().nullable().optional().describe("true or false sets build.strictFp; null removes it (automatic). Omit to leave it as it is.") })
+        .strict()
+        .refine((v) => Object.keys(v).length > 0, "give at least one setting")
+        .describe("The merge patch: an object of the build settings to change."),
+      sessionId: sessionIdField,
+    })
+    .strict(),
+  output: envelopeSchema(z.object({ build: z.unknown().describe("The project's build block after the change."), changedKeys: z.array(z.string()), edit: editInfoSchema })),
+  annotations: write("Change build settings", { destructive: true }),
+  write: true,
+  async irreversible(_ctx, args) {
+    return `Change the project's build settings (project.n2proj) at: ${Object.keys(args.settings).join(", ")}. The editor's undo cannot revert it.`
+  },
+  async handler(ctx, args) {
+    assertWritable(ctx)
+    if (!ctx.client.hasCapability("buildSettings")) {
+      throw new BridgeError(
+        "incompatible_protocol",
+        "This host has no buildSettings capability (protocol 1.30.0), which added changing the build settings.",
+        "Update the engine host, or ask the person to edit the build block of project.n2proj."
+      )
+    }
+    const agent = ctx.sessions.resolve(args.sessionId)
+    agent.spend(1)
+    let project
+    try {
+      project = await ctx.client.setBuildSettings(args.settings)
+    } catch (e) {
+      throw e instanceof BridgeError ? e : mapError(e, { command: "n2_set_build_settings", role: ctx.info.role }, ctx.scrubber)
+    }
+    const keys = Object.keys(args.settings)
+    const summary = `Changed the build settings at ${keys.join(", ")}.`
+    const edit = await finishOther(ctx, agent, "n2_set_build_settings", summary, { settings: true, ...consentMark(ctx) })
+    const build = (project.project as { build?: unknown } | null)?.build ?? {}
+    return writeOutput(summary, { build: ctx.scrubber.deep(build, new Budget(limits.SmallJsonBytes)), changedKeys: keys, edit })
+  },
+})
+
 // ===== sessions =====
 
 const fileView = z.object({ path: z.string(), created: z.boolean(), restored: z.boolean() })
@@ -1077,6 +1125,7 @@ export const WriteTools: readonly ToolDef[] = [
   createScript,
   moveAsset,
   setProjectSettings,
+  setBuildSettings,
   revertSession,
 ]
 

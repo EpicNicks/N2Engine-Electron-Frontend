@@ -26,13 +26,13 @@ const policy = (over: Partial<Policy> = {}): Policy => ({ ...DefaultPolicy, ...o
 const code = (r: { _meta?: Record<string, unknown> }): unknown => r._meta?.["n2/errorCode"]
 
 async function setup(options: Parameters<typeof startHarness>[0] = {}, role = "editor"): Promise<{ h: Harness; world: FakeWorld }> {
-  const h = await startHarness({ ...options, host: { role, ...options?.host } })
+  const h = await startHarness({ ...options, host: { role, capabilities: ["buildSettings"], ...options?.host } })
   const world = installWrites(h.host, role)
   return { h, world }
 }
 
 /** The calls that change something on the host: none of them may happen when a call is refused */
-const HostWrites = ["WriteTextAsset", "CreateScriptAsset", "SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "BeginEditGroup", "CreateEntityEx", "Undo", "Redo"]
+const HostWrites = ["WriteTextAsset", "CreateScriptAsset", "SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "SetBuildSettings", "BeginEditGroup", "CreateEntityEx", "Undo", "Redo"]
 const wrote = (h: Harness): number => HostWrites.reduce((n, name) => n + h.host.count(name), 0)
 
 /** One call per irreversible operation, set up so that each really is irreversible (an existing file, unsaved changes) */
@@ -40,6 +40,7 @@ const irreversibleCalls: Array<[string, Record<string, unknown>, (h: Harness, w:
   ["n2_write_text_asset", { path: "res://scripts/Hero.lua", text: "-- new\n" }, (h) => void h.host.texts.set("res://scripts/Hero.lua", "-- old\n")],
   ["n2_save_scene", {}, () => undefined],
   ["n2_set_project_settings", { settings: { window: { title: "X" } } }, () => undefined],
+  ["n2_set_build_settings", { settings: { strictFp: true } }, () => undefined],
   ["n2_open_scene", { path: "res://scenes/Level1.scene" }, (_h, w) => void w.humanEdit("Edit", () => undefined)],
   ["n2_create_scene", { name: "Fresh" }, (_h, w) => void w.humanEdit("Edit", () => undefined)],
 ]
@@ -577,7 +578,7 @@ describe("the write tools in a bridge of their own", () => {
       assert.match(t.name, /^n2_[a-z_]+$/)
     }
     const gated = WriteTools.filter((t) => t.irreversible).map((t) => t.name)
-    assert.deepEqual(gated, ["n2_create_scene", "n2_open_scene", "n2_save_scene", "n2_write_text_asset", "n2_set_project_settings", "n2_session_revert"])
+    assert.deepEqual(gated, ["n2_create_scene", "n2_open_scene", "n2_save_scene", "n2_write_text_asset", "n2_set_project_settings", "n2_set_build_settings", "n2_session_revert"])
     for (const name of gated) assert.match(WriteTools.find((t) => t.name === name)!.description, /confirm|asked|--allow-irreversible/i, name)
   })
 })

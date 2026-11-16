@@ -67,7 +67,7 @@ const table: Array<[AgentCommandClass, Name[]]> = [
   ["file", ["CreateScriptAsset", "CreateFolder", "RescanAssets"]],
   [
     "irreversible",
-    ["SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "SetStartupScene", "SetImportSettings", "WriteTextAsset", "RestoreAutosave", "DiscardAutosave"],
+    ["SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "SetBuildSettings", "SetStartupScene", "SetImportSettings", "WriteTextAsset", "RestoreAutosave", "DiscardAutosave"],
   ],
   ["history", ["Undo", "Redo"]],
   ["group", ["BeginEditGroup", "EndEditGroup"]],

@@ -30,7 +30,7 @@ const WriteInstructions =
 
 /** What the instructions say about the play tools (the --launch backend, when the operator's flags leave some listed) */
 const PlayInstructions =
-  " Play tools (listed with the write tools when the bridge launched its own host): n2_play_start runs a copy of the open scene as a game in a host of the bridge's own (the project is not changed by it); n2_play_control pauses, resumes and steps it, n2_play_input sends keys and mouse input, n2_play_observe reads its state, log, entities and a picture, n2_play_script runs a whole playtest in one call, and n2_play_stop ends it."
+  " Play tools (listed with the write tools when the bridge launched its own host): n2_play_start runs a copy of the open scene as a game in a host of the bridge's own (the project is not changed by it); n2_play_control pauses, resumes and steps it, n2_play_input sends keys and mouse input, n2_play_observe reads its state, log, entities and a picture, n2_play_script runs a whole playtest in one call, and n2_play_stop ends it. n2_create_project (also only on a --launch bridge) makes a new project folder with the host's --create flow (networked: true for a networked game) and asks the person to confirm; it does not open it."
 
 /** The server-level instructions: what this is, and the one rule about what it returns */
 export function serverInstructions(policy: Policy, play: boolean = false): string {
