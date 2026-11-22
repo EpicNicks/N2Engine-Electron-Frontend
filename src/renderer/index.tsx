@@ -317,5 +317,11 @@ effect(() => {
   untracked(() => app.audio.useGame(live ? window.play : null))
 })
 
+// #381 item 8: the inspector's network nudge is read again while it shows, whenever the scene or the project changes
+effect(() => {
+  void store.sceneChangeCount.value
+  void store.projectChangeCount.value
+  untracked(() => void app.inspector.recheckNetworkNudge())
+})
 render(<App app={app} />, document.getElementById("app")!)
 store.load()

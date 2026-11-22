@@ -108,6 +108,8 @@ export class InspectorState {
   readonly networkNudge = signal<string | null>(null)
   /** Dismissed: not shown again until the editor reloads */
   private networkNudgeDismissed = false
+  /** Counts the nudge's reads and resets: only the latest read's answer is shown, and none after a reset */
+  private networkNudgeReads = 0
 
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
@@ -230,6 +232,9 @@ export class InspectorState {
   /** Lets go of everything held: the connection changed (another host), or none */
   reset(): void {
     this.cancelTimers()
+    // The nudge was about the project and host that are gone
+    this.networkNudgeReads++
+    this.networkNudge.value = null
     this.gesture = null // its group ended with the connection
     batch(() => {
       this.fetches++
@@ -695,12 +700,22 @@ export class InspectorState {
    */
   async checkNetworkNudge(typeName: string): Promise<void> {
     if (typeName !== NetworkNudgeComponent || this.networkNudgeDismissed || !this.options.networkNudge) return
+    const read = ++this.networkNudgeReads
     try {
       const hint = await this.options.networkNudge()
-      if (!this.networkNudgeDismissed) this.networkNudge.value = hint
+      if (!this.networkNudgeDismissed && read === this.networkNudgeReads) this.networkNudge.value = hint
     } catch {
       // Not worth an error of its own: the Network section shows the same answer
     }
+  }
+
+  /**
+   * While the nudge shows, reads it again (the scene or the project changed: the NetworkObject was undone or removed, a
+   * preset was chosen in Project Settings), so it goes when it no longer applies
+   */
+  recheckNetworkNudge(): Promise<void> {
+    if (this.networkNudge.peek() === null) return Promise.resolve()
+    return this.checkNetworkNudge(NetworkNudgeComponent)
   }
 
   /** The user closed the nudge (or followed it to the network settings): not shown again in this session */

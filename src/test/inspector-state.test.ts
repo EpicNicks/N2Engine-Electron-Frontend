@@ -729,6 +729,44 @@ describe("InspectorState: the network nudge (#381 item 8)", () => {
     assert.equal(asked, 2, "not asked again once dismissed")
   })
 
+  test("a reset takes the nudge away and drops an answer still on its way; only the latest read is shown", async () => {
+    const answers: Array<(hint: string | null) => void> = []
+    const { inspector } = setup({
+      networkNudge: () => new Promise<string | null>((resolve) => answers.push(resolve)),
+    })
+    const first = inspector.checkNetworkNudge("NetworkObject")
+    const second = inspector.checkNetworkNudge("NetworkObject")
+    answers[1](Hint)
+    await second
+    answers[0](null) // the older read answers last: not shown
+    await first
+    assert.equal(inspector.networkNudge.value, Hint)
+    const pending = inspector.checkNetworkNudge("NetworkObject")
+    inspector.reset()
+    assert.equal(inspector.networkNudge.value, null, "the nudge was about the project that is gone")
+    answers[2](Hint)
+    await pending
+    assert.equal(inspector.networkNudge.value, null, "an answer from before the reset is dropped")
+  })
+
+  test("a recheck reads only while the nudge shows, and takes it away when it no longer applies", async () => {
+    let answer: string | null = Hint
+    let asked = 0
+    const { inspector } = setup({
+      networkNudge: async () => {
+        asked++
+        return answer
+      },
+    })
+    await inspector.recheckNetworkNudge()
+    assert.equal(asked, 0, "nothing shows: nothing to read again")
+    await inspector.checkNetworkNudge("NetworkObject")
+    answer = null // the add was undone, or a preset was chosen
+    await inspector.recheckNetworkNudge()
+    assert.equal(asked, 2)
+    assert.equal(inspector.networkNudge.value, null)
+  })
+
   test("without the option the inspector never asks", async () => {
     const { inspector } = setup()
     await inspector.checkNetworkNudge("NetworkObject")

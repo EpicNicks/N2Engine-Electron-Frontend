@@ -332,8 +332,12 @@ export function Editor() {
   // Another panel asked for one to be shown (EditorStore.requestPanel)
   const panelRequest = store.panelRequest.value
   useEffect(() => {
-    if (panelRequest) layout.open(panelRequest.id)
+    if (!panelRequest || panelRequest.opened) return
+    layout.open(panelRequest.id)
+    store.markPanelRequestOpened(panelRequest.seq)
   }, [layout, panelRequest?.seq])
+  // A request does not outlive its project
+  useEffect(() => () => store.clearPanelRequest(), [store.projectPath.value])
   // The window closing or reloading does not unmount the tree: save what is waiting then
   useEffect(() => layout.flushOnUnload(window), [layout])
   useEffect(() => appPrefs().flushOnUnload(window), [])
