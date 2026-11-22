@@ -74,7 +74,7 @@ describe("dist/n2-mcp.mjs over stdio", () => {
     const { client, call, stderr } = await startClient(connectArgs())
     assert.equal(client.getServerVersion()?.name, "n2-mcp")
     const { tools } = await client.listTools()
-    assert.equal(tools.length, 11 + WriteTools.length, "the host gave an editor role: the write tools are listed too")
+    assert.equal(tools.length, 12 + WriteTools.length, "the host gave an editor role: the write tools are listed too")
     const status = await call("n2_status")
     assert.ok(!status.isError, JSON.stringify(status))
     assert.equal(status.structuredContent.data.host.role, "editor")
@@ -93,7 +93,7 @@ describe("dist/n2-mcp.mjs over stdio", () => {
     const before = host.connections
     const { client, call } = await startClient(connectArgs(["--read-only"]), undefined, "auto")
     const { tools } = await client.listTools()
-    assert.equal(tools.length, 11, "--read-only lists no write tool")
+    assert.equal(tools.length, 12, "--read-only lists no write tool")
     assert.equal(host.connections, before, "with --read-only listing the tools does not connect to the host (the host is reached on the first call)")
     assert.ok(!(await call("n2_status")).isError)
     assert.equal(host.connections, before + 1)
@@ -104,7 +104,7 @@ describe("dist/n2-mcp.mjs over stdio", () => {
     const before = host.connections
     const { client } = await startClient(connectArgs(), undefined, "auto")
     const { tools } = await client.listTools()
-    assert.equal(tools.length, 11 + WriteTools.length)
+    assert.equal(tools.length, 12 + WriteTools.length)
     assert.equal(host.connections, before + 1)
     await client.close()
   })

@@ -21,7 +21,7 @@ import { endWhenReleased } from "./edit-groups"
 import { clean } from "./extension-menu"
 import { formatFieldValue } from "./extension-inspector"
 import { Empty, Panel, useApp } from "./ui"
-import { OverrideLabel, PrefabOverridesSection } from "./prefab-overrides-panel"
+import { MultiOverrideLabel, OverrideLabel, PrefabOverridesSection } from "./prefab-overrides-panel"
 
 // ==================== The object's own properties and transform ====================
 
@@ -586,7 +586,7 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
   const tip = field.tooltip
   return (
     <div class="field-row">
-      <label title={tip || undefined}>{field.displayName}</label>
+      <MultiOverrideLabel text={field.displayName} title={tip || undefined} component={component} field={field.name} />
       <div class="field-editor">
         <FieldEditor
           field={field}
@@ -720,6 +720,14 @@ function MultiInspector() {
     return (
       <VectorRow
         label={label}
+        labelElement={
+          <MultiOverrideLabel
+            text={label}
+            title={part === "rotation" ? TransformTitle : undefined}
+            component={null}
+            field={`positionable.${part === "position" ? "localPosition" : part === "rotation" ? "localRotation" : "localScale"}`}
+          />
+        }
         title={part === "rotation" ? TransformTitle : undefined}
         syncKey={multi.objects.value}
         value={{ x: axes.x.value, y: axes.y.value, z: axes.z.value }}
@@ -738,7 +746,7 @@ function MultiInspector() {
       <div class="inspector-section">
         <h4>Entity</h4>
         <div class="inspector-row">
-          <label>Active</label>
+          <MultiOverrideLabel text="Active" component={null} field="isActive" />
           <FieldEditor
             field={{ ...IsActiveField, name: "active", displayName: "Active" }}
             value={view.active.value}
@@ -749,7 +757,7 @@ function MultiInspector() {
           />
         </div>
         <div class="inspector-row">
-          <label>Tag</label>
+          <MultiOverrideLabel text="Tag" component={null} field="tag" />
           <TextInput
             label="Tag"
             value={view.tag.value}
@@ -760,7 +768,7 @@ function MultiInspector() {
           />
         </div>
         <div class="inspector-row">
-          <label>Layer</label>
+          <MultiOverrideLabel text="Layer" component={null} field="layer" />
           <NumberInput
             field={layerField}
             value={view.layer.value}

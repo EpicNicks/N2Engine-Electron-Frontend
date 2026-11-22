@@ -6,6 +6,7 @@ import type { ComponentChildren } from "preact"
 import { useState } from "preact/hooks"
 import { OverrideRow, describeRow, isFieldOverridden, prefabLabel, rowsForField, sharedLevels } from "../protocol/prefab-overrides"
 import { MenuItem, showContextMenu, useApp } from "./ui"
+import { MultiComponent, overriddenOn } from "./inspector-multi"
 
 /** The menu of Revert and Apply for some rows (one field, one change, or all of them) */
 function overrideMenu(
@@ -200,5 +201,39 @@ export function PrefabOverridesSection() {
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * A field's label in the multi-object inspector: bold when the field differs from the prefab on any selected object,
+ * with Revert on those objects on a right-click (one undo step). Apply is the single inspector's: which prefab receives
+ * it depends on each object's link path.
+ */
+export function MultiOverrideLabel(props: { text: ComponentChildren; title?: string; component: MultiComponent | null; field: string }) {
+  const { store, inspector } = useApp()
+  const multi = inspector.multi
+  const objects = multi.objects.value ?? []
+  const on = overriddenOn(objects, props.component, props.field)
+  if (on.length === 0) return <label title={props.title}>{props.text}</label>
+  const count = `${on.length} of ${objects.length} objects`
+  const onContextMenu = (e: MouseEvent) => {
+    if (inspector.readOnly.value || !multi.canRevertOverrides) return
+    e.preventDefault()
+    e.stopPropagation()
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        label: `Revert on ${on.length === 1 ? "1 object" : `${on.length} objects`}`,
+        action: () => void multi.revertOverride(props.component, props.field).catch((err) => store.reportError("Failed to revert the overrides", err)),
+      },
+    ])
+  }
+  return (
+    <label
+      class="overridden"
+      title={`${props.title ? `${props.title}\n` : ""}Differs from the prefab on ${count}. Right-click to revert it there.`}
+      onContextMenu={onContextMenu}
+    >
+      {props.text}
+    </label>
   )
 }
