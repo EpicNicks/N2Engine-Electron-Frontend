@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "engineRef": "b2d37be25c247c505190b5542099582490ce8da1",
+  "engineRef": "b3091b984caf0575c9ea2d59dd0aac9145c927ac",
   "runtime": {
     "available": true,
     "classes": {
@@ -350,6 +350,16 @@
         "name": "SoftBody",
         "base": "Component",
         "description": "Makes the MeshRenderer on the same object a soft body that squashes and wobbles under gravity (see\ndocs/soft-bodies.html). Needs a MeshRenderer with a mesh and no Rigidbody on the object. The body exists only while\nthe scene plays, is never saved, and freezes while the time scale is 0. Settings apply at once, except Backend and\nResolution, which are read when the body starts; Reset restarts it.",
+        "fields": {}
+      },
+      "MaterialInstance": {
+        "name": "MaterialInstance",
+        "description": "A material's values at runtime. `Material.Load(path)` is the shared asset: a change through it shows on every object that uses the .mat. For one\nobject's own values use `renderer:GetMaterialInstance(slot)`, which copies on the first change. The names are the parameters the .mat's\n`.n2shader` declares; a name or setter that doesn't fit logs one warning and returns false. Changes are runtime only.",
+        "fields": {}
+      },
+      "MaterialStatic": {
+        "name": "MaterialStatic",
+        "description": "",
         "fields": {}
       },
       "Prefab": {
@@ -984,6 +994,12 @@
         "name": "CapsuleCollider",
         "base": "Component",
         "description": "",
+        "fields": {}
+      },
+      "Joint": {
+        "name": "Joint",
+        "base": "Component",
+        "description": "Constrains this object's body to another object's body, or to the world. Needs a physics backend with joints (Jolt);\non another one the component warns once and does nothing. The joint is made from the bodies' poses when both exist\n(that pose is its zero), and again when a body is replaced. A value of the wrong type or a non-finite number raises an error.",
         "fields": {}
       },
       "CharacterController": {
@@ -4097,6 +4113,21 @@
         ],
         "overloads": []
       },
+      "GameObject.GetUUID": {
+        "name": "GameObject.GetUUID",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetUUID()",
+        "description": "The object's UUID as text (what a .prefab's {\"ref\": uuid} fields name; a prefab instance's ids are renumbered)",
+        "params": [],
+        "returns": [
+          {
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "GameObject.SetName": {
         "name": "GameObject.SetName",
         "owner": "GameObject",
@@ -4377,6 +4408,57 @@
         ],
         "overloads": []
       },
+      "GameObject.GetChildCount": {
+        "name": "GameObject.GetChildCount",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetChildCount()",
+        "description": "The number of direct children",
+        "params": [],
+        "returns": [
+          {
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "GameObject.GetChild": {
+        "name": "GameObject.GetChild",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetChild(index)",
+        "description": "The direct child at a 1-based sibling index, nil out of range",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "GameObject|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "GameObject.GetChildren": {
+        "name": "GameObject.GetChildren",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetChildren()",
+        "description": "The direct children in sibling order, as a plain array (a snapshot, not a live view)",
+        "params": [],
+        "returns": [
+          {
+            "type": "GameObject[]",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "GameObject.Destroy": {
         "name": "GameObject.Destroy",
         "owner": "GameObject",
@@ -4392,7 +4474,7 @@
         "owner": "GameObject",
         "method": true,
         "signature": "GameObject:AddComponent(typeName)",
-        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CharacterController\", \"Rigidbody2D\", \"BoxCollider2D\",\n\"CircleCollider2D\", \"PolygonCollider2D\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"Sprite2D\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
+        "description": "Add a component by type name and return it.\nTypes: \"Rigidbody\", \"BoxCollider\", \"SphereCollider\", \"CapsuleCollider\", \"CharacterController\", \"Joint\", \"Rigidbody2D\", \"BoxCollider2D\",\n\"CircleCollider2D\", \"PolygonCollider2D\", \"CubeRenderer\",\n\"SphereRenderer\", \"QuadRenderer\", \"Sprite2D\", \"MeshRenderer\", \"TextRenderer\", \"ParticleSystem\", \"SoftBody\", \"Light\", \"AudioSource\", \"AudioListener\",\n\"LuaComponent\", \"RectTransform\", \"Canvas\", \"Image\", \"UIText\", \"Button\". Unknown names raise an error.",
         "params": [
           {
             "name": "typeName",
@@ -4425,6 +4507,27 @@
           {
             "type": "Component|nil",
             "description": "nil when the object has no component of that type"
+          }
+        ],
+        "overloads": []
+      },
+      "GameObject.GetComponents": {
+        "name": "GameObject.GetComponents",
+        "owner": "GameObject",
+        "method": true,
+        "signature": "GameObject:GetComponents(typeName)",
+        "description": "Every component of a type, in the object's order (GetComponent's is the first), as a plain array, empty for none\n(same names as AddComponent)",
+        "params": [
+          {
+            "name": "typeName",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "Component[]",
+            "description": ""
           }
         ],
         "overloads": []
@@ -4539,6 +4642,21 @@
           {
             "type": "string|nil",
             "description": "path nil without a material"
+          }
+        ],
+        "overloads": []
+      },
+      "CubeRenderer.GetMaterialInstance": {
+        "name": "CubeRenderer.GetMaterialInstance",
+        "owner": "CubeRenderer",
+        "method": true,
+        "signature": "CubeRenderer:GetMaterialInstance()",
+        "description": "The material as a copy-on-write runtime handle (see MeshRenderer:GetMaterialInstance); SphereRenderer and QuadRenderer have it too",
+        "params": [],
+        "returns": [
+          {
+            "type": "MaterialInstance|nil",
+            "description": "instance nil without a material"
           }
         ],
         "overloads": []
@@ -4838,6 +4956,27 @@
         ],
         "overloads": []
       },
+      "MeshRenderer.GetMaterialInstance": {
+        "name": "MeshRenderer.GetMaterialInstance",
+        "owner": "MeshRenderer",
+        "method": true,
+        "signature": "MeshRenderer:GetMaterialInstance(index)",
+        "description": "Slot `index`'s material as a handle you can change at runtime (a user shader's parameters). Copy-on-write: your first change\nclones the .mat's material into this slot, so no other object that uses the same .mat changes. Runtime only: nothing you set is\nsaved, replicated, or part of any state hash.",
+        "params": [
+          {
+            "name": "index",
+            "type": "integer",
+            "description": "1-based"
+          }
+        ],
+        "returns": [
+          {
+            "type": "MaterialInstance|nil",
+            "description": "instance nil for an empty slot"
+          }
+        ],
+        "overloads": []
+      },
       "MeshRenderer.GetBounds": {
         "name": "MeshRenderer.GetBounds",
         "owner": "MeshRenderer",
@@ -5016,6 +5155,52 @@
         "description": "Starts emitting: the emission rate, and the burst once",
         "params": [],
         "returns": [],
+        "overloads": []
+      },
+      "ParticleSystem.SetShader": {
+        "name": "ParticleSystem.SetShader",
+        "owner": "ParticleSystem",
+        "method": true,
+        "signature": "ParticleSystem:SetShader(path)",
+        "description": "Draw with a user shader (a .n2shader asset) instead of the built-in one; nil goes back and forgets the parameter values. All the particles are one mesh, so one material serves them all: each particle's colour reaches the shader as n2_Color. Runtime only: not saved in the scene, a prefab, a snapshot or any state hash.",
+        "params": [
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": "a res:// path to a .n2shader"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "ParticleSystem.GetShader": {
+        "name": "ParticleSystem.GetShader",
+        "owner": "ParticleSystem",
+        "method": true,
+        "signature": "ParticleSystem:GetShader()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "string|nil",
+            "description": "path the shader's path, nil for the built-in one"
+          }
+        ],
+        "overloads": []
+      },
+      "ParticleSystem.GetMaterialInstance": {
+        "name": "ParticleSystem.GetMaterialInstance",
+        "owner": "ParticleSystem",
+        "method": true,
+        "signature": "ParticleSystem:GetMaterialInstance()",
+        "description": "The shader's parameters, as a MaterialInstance on this component's own material (nothing else shares it). nil when there is no shader.",
+        "params": [],
+        "returns": [
+          {
+            "type": "MaterialInstance|nil",
+            "description": "instance"
+          }
+        ],
         "overloads": []
       },
       "ParticleSystem.Stop": {
@@ -6155,6 +6340,264 @@
         ],
         "overloads": []
       },
+      "MaterialInstance.SetFloat": {
+        "name": "MaterialInstance.SetFloat",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetFloat(name, value)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetInt": {
+        "name": "MaterialInstance.SetInt",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetInt(name, value)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "value",
+            "type": "integer",
+            "description": "an int parameter, or a bool one (nonzero is true)"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetVec2": {
+        "name": "MaterialInstance.SetVec2",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetVec2(name, x, y)",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetVec3": {
+        "name": "MaterialInstance.SetVec3",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetVec3(name, x, y, z)",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetVec4": {
+        "name": "MaterialInstance.SetVec4",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetVec4(name, x, y, z, w)",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetMat3": {
+        "name": "MaterialInstance.SetMat3",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetMat3(name, rows)",
+        "description": "A mat3 parameter from nine numbers, row by row (row 0 first). The parameter starts as the identity matrix.",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "rows",
+            "type": "number[]",
+            "description": "9 numbers"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetMat4": {
+        "name": "MaterialInstance.SetMat4",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetMat4(name, rows)",
+        "description": "A mat4 parameter from sixteen numbers, row by row (row 0 first). The parameter starts as the identity matrix.",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "rows",
+            "type": "number[]",
+            "description": "16 numbers"
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetColor": {
+        "name": "MaterialInstance.SetColor",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetColor(name, color)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "color",
+            "type": "Color",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.SetTexture": {
+        "name": "MaterialInstance.SetTexture",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:SetTexture(name, path)",
+        "description": "A texture parameter; nil clears it (the shader's default). Raises an error if the texture doesn't load.",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          },
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": "e.g. \"res://textures/noise.png\""
+          }
+        ],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": "ok"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.GetFloat": {
+        "name": "MaterialInstance.GetFloat",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:GetFloat(name)",
+        "description": "",
+        "params": [
+          {
+            "name": "name",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "number|nil",
+            "description": "value nil for a name the shader doesn't declare or a texture parameter"
+          }
+        ],
+        "overloads": []
+      },
+      "MaterialInstance.GetPath": {
+        "name": "MaterialInstance.GetPath",
+        "owner": "MaterialInstance",
+        "method": true,
+        "signature": "MaterialInstance:GetPath()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "string|nil",
+            "description": "path the .mat's path"
+          }
+        ],
+        "overloads": []
+      },
+      "Material.Load": {
+        "name": "Material.Load",
+        "owner": "Material",
+        "method": false,
+        "signature": "Material.Load(path)",
+        "description": "The shared material of a .mat file (a model's \"res://models/robot.glb#material/Paint\" works too). Raises an error if it doesn't load.",
+        "params": [
+          {
+            "name": "path",
+            "type": "string",
+            "description": ""
+          }
+        ],
+        "returns": [
+          {
+            "type": "MaterialInstance",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "Model.Instantiate": {
         "name": "Model.Instantiate",
         "owner": "Model",
@@ -6727,6 +7170,21 @@
         ],
         "overloads": []
       },
+      "LuaComponent.GetScriptData": {
+        "name": "LuaComponent.GetScriptData",
+        "owner": "LuaComponent",
+        "method": true,
+        "signature": "LuaComponent:GetScriptData()",
+        "description": "The component's field values (its scriptData) as a new table, objects and arrays included (they are not put on\nthe script's self). A copy: changing it changes nothing. Nesting deeper than 100 is an error.",
+        "params": [],
+        "returns": [
+          {
+            "type": "table",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
       "LuaComponent.GetScript": {
         "name": "LuaComponent.GetScript",
         "owner": "LuaComponent",
@@ -7261,6 +7719,52 @@
           {
             "type": "Color",
             "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Image.SetShader": {
+        "name": "Image.SetShader",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:SetShader(path)",
+        "description": "Draw with a user shader (a .n2shader asset) instead of the built-in one; nil goes back and forgets the parameter values. The sprite is the shader's baseColorTexture, the colour (with a Button's tint) the baseColor; a raw texture still draws with the built-in shader. Runtime only: not saved in the scene, a prefab, a snapshot or any state hash.",
+        "params": [
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": "a res:// path to a .n2shader"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Image.GetShader": {
+        "name": "Image.GetShader",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:GetShader()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "string|nil",
+            "description": "path the shader's path, nil for the built-in one"
+          }
+        ],
+        "overloads": []
+      },
+      "Image.GetMaterialInstance": {
+        "name": "Image.GetMaterialInstance",
+        "owner": "Image",
+        "method": true,
+        "signature": "Image:GetMaterialInstance()",
+        "description": "The shader's parameters, as a MaterialInstance on this component's own material (nothing else shares it). nil when there is no shader.",
+        "params": [],
+        "returns": [
+          {
+            "type": "MaterialInstance|nil",
+            "description": "instance"
           }
         ],
         "overloads": []
@@ -10161,6 +10665,52 @@
         ],
         "overloads": []
       },
+      "Sprite2D.SetShader": {
+        "name": "Sprite2D.SetShader",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:SetShader(path)",
+        "description": "Draw with a user shader (a .n2shader asset) instead of the built-in one; nil goes back and forgets the parameter values. The sprite's texture is the shader's baseColorTexture, its colour the baseColor, and its saturation and flash are not applied. Runtime only: not saved in the scene, a prefab, a snapshot or any state hash.",
+        "params": [
+          {
+            "name": "path",
+            "type": "string|nil",
+            "description": "a res:// path to a .n2shader"
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Sprite2D.GetShader": {
+        "name": "Sprite2D.GetShader",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetShader()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "string|nil",
+            "description": "path the shader's path, nil for the built-in one"
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.GetMaterialInstance": {
+        "name": "Sprite2D.GetMaterialInstance",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetMaterialInstance()",
+        "description": "The shader's parameters, as a MaterialInstance on this component's own material (nothing else shares it). nil when there is no shader.",
+        "params": [],
+        "returns": [
+          {
+            "type": "MaterialInstance|nil",
+            "description": "instance"
+          }
+        ],
+        "overloads": []
+      },
       "Sprite2D.SetSize": {
         "name": "Sprite2D.SetSize",
         "owner": "Sprite2D",
@@ -10404,6 +10954,21 @@
         "returns": [
           {
             "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Sprite2D.GetTexture": {
+        "name": "Sprite2D.GetTexture",
+        "owner": "Sprite2D",
+        "method": true,
+        "signature": "Sprite2D:GetTexture()",
+        "description": "The texture's resource path (as SetTexture takes it), or nil without one",
+        "params": [],
+        "returns": [
+          {
+            "type": "string|nil",
             "description": ""
           }
         ],
@@ -11331,6 +11896,278 @@
         "returns": [
           {
             "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetJointType": {
+        "name": "Joint.SetJointType",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetJointType(jointType)",
+        "description": "",
+        "params": [
+          {
+            "name": "jointType",
+            "type": "JointType",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetJointType": {
+        "name": "Joint.GetJointType",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetJointType()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "JointType",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetConnectedBody": {
+        "name": "Joint.SetConnectedBody",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetConnectedBody(body)",
+        "description": "The object whose body this one is joined to; nil joins it to the world",
+        "params": [
+          {
+            "name": "body",
+            "type": "GameObject|nil",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetConnectedBody": {
+        "name": "Joint.GetConnectedBody",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetConnectedBody()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "GameObject|nil",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetAnchor": {
+        "name": "Joint.SetAnchor",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetAnchor(anchor)",
+        "description": "The joint's point on this body, in its local space",
+        "params": [
+          {
+            "name": "anchor",
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetAnchor": {
+        "name": "Joint.GetAnchor",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetAnchor()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetConnectedAnchor": {
+        "name": "Joint.SetConnectedAnchor",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetConnectedAnchor(anchor)",
+        "description": "The same point on the connected body (local space); the world position when there is none",
+        "params": [
+          {
+            "name": "anchor",
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetConnectedAnchor": {
+        "name": "Joint.GetConnectedAnchor",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetConnectedAnchor()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetAxis": {
+        "name": "Joint.SetAxis",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetAxis(axis)",
+        "description": "Hinge axis or slider direction, in this body's local space",
+        "params": [
+          {
+            "name": "axis",
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetAxis": {
+        "name": "Joint.GetAxis",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetAxis()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "Vector3",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetCollideConnected": {
+        "name": "Joint.SetCollideConnected",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetCollideConnected(collide)",
+        "description": "Whether the two joined bodies still collide with each other (default false)",
+        "params": [
+          {
+            "name": "collide",
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetCollideConnected": {
+        "name": "Joint.GetCollideConnected",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetCollideConnected()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.SetLimits": {
+        "name": "Joint.SetLimits",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:SetLimits(enabled, min, max)",
+        "description": "Limits a hinge's angle (degrees) or a slider's or distance joint's length (metres). A hinge's and a slider's range\nholds 0, the pose the joint was made at.",
+        "params": [
+          {
+            "name": "enabled",
+            "type": "boolean",
+            "description": ""
+          },
+          {
+            "name": "min",
+            "type": "number",
+            "description": ""
+          },
+          {
+            "name": "max",
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "returns": [],
+        "overloads": []
+      },
+      "Joint.GetUseLimits": {
+        "name": "Joint.GetUseLimits",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetUseLimits()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.GetLimitMin": {
+        "name": "Joint.GetLimitMin",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetLimitMin()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.GetLimitMax": {
+        "name": "Joint.GetLimitMax",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:GetLimitMax()",
+        "description": "",
+        "params": [],
+        "returns": [
+          {
+            "type": "number",
+            "description": ""
+          }
+        ],
+        "overloads": []
+      },
+      "Joint.IsCreated": {
+        "name": "Joint.IsCreated",
+        "owner": "Joint",
+        "method": true,
+        "signature": "Joint:IsCreated()",
+        "description": "True while the backend holds the joint (false while a body is missing or the backend has no joints)",
+        "params": [],
+        "returns": [
+          {
+            "type": "boolean",
             "description": ""
           }
         ],
@@ -14674,6 +15511,16 @@
         "type": "SoftBody",
         "description": ""
       },
+      "MaterialInstance": {
+        "name": "MaterialInstance",
+        "type": "MaterialInstance",
+        "description": ""
+      },
+      "Material": {
+        "name": "Material",
+        "type": "MaterialStatic",
+        "description": ""
+      },
       "Model": {
         "name": "Model",
         "type": "table",
@@ -14864,6 +15711,11 @@
         "type": "CapsuleCollider",
         "description": ""
       },
+      "Joint": {
+        "name": "Joint",
+        "type": "Joint",
+        "description": ""
+      },
       "CharacterController": {
         "name": "CharacterController",
         "type": "CharacterController",
@@ -15009,6 +15861,8 @@
       "Light": "Light",
       "ParticleSystem": "ParticleSystem",
       "SoftBody": "SoftBody",
+      "MaterialInstance": "MaterialInstance",
+      "Material": "MaterialStatic",
       "Prefab": "Prefab",
       "TextRenderer": "TextRenderer",
       "LuaComponent": "LuaComponent",
@@ -15046,6 +15900,7 @@
       "BoxCollider": "BoxCollider",
       "SphereCollider": "SphereCollider",
       "CapsuleCollider": "CapsuleCollider",
+      "Joint": "Joint",
       "CharacterController": "CharacterController",
       "AudioSource": "AudioSource",
       "AudioListener": "AudioListener",
