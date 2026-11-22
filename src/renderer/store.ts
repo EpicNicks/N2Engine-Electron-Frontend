@@ -185,6 +185,17 @@ export function describeHost(host: HostState, connected: boolean): string {
   }
 }
 
+/** EditorStore.panelRequest */
+export interface PanelRequest {
+  /** The panel's registry id ("projectSettings") */
+  id: string
+  /** A section of that panel to pick (Project Settings: "network"); absent: as it was */
+  section?: string
+  seq: number
+  /** The editor has shown the panel (EditorStore.markPanelRequestOpened) */
+  opened: boolean
+}
+
 export class EditorStore {
   /** The open project's folder; null on the welcome screen */
   readonly projectPath = signal<string | null>(null)
@@ -346,6 +357,11 @@ export class EditorStore {
    */
   readonly lastSceneChange = signal<SceneChange | null>(null)
   readonly sceneChangeCount = signal(0)
+  /**
+   * A panel some other panel asked to show (the inspector's network nudge opens Project Settings at Network): the editor
+   * opens the panel, and the panel picks `section` when it has sections. `seq` tells one request from the next.
+   */
+  readonly panelRequest = signal<PanelRequest | null>(null)
   /** How many projectChanged events arrived (project.n2proj was saved: refetch GetProjectInfo) */
   readonly projectChangeCount = signal(0)
   /**
@@ -679,6 +695,24 @@ export class EditorStore {
 
   dismissError(): void {
     this.error.value = null
+  }
+
+  /** Asks the editor to show a panel (and, for Project Settings, one of its sections) */
+  requestPanel(id: string, section?: string): void {
+    const seq = (this.panelRequest.peek()?.seq ?? 0) + 1
+    this.panelRequest.value = section === undefined ? { id, seq, opened: false } : { id, section, seq, opened: false }
+  }
+
+  /** The editor showed the requested panel: a later mount of the editor does not show it again */
+  markPanelRequestOpened(seq: number): void {
+    const request = this.panelRequest.peek()
+    if (request && request.seq === seq && !request.opened) this.panelRequest.value = { ...request, opened: true }
+  }
+
+  /** The request is done with (its panel picked the section, or the project changed): nothing is asked any more */
+  clearPanelRequest(seq?: number): void {
+    const request = this.panelRequest.peek()
+    if (request && (seq === undefined || request.seq === seq)) this.panelRequest.value = null
   }
 
   /** Shows a failure from elsewhere in the editor (a panel's action), and logs it */

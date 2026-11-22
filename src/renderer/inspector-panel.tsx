@@ -859,7 +859,36 @@ export function InspectorPanel() {
   }
   return (
     <Panel title="Inspector" icon="⚙️" class="inspector-panel">
+      <NetworkNudge />
       {content}
     </Panel>
+  )
+}
+
+/**
+ * #381 item 8: the host's network nudge after a NetworkObject was added while the project's network preset is none, with
+ * the way to the Network section of Project Settings
+ */
+export function NetworkNudge() {
+  const { store, inspector } = useApp()
+  const hint = inspector.networkNudge.value
+  if (hint === null) return null
+  return (
+    <div class="inspector-banner inspector-nudge" role="note" data-network-nudge="">
+      <p>{hint}</p>
+      <div class="inspector-nudge-actions">
+        <button
+          onClick={() => {
+            inspector.dismissNetworkNudge()
+            store.requestPanel("projectSettings", "network")
+          }}
+        >
+          Open network settings
+        </button>
+        <button onClick={() => inspector.dismissNetworkNudge()} aria-label="Dismiss the network nudge">
+          Dismiss
+        </button>
+      </div>
+    </div>
   )
 }

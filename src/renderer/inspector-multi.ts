@@ -54,6 +54,8 @@ type Engine = Pick<
 interface Host {
   readonly types: { readonly value: readonly ComponentSchema[] | null }
   readonly readOnlyReason: { readonly value: string | null }
+  /** InspectorState.checkNetworkNudge, after a component was added to the objects */
+  checkNetworkNudge?(typeName: string): Promise<void>
 }
 
 interface Options {
@@ -528,7 +530,7 @@ export class MultiInspectorState {
     const jobs = objects.map((object) =>
       this.job(object.header.id, () => this.engine.addComponent(object.header.id, typeName))
     )
-    return this.run(objects.length, jobs)
+    return this.run(objects.length, jobs).then(() => void this.host.checkNetworkNudge?.(typeName))
   }
 
   /**
