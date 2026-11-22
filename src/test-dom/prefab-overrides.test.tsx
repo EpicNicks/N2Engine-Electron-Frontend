@@ -263,3 +263,86 @@ describe("the inspector's prefab overrides", () => {
     assert.deepEqual(opened, ["res://Crate.prefab"])
   })
 })
+
+describe("the multi-object inspector's prefab marks", () => {
+  const lightType: ComponentSchema = {
+    typeName: "Light",
+    singleton: false,
+    fields: [{ name: "intensity", displayName: "Intensity", kind: "Float", typeName: "float", hidden: false, readOnly: false }],
+  }
+  const details = (id: string, overrides?: string[], componentOverrides?: string[]): EntityDetails => ({
+    header: { id, parentId: "", index: 0, name: id.toUpperCase(), active: true, activeInHierarchy: true, layer: 0, tag: "", linkDepth: 1, ...(overrides ? { overrides } : {}) },
+    transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
+    components: [{ type: "Light", uuid: `${id}-light`, values: { isActive: true, intensity: 1 }, ...(componentOverrides ? { overrides: componentOverrides } : {}) }],
+  })
+
+  async function mount() {
+    const objects: Record<string, EntityDetails> = { a: details("a", ["tag"], ["intensity"]), b: details("b") }
+    const calls: string[] = []
+    const engine = {
+      isConnected: () => true,
+      getEntity: async (id: string) => ({ entity: structuredClone(objects[id]), worldMatrix: [] }),
+      getComponentTypes: async () => [lightType],
+      addComponent: async () => ({ componentId: "x", values: {} }),
+      removeComponent: async () => {},
+      getLuaFields: async (): Promise<ComponentSchema> => ({ typeName: "LuaComponent", singleton: false, fields: [] }),
+      setEntityProperties: async () => {},
+      setComponentFields: async () => ({}),
+      setLocalTransform: async () => {},
+      getPrefabOverrides: async (id: string): Promise<PrefabOverridesInfo> => ({
+        rootId: id,
+        prefab: PU,
+        path: "res://Nest.prefab",
+        overrides: [{ source: `${id}-src`, path: "tag", value: "X", objectId: id }],
+        removedObjects: [],
+        removedComponents: [],
+        addedComponents: [],
+        addedChildren: [],
+      }),
+      revertPrefabOverrides: async (id: string, targets: unknown[]) => void calls.push(`revert ${id} ${JSON.stringify(targets)}`),
+    }
+    const inspector = new InspectorState(engine, { listAssets: async () => [] }, { confirm: confirmDialog, onError: () => {} })
+    await inspector.loadTypes()
+    await inspector.select("a")
+    await inspector.multi.select(["a", "b"])
+    const selection = signal<Selection>({ ids: new Set(["a", "b"]), anchor: "a", primary: "a" })
+    renderWithApp(
+      <>
+        <InspectorPanel />
+        <ContextMenu />
+      </>,
+      {
+        store: { connected: signal(true), reportError: (what: string, e: unknown) => assert.fail(`${what}: ${e}`) } as never,
+        scene: { selectedId: signal<string | null>("a") },
+        hierarchy: { selection, tree: signal(buildTree([])), canPrefabs: false, canNesting: true, deleteSelected: async () => {} } as never,
+        inspector,
+        assets: { listing: signal(null), reveal: () => {}, select: async () => {} } as never,
+        extensions: { sectionsFor: () => [], uiRevision: 0, mayRunButtons: signal(false) } as never,
+      }
+    )
+    return { calls, user: userEvent.setup() }
+  }
+
+  const label = (text: string): HTMLElement => {
+    const found = Array.from(document.querySelectorAll<HTMLElement>("label")).find((l) => l.textContent === text)
+    assert.ok(found, `no label ${text}`)
+    return found
+  }
+
+  test("a field overridden on any selected object is bold and says on how many", async () => {
+    await mount()
+    await screen.findByText("Intensity")
+    assert.ok(label("Tag").classList.contains("overridden"))
+    assert.match(label("Tag").title, /on 1 of 2 objects/)
+    assert.ok(label("Intensity").classList.contains("overridden"))
+    assert.ok(!label("Layer").classList.contains("overridden"))
+  })
+
+  test("Revert on a right-click reverts it on the objects that override it", async () => {
+    const { calls, user } = await mount()
+    await screen.findByText("Intensity")
+    fireEvent.contextMenu(label("Tag"))
+    await user.click(await screen.findByText("Revert on 1 object"))
+    await waitFor(() => assert.deepEqual(calls, ['revert a [{"source":"a-src","path":"tag"}]']))
+  })
+})

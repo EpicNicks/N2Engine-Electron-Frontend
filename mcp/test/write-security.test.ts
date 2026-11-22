@@ -578,7 +578,7 @@ describe("the write tools in a bridge of their own", () => {
       assert.match(t.name, /^n2_[a-z_]+$/)
     }
     const gated = WriteTools.filter((t) => t.irreversible).map((t) => t.name)
-    assert.deepEqual(gated, ["n2_create_scene", "n2_open_scene", "n2_save_scene", "n2_write_text_asset", "n2_set_project_settings", "n2_set_build_settings", "n2_session_revert"])
+    assert.deepEqual(gated, ["n2_create_scene", "n2_open_scene", "n2_save_scene", "n2_write_text_asset", "n2_set_project_settings", "n2_set_build_settings", "n2_apply_prefab_overrides", "n2_session_revert"])
     for (const name of gated) assert.match(WriteTools.find((t) => t.name === name)!.description, /confirm|asked|--allow-irreversible/i, name)
   })
 })

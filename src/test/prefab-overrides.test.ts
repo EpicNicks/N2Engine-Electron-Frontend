@@ -2,7 +2,9 @@
 // inspector's bold labels, and the state's Revert and Apply.
 import { test, describe } from "node:test"
 import * as assert from "node:assert/strict"
-import type { PrefabOverridesInfo } from "../protocol/protocol.generated"
+import type { EntityDetails, PrefabOverridesInfo } from "../protocol/protocol.generated"
+import { MultiInspectorState, buildMultiView, overriddenOn } from "../renderer/inspector-multi"
+import { EditGroups } from "../renderer/edit-groups"
 import {
   describeRow,
   isFieldOverridden,
@@ -197,5 +199,62 @@ describe("the overrides state", () => {
     assert.deepEqual(EngineCommandArgs.revertPrefabOverrides, ["string", "jsonArray"])
     assert.deepEqual(EngineCommandArgs.applyPrefabOverrides, ["string", "jsonArray", "int32"])
     assert.deepEqual(EngineCommandArgs.unpackPrefab, ["string", "bool"])
+  })
+})
+
+describe("the multi-object inspector's overrides", () => {
+  const object = (id: string, overrides: string[] | undefined, componentOverrides: string[] | undefined): EntityDetails => ({
+    header: { id, parentId: "", index: 0, name: id, active: true, activeInHierarchy: true, layer: 0, tag: "", linkDepth: 1, ...(overrides ? { overrides } : {}) },
+    transform: { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, scale: { x: 1, y: 1, z: 1 } },
+    components: [{ type: "Light", uuid: `${id}-light`, values: { intensity: 1 }, ...(componentOverrides ? { overrides: componentOverrides } : {}) }],
+  })
+
+  test("overriddenOn names the objects where an own field or a shared component's field differs", () => {
+    const objects = [object("a", ["tag"], ["intensity"]), object("b", undefined, undefined), object("c", ["tag"], undefined)]
+    const view = buildMultiView(objects)
+    assert.deepEqual(overriddenOn(objects, null, "tag").map((o) => o.entityId), ["a", "c"])
+    assert.deepEqual(overriddenOn(objects, view.components[0], "intensity"), [{ entityId: "a", componentId: "a-light" }])
+    assert.deepEqual(overriddenOn(objects, null, "layer"), [])
+  })
+
+  test("Revert reads each object's overrides and reverts that field there only, as one edit group", async () => {
+    const objects = new Map([
+      ["a", object("a", ["tag"], undefined)],
+      ["b", object("b", undefined, undefined)],
+    ])
+    const calls: string[] = []
+    const engine = {
+      isConnected: () => true,
+      getEntity: async (id: string) => ({ entity: structuredClone(objects.get(id)!), worldMatrix: [] }),
+      getLuaFields: async () => ({ typeName: "LuaComponent", singleton: false, fields: [] }),
+      setEntityProperties: async () => {},
+      setComponentFields: async () => ({}),
+      setLocalTransform: async () => {},
+      addComponent: async () => ({ componentId: "", values: {} }),
+      removeComponent: async () => {},
+      getPrefabOverrides: async (id: string): Promise<PrefabOverridesInfo> => ({
+        ...info(),
+        overrides: [{ source: `${id}-src`, path: "tag", value: "X", objectId: id }],
+        removedComponents: [],
+        addedComponents: [],
+        addedChildren: [],
+      }),
+      revertPrefabOverrides: async (id: string, targets: unknown[]) => void calls.push(`revert ${id} ${JSON.stringify(targets)}`),
+    }
+    const groups = new EditGroups({
+      isConnected: () => true,
+      beginEditGroup: async (label: string) => void calls.push(`begin ${label}`),
+      endEditGroup: async () => void calls.push("end"),
+    })
+    const host = { types: { value: [] }, readOnlyReason: { value: null } }
+    const multi = new MultiInspectorState(host, engine, { groups })
+    await multi.select(["a", "b"])
+    assert.equal(multi.canRevertOverrides, true)
+    await multi.revertOverride(null, "tag")
+    assert.deepEqual(
+      calls.filter((c) => c.startsWith("revert")),
+      ['revert a [{"source":"a-src","path":"tag"}]'],
+      "b has no override of the tag: nothing is sent for it"
+    )
   })
 })

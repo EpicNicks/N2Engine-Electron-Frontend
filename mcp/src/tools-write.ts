@@ -14,7 +14,8 @@ import * as ops from "./ops"
 import { checkAssetPath, checkScenePath, classNameFor } from "./paths"
 import { Budget } from "./scrub"
 import type { JournalEntry, Session } from "./session"
-import { envelopeSchema, invalidArgument, jsonBytes, resPath, tool, type ToolDef, type ToolAnnotationsHint } from "./tools"
+import { envelopeSchema, idText, invalidArgument, jsonBytes, resPath, tool, type ToolDef, type ToolAnnotationsHint } from "./tools"
+import { linkPathOf } from "../../src/protocol/prefab-overrides"
 import {
   BatchOpError,
   assertWritable,
@@ -1102,6 +1103,91 @@ const revertSession = tool({
 })
 
 /** Every write tool in the order they are listed */
+
+// ===== prefab overrides (protocol 1.33.0 and 1.34.0) =====
+
+const overrideTarget = z
+  .record(z.string(), z.unknown())
+  .describe("A target as n2_get_prefab_overrides gives it, or {\"all\": true} for every change of the instance.")
+
+const overrideTargets = z.array(overrideTarget).min(1).max(200)
+
+const prefabChangeData = z.object({
+  entityId: z.string(),
+  targets: z.number().describe("How many targets were sent."),
+  edit: editInfoSchema,
+})
+
+const revertPrefabOverrides = tool({
+  name: "n2_revert_prefab_overrides",
+  title: "Revert prefab overrides",
+  description:
+    "Takes changes of a prefab instance back to its prefab's values: targets name them as n2_get_prefab_overrides gives them (pass each change's target as is), or [{\"all\": true}] for all of them. entityId is any entity of the instance. The instance is rebuilt from its prefab with what is left; its entities keep their ids. A target that matches nothing is an error and nothing changes. " +
+    UndoNotice,
+  input: z.object({ entityId: idText, targets: overrideTargets, sessionId: sessionIdField }).strict(),
+  output: envelopeSchema(prefabChangeData),
+  annotations: write("Revert prefab overrides", {}),
+  write: true,
+  async handler(ctx, args) {
+    assertWritable(ctx)
+    const agent = ctx.sessions.resolve(args.sessionId)
+    const touched = newTouched()
+    const group = await inGroup(ctx, agent, "n2_revert_prefab_overrides", 1, async () => {
+      await ctx.client.revertPrefabOverrides(args.entityId, args.targets)
+      touched.modified.push(args.entityId)
+      return { entityId: args.entityId, targets: args.targets.length }
+    })
+    const summary = `Reverted ${args.targets.length} change(s) of the prefab instance ${ctx.scrubber.name(args.entityId, 64)} is in.`
+    const edit = await finishEdit(ctx, agent, "n2_revert_prefab_overrides", summary, group, touched)
+    return writeOutput(summary, { ...group.value, edit })
+  },
+})
+
+const applyPrefabOverrides = tool({
+  name: "n2_apply_prefab_overrides",
+  title: "Apply prefab overrides",
+  description:
+    "Writes changes of a prefab instance into a prefab, so every instance of that prefab gets them (Unity's Apply to Prefab). targets name them as n2_get_prefab_overrides gives them, or [{\"all\": true}]. level picks the prefab: 0 the outermost instance's prefab, 1 the prefab of the instance inside it that holds the change, and so on, as each change's applyTo lists; -1 (the default) each change's innermost prefab. The prefab file is overwritten and the editor's undo cannot restore it (its undo step only takes the scene's update back), so the person is asked to confirm (or the operator allowed it with --allow-irreversible). Only apply what the person asked for. Needs protocol 1.34.0.",
+  input: z
+    .object({
+      entityId: idText,
+      targets: overrideTargets,
+      level: z.number().int().min(-1).max(64).optional().describe("-1 (default): each change's innermost prefab; 0: the outermost instance's prefab; 1, 2 ...: deeper."),
+      sessionId: sessionIdField,
+    })
+    .strict(),
+  output: envelopeSchema(prefabChangeData.extend({ level: z.number() })),
+  annotations: write("Apply prefab overrides", { destructive: true }),
+  write: true,
+  async irreversible(ctx, args) {
+    const level = args.level ?? -1
+    let where = level < 0 ? "each change's innermost prefab" : `the prefab at level ${level} of its link path`
+    try {
+      const info = await ctx.client.getPrefabOverrides(args.entityId)
+      const path = linkPathOf(info)[level]
+      if (path) where = ctx.scrubber.name(path.path || path.prefab, 200)
+    } catch (e) {
+      if (!(e instanceof EngineError)) throw e
+    }
+    const what = args.targets.some((t) => t.all === true) ? "every change of the prefab instance" : `${args.targets.length} change(s) of a prefab instance`
+    return `Write ${what} into ${JSON.stringify(where)}. The prefab file is overwritten, every instance of the prefab is updated, and the editor's undo cannot restore the file.`
+  },
+  async handler(ctx, args) {
+    assertWritable(ctx)
+    const level = args.level ?? -1
+    const agent = ctx.sessions.resolve(args.sessionId)
+    const touched = newTouched()
+    const group = await inGroup(ctx, agent, "n2_apply_prefab_overrides", 1, async () => {
+      await ctx.client.applyPrefabOverrides(args.entityId, args.targets, level)
+      touched.modified.push(args.entityId)
+      return { entityId: args.entityId, targets: args.targets.length, level }
+    })
+    const summary = `Applied ${args.targets.length} change(s) of the prefab instance ${ctx.scrubber.name(args.entityId, 64)} is in to its prefab (level ${level}).`
+    const edit = await finishEdit(ctx, agent, "n2_apply_prefab_overrides", summary, group, touched)
+    return writeOutput(summary, { ...group.value, edit })
+  },
+})
+
 export const WriteTools: readonly ToolDef[] = [
   beginSession,
   sessionSummary,
@@ -1126,6 +1212,8 @@ export const WriteTools: readonly ToolDef[] = [
   moveAsset,
   setProjectSettings,
   setBuildSettings,
+  revertPrefabOverrides,
+  applyPrefabOverrides,
   revertSession,
 ]
 

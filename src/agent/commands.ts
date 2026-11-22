@@ -4,8 +4,8 @@
 //
 // Kept out on purpose, so an agent can never reach them through the editor: Hello's own handling (the endpoint answers it
 // itself), Shutdown, the play commands (a game is the bridge's own second host, never the editor's), the Lua editor
-// extension commands (they run code on the host), and everything the n2-mcp tools do not need (prefab files, physics and
-// network settings, audio, legacy scene and camera commands, the editor view's wireframe).
+// extension commands (they run code on the host), and everything the n2-mcp tools do not need (prefab files other than ApplyPrefabOverrides, which the
+// person confirms, physics and network settings, audio, legacy scene and camera commands, the editor view's wireframe).
 import { CommandType } from "../protocol/protocol.generated"
 
 type Name = keyof typeof CommandType
@@ -47,6 +47,8 @@ const table: Array<[AgentCommandClass, Name[]]> = [
       "ReadTextAsset",
       "CheckLuaSyntax",
       "GetAssetPreview",
+      // Prefab links (1.33.0): an instance's changes
+      "GetPrefabOverrides",
     ],
   ],
   ["view", ["SetViewportSize", "SetEditorCamera", "RenderFrame", "RenderFrameIfChanged"]],
@@ -62,12 +64,13 @@ const table: Array<[AgentCommandClass, Name[]]> = [
       "AddComponent",
       "RemoveComponent",
       "SetComponentFields",
+      "RevertPrefabOverrides",
     ],
   ],
   ["file", ["CreateScriptAsset", "CreateFolder", "RescanAssets"]],
   [
     "irreversible",
-    ["SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "SetBuildSettings", "SetStartupScene", "SetImportSettings", "WriteTextAsset", "RestoreAutosave", "DiscardAutosave"],
+    ["SaveSceneToFile", "OpenScene", "NewScene", "SetProjectSettings", "SetBuildSettings", "SetStartupScene", "SetImportSettings", "WriteTextAsset", "RestoreAutosave", "DiscardAutosave", "ApplyPrefabOverrides"],
   ],
   ["history", ["Undo", "Redo"]],
   ["group", ["BeginEditGroup", "EndEditGroup"]],
