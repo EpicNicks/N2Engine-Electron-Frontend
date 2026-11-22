@@ -185,6 +185,15 @@ export function describeHost(host: HostState, connected: boolean): string {
   }
 }
 
+/** EditorStore.panelRequest */
+export interface PanelRequest {
+  /** The panel's registry id ("projectSettings") */
+  id: string
+  /** A section of that panel to pick (Project Settings: "network"); absent: as it was */
+  section?: string
+  seq: number
+}
+
 export class EditorStore {
   /** The open project's folder; null on the welcome screen */
   readonly projectPath = signal<string | null>(null)
@@ -346,6 +355,11 @@ export class EditorStore {
    */
   readonly lastSceneChange = signal<SceneChange | null>(null)
   readonly sceneChangeCount = signal(0)
+  /**
+   * A panel some other panel asked to show (the inspector's network nudge opens Project Settings at Network): the editor
+   * opens the panel, and the panel picks `section` when it has sections. `seq` tells one request from the next.
+   */
+  readonly panelRequest = signal<PanelRequest | null>(null)
   /** How many projectChanged events arrived (project.n2proj was saved: refetch GetProjectInfo) */
   readonly projectChangeCount = signal(0)
   /**
@@ -682,6 +696,12 @@ export class EditorStore {
   }
 
   /** Shows a failure from elsewhere in the editor (a panel's action), and logs it */
+  /** Asks the editor to show a panel (and, for Project Settings, one of its sections) */
+  requestPanel(id: string, section?: string): void {
+    const seq = (this.panelRequest.peek()?.seq ?? 0) + 1
+    this.panelRequest.value = section === undefined ? { id, seq } : { id, section, seq }
+  }
+
   reportError(what: string, e: unknown): void {
     console.error(`${what}:`, e)
     this.noteDenial(e)

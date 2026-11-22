@@ -329,6 +329,11 @@ export function Editor() {
     return new LayoutController(registry, new LayoutPersistence(appPrefs(), registry))
   }, [])
   useEffect(() => () => layout.dispose(), [layout])
+  // Another panel asked for one to be shown (EditorStore.requestPanel)
+  const panelRequest = store.panelRequest.value
+  useEffect(() => {
+    if (panelRequest) layout.open(panelRequest.id)
+  }, [layout, panelRequest?.seq])
   // The window closing or reloading does not unmount the tree: save what is waiting then
   useEffect(() => layout.flushOnUnload(window), [layout])
   useEffect(() => appPrefs().flushOnUnload(window), [])

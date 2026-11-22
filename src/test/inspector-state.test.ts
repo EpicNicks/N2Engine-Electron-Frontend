@@ -75,7 +75,7 @@ function entityData(
   }
 }
 
-function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
+function setup(options: { confirm?: boolean; groups?: boolean; networkNudge?: () => Promise<string | null> } = {}) {
   const calls: Array<[string, unknown[]]> = []
   // The host's edit group commands, among the calls: their order against the edits is what a drag's step depends on
   const groups = options.groups
@@ -170,6 +170,7 @@ function setup(options: { confirm?: boolean; groups?: boolean } = {}) {
     },
     onError: (what, error) => errors.push([what, error]),
     groups,
+    networkNudge: options.networkNudge,
     debounceMs: 250,
     timers: {
       set: (callback, ms) => {
@@ -660,6 +661,78 @@ describe("InspectorState: a host denial", () => {
     state.failSet = "layer must be 0 to 31"
     await inspector.setEntityProperties({ layer: 40 })
     assert.deepEqual(errors, [])
+  })
+})
+
+describe("InspectorState: the network nudge (#381 item 8)", () => {
+  const Hint = "This scene has network objects but the project's network preset is none."
+
+  test("adding a NetworkObject asks the host and shows the nudge's hint", async () => {
+    let asked = 0
+    const { inspector } = setup({
+      networkNudge: async () => {
+        asked++
+        return Hint
+      },
+    })
+    await inspector.loadTypes()
+    await inspector.select("e1")
+    assert.equal(inspector.networkNudge.value, null)
+    await inspector.addComponent("NetworkObject")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(asked, 1)
+    assert.equal(inspector.networkNudge.value, Hint)
+  })
+
+  test("another component does not ask; a nudge that does not show clears the hint", async () => {
+    let answer: string | null = Hint
+    let asked = 0
+    const { inspector } = setup({
+      networkNudge: async () => {
+        asked++
+        return answer
+      },
+    })
+    await inspector.loadTypes()
+    await inspector.select("e1")
+    await inspector.addComponent("Light")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(asked, 0, "only a NetworkObject counts for the nudge")
+    await inspector.addComponent("NetworkObject")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(inspector.networkNudge.value, Hint)
+    answer = null // the preset was chosen meanwhile
+    await inspector.checkNetworkNudge("NetworkObject")
+    assert.equal(inspector.networkNudge.value, null)
+  })
+
+  test("dismissed, it does not come back in the session, and a failed read changes nothing", async () => {
+    let fail = false
+    let asked = 0
+    const { inspector } = setup({
+      networkNudge: async () => {
+        asked++
+        if (fail) throw new Error("host gone")
+        return Hint
+      },
+    })
+    await inspector.checkNetworkNudge("NetworkObject")
+    assert.equal(inspector.networkNudge.value, Hint)
+    fail = true
+    await inspector.checkNetworkNudge("NetworkObject")
+    assert.equal(inspector.networkNudge.value, Hint, "a failed read leaves the nudge as it was")
+    inspector.dismissNetworkNudge()
+    assert.equal(inspector.networkNudge.value, null)
+    fail = false
+    await inspector.checkNetworkNudge("NetworkObject")
+    assert.equal(inspector.networkNudge.value, null)
+    assert.equal(asked, 2, "not asked again once dismissed")
+  })
+
+  test("without the option the inspector never asks", async () => {
+    const { inspector } = setup()
+    await inspector.checkNetworkNudge("NetworkObject")
+    assert.equal(inspector.networkNudge.value, null)
   })
 })
 

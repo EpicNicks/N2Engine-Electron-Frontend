@@ -80,7 +80,16 @@ export interface InspectorOptions {
   caseInsensitivePaths?: boolean
   /** Timers, replaceable in tests */
   timers?: { set(callback: () => void, ms: number): unknown; clear(handle: unknown): void }
+  /**
+   * #381 item 8: asked after a NetworkObject was added. The host's network nudge (GetNetworkSettings, protocol 1.21.0):
+   * its hint when it shows (the scene has a NetworkObject and the project's network preset is none), else null; null too
+   * when the host can't say (no networkPanel capability). Absent: the inspector never asks.
+   */
+  networkNudge?(): Promise<string | null>
 }
+
+/** The component the host counts for the network nudge (the scene's NetworkObject components) */
+export const NetworkNudgeComponent = "NetworkObject"
 
 const messageOf = (e: unknown): string => errorTextOf(e)
 
@@ -92,6 +101,13 @@ export class InspectorState {
   /** Why the types couldn't be read (a host before protocol 1.5, say), or null */
   readonly typesProblem = signal<string | null>(null)
   readonly assets = signal<AssetLookup>(new AssetLookup([], false))
+  /**
+   * The network nudge's hint, shown above the inspector after a NetworkObject was added while the project's network preset
+   * is none (InspectorOptions.networkNudge); null when there is nothing to say or the user dismissed it
+   */
+  readonly networkNudge = signal<string | null>(null)
+  /** Dismissed: not shown again until the editor reloads */
+  private networkNudgeDismissed = false
 
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
@@ -659,6 +675,7 @@ export class InspectorState {
       throw new Error(`An object can have only one ${typeName}`)
     }
     const added = await this.engine.addComponent(entityId, typeName)
+    void this.checkNetworkNudge(typeName)
     if (this.entityId.value !== entityId) return
     batch(() => {
       // The scene's change event reads the object again; until then this one is shown
@@ -670,6 +687,26 @@ export class InspectorState {
       }
     })
     await this.syncLua(false)
+  }
+
+  /**
+   * After `typeName` was added (here or to several objects): when it is a NetworkObject, asks the host whether the
+   * network nudge shows and shows its hint (or takes it away). Never throws: a failed read leaves the nudge as it was.
+   */
+  async checkNetworkNudge(typeName: string): Promise<void> {
+    if (typeName !== NetworkNudgeComponent || this.networkNudgeDismissed || !this.options.networkNudge) return
+    try {
+      const hint = await this.options.networkNudge()
+      if (!this.networkNudgeDismissed) this.networkNudge.value = hint
+    } catch {
+      // Not worth an error of its own: the Network section shows the same answer
+    }
+  }
+
+  /** The user closed the nudge (or followed it to the network settings): not shown again in this session */
+  dismissNetworkNudge(): void {
+    this.networkNudgeDismissed = true
+    this.networkNudge.value = null
   }
 
   /**
