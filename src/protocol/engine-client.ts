@@ -29,7 +29,9 @@ import {
   NetworkValidationReport,
   PROTOCOL_VERSION,
   PhysicsBackendsInfo,
+  PrefabOverridesInfo,
   ProjectInfoResponse,
+  ProtocolWriter,
   ResponseType,
   SceneDataResponse,
   SceneInfoResponse,
@@ -42,6 +44,19 @@ import {
   parseProtocolVersion,
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
+
+/**
+ * UnpackPrefab with the object's id alone: completely is a trailing field (1.34.0), and a host before it refuses a payload
+ * with bytes it doesn't read, so a plain unpack never sends it
+ */
+const UnpackPrefabByIdOnly: CommandSpec<{ entityId: string }, void> = {
+  ...Commands.UnpackPrefab,
+  encode(request) {
+    const writer = new ProtocolWriter()
+    writer.string(request.entityId)
+    return writer.finish()
+  },
+}
 import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
 import { validateEngineStats } from "./engine-stats"
@@ -754,9 +769,33 @@ export class EngineClient {
     return this.send(Commands.ApplyPrefab, { entityId })
   }
 
-  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step); the object and the file are untouched */
-  unpackPrefab(entityId: string): Promise<void> {
-    return this.send(Commands.UnpackPrefab, { entityId })
+  /**
+   * Protocol 1.19.0: clears the object's link to its prefab (one undo step); the object and the file are untouched.
+   * completely (1.34.0, prefabOverridesApply) also unpacks every instance inside it; an older host ignores it.
+   */
+  unpackPrefab(entityId: string, completely = false): Promise<void> {
+    return completely ? this.send(Commands.UnpackPrefab, { entityId, completely }) : this.send(UnpackPrefabByIdOnly, { entityId })
+  }
+
+  /**
+   * Protocol 1.33.0 (prefabNesting): the changes of the prefab instance the object is in (its outermost link), as a save
+   * would write them; 1.34.0 adds the link path, the levels each entry can be applied to and the scene ids it names
+   */
+  async getPrefabOverrides(entityId: string): Promise<PrefabOverridesInfo> {
+    return (await this.send(Commands.GetPrefabOverrides, { entityId })).info
+  }
+
+  /** Protocol 1.33.0: reverts the named changes of that instance (targets as prefab-overrides.ts names them), one undo step */
+  revertPrefabOverrides(entityId: string, targets: unknown[]): Promise<void> {
+    return this.send(Commands.RevertPrefabOverrides, { entityId, targets })
+  }
+
+  /**
+   * Protocol 1.34.0 (prefabOverridesApply): writes the named changes into the prefab at level of the link path (0 the
+   * outermost instance's prefab, -1 the innermost that holds each); the scene's instances update as one undo step
+   */
+  applyPrefabOverrides(entityId: string, targets: unknown[], level: number): Promise<void> {
+    return this.send(Commands.ApplyPrefabOverrides, { entityId, targets, level })
   }
 
   getEntity(entityId: string): Promise<EntityDataResponse> {

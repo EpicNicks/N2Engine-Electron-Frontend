@@ -18,6 +18,7 @@ import type { EditGroups, GroupHandle } from "./edit-groups"
 import { eulerToQuat, quatToEuler, quatsEquivalent, stableEuler, vecEqual } from "./euler"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
 import { MultiInspectorState } from "./inspector-multi"
+import { PrefabOverridesEngine, PrefabOverridesState } from "./prefab-overrides-state"
 
 type Engine = Pick<
   EngineApi,
@@ -30,7 +31,9 @@ type Engine = Pick<
   | "getLuaFields"
   | "setEntityProperties"
   | "setLocalTransform"
->
+> &
+  // Protocol 1.33.0 and 1.34.0: a host before them has no prefab overrides to show
+  PrefabOverridesEngine
 /** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
 type Project = { listAssets(): Promise<AssetEntry[]> }
 
@@ -39,6 +42,10 @@ export interface ComponentView {
   id: string
   type: string
   values: JsonObject
+  /** The values that differ from the prefab (protocol 1.34.0): a key of values, or "scriptData.<field>" */
+  overrides?: readonly string[]
+  /** The prefab instance added it (1.34.0) */
+  prefabAdded?: boolean
 }
 
 /** Edits to a component that the host hasn't confirmed: the request in flight, and what was changed since */
@@ -89,6 +96,8 @@ export class InspectorState {
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
   readonly header = signal<EntityHeader | null>(null)
+  /** The prefab overrides of the instance the inspected object is in (protocol 1.33.0 and 1.34.0) */
+  readonly prefabOverrides: PrefabOverridesState
   readonly components = signal<readonly ComponentView[]>([])
   /** The object's LOCAL transform (GetEntity), as the gizmo writes it; null for an object with none, and while loading */
   readonly transform = signal<LocalTransform | null>(null)
@@ -156,6 +165,10 @@ export class InspectorState {
     private readonly options: InspectorOptions
   ) {
     this.debounceMs = options.debounceMs ?? DefaultDebounceMilliseconds
+    this.prefabOverrides = new PrefabOverridesState(engine, {
+      confirm: (message, okLabel) => options.confirm(message, okLabel),
+      changed: () => void this.refresh(),
+    })
     this.timer = options.timers ?? {
       set: (callback, ms) => setTimeout(callback, ms),
       clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -315,7 +328,10 @@ export class InspectorState {
   /** Reads the object again (GetEntity), keeping the edits that are still on their way */
   async refresh(): Promise<void> {
     const id = this.entityId.value
-    if (id === null) return
+    if (id === null) {
+      void this.prefabOverrides.load(null)
+      return
+    }
     if (!this.engine.isConnected()) {
       this.loading.value = false
       return
@@ -350,6 +366,8 @@ export class InspectorState {
         id: component.uuid,
         type: component.type,
         values: newer ? old.values : isObject(component.values) ? component.values : {},
+        ...(component.overrides !== undefined ? { overrides: component.overrides } : {}),
+        ...(component.prefabAdded === true ? { prefabAdded: true } : {}),
       }
     })
     const ids = new Set(views.map((view) => view.id))
@@ -371,6 +389,8 @@ export class InspectorState {
       this.errors.value = new Map([...this.errors.value].filter(([key]) => key === EntityKey || ids.has(key)))
       this.collapsed.value = new Set([...this.collapsed.value].filter((key) => ids.has(key)))
     })
+    // The overrides of the prefab instance it is in (1.33.0); an object in none has none
+    void this.prefabOverrides.load((data.entity.header.linkDepth ?? 0) > 0 ? id : null)
     await this.syncLua(false)
   }
 

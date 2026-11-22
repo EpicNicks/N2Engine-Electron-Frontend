@@ -41,6 +41,7 @@ const KindDescriptions: Record<ArgKind, string> = {
   vec3: "an {x, y, z} of finite numbers",
   quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
+  jsonArray: "a JSON array",
   stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
   assetMoves: `an array of 1 to ${MaxAssetMoves} {from, to} pairs of strings`,
   inputEvents: "an array of input events",
@@ -149,6 +150,12 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
       break
     case "jsonObject":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
+        if (copy) return copy.value
+      }
+      break
+    case "jsonArray":
+      if (Array.isArray(value)) {
         const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
         if (copy) return copy.value
       }
