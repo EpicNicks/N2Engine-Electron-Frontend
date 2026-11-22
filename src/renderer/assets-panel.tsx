@@ -10,7 +10,7 @@ import { entriesAfter } from "./console-store"
 import { AssetDragType, AssetMoveDragType, AssetRowDragEffect, EntityDragType, PrefabDragType, assetDragData, dragHas } from "./drag-types"
 import { ConfirmMoveAssets, assetsMoving, canDrop, planMove } from "./asset-move"
 import type { AssetEntry } from "../shared/api"
-import { PrefabCopyNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
+import { PrefabCopyNotice, PrefabLinkNotice, PrefabResourceType, prefabPathIn } from "../protocol/prefab-assets"
 import { isPrefabPath } from "../protocol/prefab-stage"
 import { RootId } from "./hierarchy-tree"
 import { isTextAssetPath, parseImportSettings } from "./asset-edit"
@@ -442,7 +442,7 @@ function targetFolder(selected: string | null, rows: readonly AssetRow[]): strin
 }
 
 function AssetDetailView() {
-  const { assets } = useApp()
+  const { assets, hierarchy } = useApp()
   const path = assets.selected.value
   const listing = assets.listing.value
   const detail = assets.detail.value
@@ -478,7 +478,9 @@ function AssetDetailView() {
       <DetailLine label="Modified" value={formatModified(file.modified)} />
       {file.type === PrefabResourceType && (
         <div class="asset-hint">
-          Drag it onto the hierarchy to add a copy to the scene. {PrefabCopyNotice}
+          {hierarchy.canNesting
+            ? `Drag it onto the hierarchy to add an instance to the scene. ${PrefabLinkNotice}`
+            : `Drag it onto the hierarchy to add a copy to the scene. ${PrefabCopyNotice}`}
         </div>
       )}
       {info && <DetailLine label="In memory" value={info.loaded ? "yes" : "no"} />}

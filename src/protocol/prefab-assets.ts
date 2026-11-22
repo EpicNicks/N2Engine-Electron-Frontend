@@ -18,6 +18,10 @@ export const DefaultPrefabFolder = "res://prefabs"
 export const PrefabCopyNotice =
   "A prefab is a copy with a link: changing the prefab does not update objects already in a scene."
 
+/** The same for a host with prefab links (protocol 1.33.0): an instance follows its prefab */
+export const PrefabLinkNotice =
+  "An instance follows its prefab: changing the prefab updates every instance, and what an instance changes is kept as its overrides."
+
 /** The longest path the editor sends (the host has its own limits) */
 export const MaxPrefabPathLength = 260
 

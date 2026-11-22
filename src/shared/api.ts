@@ -28,6 +28,7 @@ import type {
   NetworkSettingsInfo,
   NetworkValidationReport,
   PhysicsBackendsInfo,
+  PrefabOverridesInfo,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
@@ -178,8 +179,14 @@ export interface EngineCommands {
   instantiatePrefab(uuidOrPath: string, parentId: string, siblingIndex: number, hasPosition: boolean, position: Vec3): Promise<string>
   /** Protocol 1.19.0: overwrites the linked prefab file with the object (refused in play) */
   applyPrefab(entityId: string): Promise<void>
-  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step) */
-  unpackPrefab(entityId: string): Promise<void>
+  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step); completely (1.34.0) unpacks the instances inside too */
+  unpackPrefab(entityId: string, completely: boolean): Promise<void>
+  /** Protocol 1.33.0 (prefabNesting): the changes of the prefab instance the object is in (a Read command) */
+  getPrefabOverrides(entityId: string): Promise<PrefabOverridesInfo>
+  /** Protocol 1.33.0: reverts the named changes of that instance, one undo step (a Write command) */
+  revertPrefabOverrides(entityId: string, targets: unknown[]): Promise<void>
+  /** Protocol 1.34.0 (prefabOverridesApply): writes the named changes into the prefab at level of the link path (a Write command; refused in play) */
+  applyPrefabOverrides(entityId: string, targets: unknown[], level: number): Promise<void>
   /** Protocol 1.20.0 (physicsBackends capability): the 3D physics backends the host has, what each declares, and which the project uses (a Read command) */
   getPhysicsBackends(): Promise<PhysicsBackendsInfo>
   /** Protocol 1.20.0: sets physics.backend ("physx" or "jolt"); takes effect at the next play session or host start. A Write command: refused in play, on a read-only host and for a viewer */
@@ -288,7 +295,7 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray" | "assetMoves" | "stageMode"
+export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "jsonArray" | "stringArray" | "assetMoves" | "stageMode"
 
 /** MoveAsset takes at most this many {from, to} pairs (the host refuses more) */
 export const MaxAssetMoves = 256
@@ -351,7 +358,10 @@ export const EngineCommandArgs = {
   createPrefab: ["string", "string", "bool"],
   instantiatePrefab: ["string", "string", "int32", "bool", "vec3"],
   applyPrefab: ["string"],
-  unpackPrefab: ["string"],
+  unpackPrefab: ["string", "bool"],
+  getPrefabOverrides: ["string"],
+  revertPrefabOverrides: ["string", "jsonArray"],
+  applyPrefabOverrides: ["string", "jsonArray", "int32"],
   getPhysicsBackends: [],
   setPhysicsBackend: ["string"],
   getNetworkSettings: [],
@@ -399,6 +409,7 @@ interface ArgKindTypes {
   vec3: Vec3
   quat: Quat
   jsonObject: JsonObject
+  jsonArray: unknown[]
   stringArray: string[]
   assetMoves: AssetMove[]
   inputEvents: InputEvent[]
