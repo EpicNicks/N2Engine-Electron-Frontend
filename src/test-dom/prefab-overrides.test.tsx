@@ -67,7 +67,7 @@ describe("the hierarchy's prefab marks", () => {
         <ContextMenu />
         <ConfirmDialog />
       </>,
-      { store: fake.store, hierarchy }
+      { store: fake.store, hierarchy, assets: { listing: signal(null), reveal: () => {}, select: async () => {} } as never }
     )
     return { hierarchy, calls }
   }
@@ -215,6 +215,8 @@ describe("the inspector's prefab overrides", () => {
         scene: { selectedId: signal<string | null>("lid") },
         hierarchy: { selection, tree: signal(buildTree(nodes)), canPrefabs: false, canNesting: true, deleteSelected: async () => {} } as never,
         inspector,
+        assets: { listing: signal(null), reveal: () => {}, select: async () => {} } as never,
+        extensions: { sectionsFor: () => [], uiRevision: 0, mayRunButtons: signal(false) } as never,
       }
     )
     return { calls, opened, user: userEvent.setup() }

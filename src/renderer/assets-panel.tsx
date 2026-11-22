@@ -442,7 +442,8 @@ function targetFolder(selected: string | null, rows: readonly AssetRow[]): strin
 }
 
 function AssetDetailView() {
-  const { assets, hierarchy } = useApp()
+  const app = useApp()
+  const { assets } = app
   const path = assets.selected.value
   const listing = assets.listing.value
   const detail = assets.detail.value
@@ -478,7 +479,7 @@ function AssetDetailView() {
       <DetailLine label="Modified" value={formatModified(file.modified)} />
       {file.type === PrefabResourceType && (
         <div class="asset-hint">
-          {hierarchy.canNesting
+          {app.hierarchy.canNesting
             ? `Drag it onto the hierarchy to add an instance to the scene. ${PrefabLinkNotice}`
             : `Drag it onto the hierarchy to add a copy to the scene. ${PrefabCopyNotice}`}
         </div>
