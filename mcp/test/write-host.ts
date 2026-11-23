@@ -53,9 +53,13 @@ export class FakeWorld {
   sceneName = "Main"
   scenes = new Map<string, SceneFile>()
   settings: Record<string, unknown> = { window: { title: "Demo" } }
+  /** project.n2proj's build block */
+  build: Record<string, unknown> = { modules: [] }
   counter = 100
   /** Commands that changed the world, by name: to see that a refused call changed nothing */
   mutations: string[] = []
+  /** What MoveAsset answers as warnings */
+  moveWarnings: string[] = []
 
   constructor(readonly host: FakeHost) {}
 
@@ -357,6 +361,43 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
     return { path: r.path, uuid: id }
   })
 
+  // MoveAsset (protocol 1.24.0): everything is checked before anything moves (all or nothing); an asset keeps its UUID
+  const lowerInside = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`)
+  h("MoveAsset", (r) => {
+    const moves: Array<{ from: string; to: string }> = r.moves
+    if (moves.length < 1 || moves.length > 256) throw new Refusal("Between 1 and 256 moves")
+    const exists = (p: string): boolean => host.folders.includes(p) || host.assets.some((a) => a.path === p)
+    const taken = new Set<string>([...host.folders, ...host.assets.map((a) => a.path)].map((p) => p.toLowerCase()))
+    const placed = new Set<string>()
+    for (const m of moves) {
+      if (!exists(m.from)) throw new Refusal(`Not an asset: ${m.from}`)
+      if (m.from === m.to) throw new Refusal("already there")
+      if (lowerInside(m.to, m.from)) throw new Refusal("A folder cannot move into itself")
+      if (lowerInside(world.scenePath, m.from)) throw new Refusal("The open scene is in that move: save the scene elsewhere first")
+      const ext = (p: string): string => (p.slice(p.lastIndexOf("/") + 1).match(/\.[^.]*$/)?.[0] ?? "").toLowerCase()
+      if (!host.folders.includes(m.from) && ext(m.from) !== ext(m.to)) throw new Refusal("A move cannot change the extension")
+      if (taken.has(m.to.toLowerCase()) || placed.has(m.to.toLowerCase())) throw new Refusal(`${m.to} already exists`)
+      placed.add(m.to.toLowerCase())
+    }
+    const moved: Array<{ from: string; to: string; uuid?: string; type?: string }> = []
+    for (const m of moves) {
+      if (host.folders.includes(m.from)) moved.push({ from: m.from, to: m.to })
+      for (const a of host.assets) {
+        if (!lowerInside(a.path, m.from)) continue
+        const to = m.to + a.path.slice(m.from.length)
+        moved.push({ from: a.path, to, uuid: a.uuid, type: a.type })
+        if (host.texts.has(a.path)) {
+          host.texts.set(to, host.texts.get(a.path) as string)
+          host.texts.delete(a.path)
+        }
+        a.path = to
+      }
+      host.folders = host.folders.map((f) => (lowerInside(f, m.from) ? m.to + f.slice(m.from.length) : f))
+    }
+    world.mutations.push("MoveAsset")
+    return { result: { moved, warnings: [...world.moveWarnings] } }
+  })
+
   // ----- scenes and settings -----
   h("OpenScene", (r) => {
     const file = world.scenes.get(r.path)
@@ -394,7 +435,7 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
   const projectInfo = () => ({
     rootPath: ProjectRoot,
     userDataPath: UserDataRoot,
-    project: { formatVersion: 1, name: host.projectName, projectId: "22222222-0000-0000-0000-000000000000", engineVersion: "0.9.0", startupScene: "res://scenes/Main.scene", scenes: [...world.scenes.keys()], settings: world.settings },
+    project: { formatVersion: 1, name: host.projectName, projectId: "22222222-0000-0000-0000-000000000000", engineVersion: "0.9.0", startupScene: "res://scenes/Main.scene", scenes: [...world.scenes.keys()], settings: world.settings, build: world.build },
   })
   h("GetProjectInfo", projectInfo)
   const merge = (target: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> => {
@@ -411,6 +452,17 @@ export function installWrites(host: FakeHost, role: string = "editor"): FakeWorl
     if ("determinism" in patch && role !== "admin") throw new Refusal("The determinism settings need the admin role", "forbidden")
     world.settings = merge(world.settings, patch)
     world.mutations.push("SetProjectSettings")
+    return projectInfo()
+  })
+  h("SetBuildSettings", (r) => {
+    const patch = r.settings as Record<string, unknown>
+    if (patch === null || typeof patch !== "object" || Array.isArray(patch)) throw new Refusal("settings must be an object", "invalid")
+    for (const [key, value] of Object.entries(patch)) {
+      if (key !== "strictFp") throw new Refusal(`build setting "${key}" is not changeable`, "invalid")
+      if (value !== null && typeof value !== "boolean") throw new Refusal("build.strictFp must be true, false or null", "invalid")
+    }
+    world.build = merge(world.build, patch)
+    world.mutations.push("SetBuildSettings")
     return projectInfo()
   })
   return world

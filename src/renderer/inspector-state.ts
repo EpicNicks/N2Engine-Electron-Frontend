@@ -19,6 +19,7 @@ import type { EditGroups, GroupHandle } from "./edit-groups"
 import { eulerToQuat, quatToEuler, quatsEquivalent, stableEuler, vecEqual } from "./euler"
 import { applyPatch, isObject, mergePatch, planRequests } from "./inspector-fields"
 import { MultiInspectorState } from "./inspector-multi"
+import { PrefabOverridesEngine, PrefabOverridesState } from "./prefab-overrides-state"
 
 type Engine = Pick<
   EngineApi,
@@ -31,7 +32,9 @@ type Engine = Pick<
   | "getLuaFields"
   | "setEntityProperties"
   | "setLocalTransform"
->
+> &
+  // Protocol 1.33.0 and 1.34.0: a host before them has no prefab overrides to show
+  PrefabOverridesEngine
 /** Where the asset fields' choices come from: the assets panel's listing (see index.tsx) */
 type Project = { listAssets(): Promise<AssetEntry[]> }
 
@@ -40,6 +43,10 @@ export interface ComponentView {
   id: string
   type: string
   values: JsonObject
+  /** The values that differ from the prefab (protocol 1.34.0): a key of values, or "scriptData.<field>" */
+  overrides?: readonly string[]
+  /** The prefab instance added it (1.34.0) */
+  prefabAdded?: boolean
 }
 
 /** Edits to a component that the host hasn't confirmed: the request in flight, and what was changed since */
@@ -74,7 +81,16 @@ export interface InspectorOptions {
   caseInsensitivePaths?: boolean
   /** Timers, replaceable in tests */
   timers?: { set(callback: () => void, ms: number): unknown; clear(handle: unknown): void }
+  /**
+   * #381 item 8: asked after a NetworkObject was added. The host's network nudge (GetNetworkSettings, protocol 1.21.0):
+   * its hint when it shows (the scene has a NetworkObject and the project's network preset is none), else null; null too
+   * when the host can't say (no networkPanel capability). Absent: the inspector never asks.
+   */
+  networkNudge?(): Promise<string | null>
 }
+
+/** The component the host counts for the network nudge (the scene's NetworkObject components) */
+export const NetworkNudgeComponent = "NetworkObject"
 
 const messageOf = (e: unknown): string => errorTextOf(e)
 
@@ -86,6 +102,15 @@ export class InspectorState {
   /** Why the types couldn't be read (a host before protocol 1.5, say), or null */
   readonly typesProblem = signal<string | null>(null)
   readonly assets = signal<AssetLookup>(new AssetLookup([], false))
+  /**
+   * The network nudge's hint, shown above the inspector after a NetworkObject was added while the project's network preset
+   * is none (InspectorOptions.networkNudge); null when there is nothing to say or the user dismissed it
+   */
+  readonly networkNudge = signal<string | null>(null)
+  /** Dismissed: not shown again until the editor reloads */
+  private networkNudgeDismissed = false
+  /** Counts the nudge's reads and resets: only the latest read's answer is shown, and none after a reset */
+  private networkNudgeReads = 0
 
   /** Whether the lock is on: the inspector keeps showing the object it was locked to, whatever the selection does */
   readonly locked = signal(false)
@@ -100,6 +125,8 @@ export class InspectorState {
   /** The inspected object's id; null with none */
   readonly entityId = signal<string | null>(null)
   readonly header = signal<EntityHeader | null>(null)
+  /** The prefab overrides of the instance the inspected object is in (protocol 1.33.0 and 1.34.0) */
+  readonly prefabOverrides: PrefabOverridesState
   readonly components = signal<readonly ComponentView[]>([])
   /** The object's LOCAL transform (GetEntity), as the gizmo writes it; null for an object with none, and while loading */
   readonly transform = signal<LocalTransform | null>(null)
@@ -167,6 +194,10 @@ export class InspectorState {
     private readonly options: InspectorOptions
   ) {
     this.debounceMs = options.debounceMs ?? DefaultDebounceMilliseconds
+    this.prefabOverrides = new PrefabOverridesState(engine, {
+      confirm: (message, okLabel) => options.confirm(message, okLabel),
+      changed: () => void this.refresh(),
+    })
     this.timer = options.timers ?? {
       set: (callback, ms) => setTimeout(callback, ms),
       clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -212,6 +243,9 @@ export class InspectorState {
   /** Lets go of everything held: the connection changed (another host), or none */
   reset(): void {
     this.cancelTimers()
+    // The nudge was about the project and host that are gone
+    this.networkNudgeReads++
+    this.networkNudge.value = null
     this.gesture = null // its group ended with the connection
     batch(() => {
       this.fetches++
@@ -377,7 +411,10 @@ export class InspectorState {
   /** Reads the object again (GetEntity), keeping the edits that are still on their way */
   async refresh(): Promise<void> {
     const id = this.entityId.value
-    if (id === null) return
+    if (id === null) {
+      void this.prefabOverrides.load(null)
+      return
+    }
     if (!this.engine.isConnected()) {
       this.loading.value = false
       return
@@ -414,6 +451,8 @@ export class InspectorState {
         id: component.uuid,
         type: component.type,
         values: newer ? old.values : isObject(component.values) ? component.values : {},
+        ...(component.overrides !== undefined ? { overrides: component.overrides } : {}),
+        ...(component.prefabAdded === true ? { prefabAdded: true } : {}),
       }
     })
     const ids = new Set(views.map((view) => view.id))
@@ -435,6 +474,8 @@ export class InspectorState {
       this.errors.value = new Map([...this.errors.value].filter(([key]) => key === EntityKey || ids.has(key)))
       this.collapsed.value = new Set([...this.collapsed.value].filter((key) => ids.has(key)))
     })
+    // The overrides of the prefab instance it is in (1.33.0); an object in none has none
+    void this.prefabOverrides.load((data.entity.header.linkDepth ?? 0) > 0 ? id : null)
     await this.syncLua(false)
   }
 
@@ -703,6 +744,7 @@ export class InspectorState {
       throw new Error(`An object can have only one ${typeName}`)
     }
     const added = await this.engine.addComponent(entityId, typeName)
+    void this.checkNetworkNudge(typeName)
     if (this.entityId.value !== entityId) return
     batch(() => {
       // The scene's change event reads the object again; until then this one is shown
@@ -752,6 +794,36 @@ export class InspectorState {
       if (this.entityId.value === entityId) await this.refresh()
     }
     await this.syncLua(false)
+  }
+
+  /**
+   * After `typeName` was added (here or to several objects): when it is a NetworkObject, asks the host whether the
+   * network nudge shows and shows its hint (or takes it away). Never throws: a failed read leaves the nudge as it was.
+   */
+  async checkNetworkNudge(typeName: string): Promise<void> {
+    if (typeName !== NetworkNudgeComponent || this.networkNudgeDismissed || !this.options.networkNudge) return
+    const read = ++this.networkNudgeReads
+    try {
+      const hint = await this.options.networkNudge()
+      if (!this.networkNudgeDismissed && read === this.networkNudgeReads) this.networkNudge.value = hint
+    } catch {
+      // Not worth an error of its own: the Network section shows the same answer
+    }
+  }
+
+  /**
+   * While the nudge shows, reads it again (the scene or the project changed: the NetworkObject was undone or removed, a
+   * preset was chosen in Project Settings), so it goes when it no longer applies
+   */
+  recheckNetworkNudge(): Promise<void> {
+    if (this.networkNudge.peek() === null) return Promise.resolve()
+    return this.checkNetworkNudge(NetworkNudgeComponent)
+  }
+
+  /** The user closed the nudge (or followed it to the network settings): not shown again in this session */
+  dismissNetworkNudge(): void {
+    this.networkNudgeDismissed = true
+    this.networkNudge.value = null
   }
 
   /**

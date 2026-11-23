@@ -22,6 +22,8 @@ import { applyMarquee, marqueeCandidatesOf } from "./viewport-marquee"
 import { hostHasEditorTooling } from "../protocol/editor-tooling"
 import { createPickBackend, hostHasPicking } from "./viewport-picking"
 import { InspectorState } from "./inspector-state"
+import { hasCapability } from "../protocol/extensions"
+import { NetworkPanelCapability } from "../protocol/network-panel"
 import { PlayController } from "./play-controller"
 import { SceneState } from "./scene-state"
 import { ViewportController } from "./viewport-controller"
@@ -102,7 +104,9 @@ const assets = new AssetsState(
   // The host refuses the asset writers during a play session, and always when it is read-only
   () => store.readOnlyReason.peek(),
   // Previews need GetAssetPreview (protocol 1.17.0)
-  () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion)
+  () => store.connected.peek() && hostHasEditorTooling(store.serverInfo.peek()?.protocolVersion),
+  // The host refuses to move the loaded scene's file (or a folder that holds it)
+  () => store.scene.peek()?.path || null
 )
 const hierarchy = new HierarchyState(window.engine, {
   confirm: confirmDialog,
@@ -152,6 +156,8 @@ const play = new PlayController({
   api: window.play,
   stats: store.clientStats,
   setPlayMode: (reason) => store.setPlayMode(reason),
+  // The game plays the scene: a prefab stage open in front of it is closed first (asking about its changes)
+  beforeStart: () => store.ensurePrefabStageClosed("play"),
   // As Ctrl+S does: a rename and the inspector's debounced edits are sent first, so the game is of the latest
   settle: async () => {
     await hierarchy.renameSettled
@@ -229,6 +235,12 @@ const app: AppState = {
       groups,
       // A refusal in the middle of an edit of several objects takes the edit back, as the Undo menu would
       undo: () => editController.undo(),
+      // #381 item 8: the nudge after the first NetworkObject, from a host that has the network panel
+      networkNudge: async () => {
+        if (!hasCapability(store.serverInfo.value?.capabilities, NetworkPanelCapability)) return null
+        const info = await window.engine.getNetworkSettings()
+        return info.nudge.show ? info.nudge.hint : null
+      },
     }
   ),
   audio: new AudioController(window.engine),
@@ -305,5 +317,11 @@ effect(() => {
   untracked(() => app.audio.useGame(live ? window.play : null))
 })
 
+// #381 item 8: the inspector's network nudge is read again while it shows, whenever the scene or the project changes
+effect(() => {
+  void store.sceneChangeCount.value
+  void store.projectChangeCount.value
+  untracked(() => void app.inspector.recheckNetworkNudge())
+})
 render(<App app={app} />, document.getElementById("app")!)
 store.load()

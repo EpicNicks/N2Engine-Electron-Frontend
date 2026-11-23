@@ -21,6 +21,12 @@ export const ScriptDragType = "application/x-n2-script"
 /** The resource type of a Lua script asset */
 export const ScriptResourceType = "LuaScript"
 
+/**
+ * A drag of assets or folders within the Assets panel to move them (protocol 1.24.0): the res:// paths as a JSON array.
+ * Only a folder row of the panel takes it, so no other panel reacts to a move.
+ */
+export const AssetMoveDragType = "application/x-n2-asset-move"
+
 /** An object dragged from the hierarchy: its id */
 export const EntityDragType = "application/x-n2-entity"
 
@@ -83,6 +89,8 @@ export function dragHas(event: DragEvent, type: string): boolean {
  */
 export const EntityDragEffect = "copyMove"
 export const AssetDragEffect = "copy"
+/** A file row of the Assets panel is copied onto a field and moved onto a folder; a folder row is only moved */
+export const AssetRowDragEffect = "copyMove"
 export const FieldDropEffect = "copy"
 
 /** Whether a drop with dropEffect is allowed by a drag's effectAllowed (the HTML drag-and-drop rules) */

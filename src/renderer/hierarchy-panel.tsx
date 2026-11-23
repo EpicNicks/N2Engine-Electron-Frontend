@@ -156,8 +156,11 @@ export function HierarchyPanel() {
   const createPrefab = async (id: string) => {
     const name = tree.nodes.get(id)?.name
     if (name === undefined) return
+    const node = tree.nodes.get(id)
     const typed = await prompt(
-      "Create Prefab at (a copy with a link: changing the prefab later does not update objects already in scenes)",
+      hierarchy.canOverridesApply && node?.prefab && (node.linkDepth ?? 0) > 0
+        ? "Create Prefab Variant at (a prefab based on this instance's prefab, with its overrides: changes of the base still reach it)"
+        : "Create Prefab at (a copy with a link: changing the prefab later does not update objects already in scenes)",
       defaultPrefabPath(name)
     )
     if (typed === null) return
@@ -232,6 +235,15 @@ export function HierarchyPanel() {
                         label: "Unpack Prefab",
                         action: () => void hierarchy.unpackPrefab(id).catch(fail("Failed to unpack the prefab")),
                       },
+                      // 1.34.0: the instances inside it too
+                      ...(hierarchy.canOverridesApply
+                        ? [
+                            {
+                              label: "Unpack Prefab Completely",
+                              action: () => void hierarchy.unpackPrefab(id, true).catch(fail("Failed to unpack the prefab")),
+                            },
+                          ]
+                        : []),
                     ]
                   : []),
               ]
@@ -303,6 +315,8 @@ export function HierarchyPanel() {
       if (selection.ids.has(row.id)) classes.push("selected")
       if (!node.activeInHierarchy) classes.push("inactive")
       if (dragging.value.includes(row.id)) classes.push("dragging")
+      // Prefab links (1.33.0): an object of an instance is shown as one; 1.34.0 marks what differs from the prefab
+      if ((node.linkDepth ?? 0) > 0) classes.push("in-prefab")
       if (drop?.id === row.id) classes.push(`drop-${drop.position}`)
       return (
         <div
@@ -370,10 +384,28 @@ export function HierarchyPanel() {
           {node.prefab && (
             <span
               class="hierarchy-prefab"
-              title={`Prefab instance: a copy linked to ${prefabAssetPath(row.id) ?? "a prefab"}. Changing the prefab does not update it.`}
+              title={
+                (node.linkDepth ?? 0) > 0
+                  ? `Prefab instance of ${prefabAssetPath(row.id) ?? "a prefab"}: it follows the prefab, and what it changes is kept as its overrides.`
+                  : `Prefab instance: a copy linked to ${prefabAssetPath(row.id) ?? "a prefab"}. Changing the prefab does not update it.`
+              }
               aria-label="Prefab instance"
             >
               ⧉
+            </span>
+          )}
+          {node.overridden && (
+            <span
+              class="hierarchy-overridden"
+              title={node.prefab ? "This instance has overrides: it differs from its prefab" : "Differs from the prefab (an override)"}
+              aria-label="Overridden"
+            >
+              ●
+            </span>
+          )}
+          {node.prefabAdded && (
+            <span class="hierarchy-added" title="Added to the prefab instance: not in the prefab" aria-label="Added to the instance">
+              +
             </span>
           )}
           {row.path !== undefined && row.path !== node.name && (

@@ -46,22 +46,45 @@ export function ProjectSettingsPanel() {
             connected: store.connected,
             supported: computed(() => hasCapability(store.serverInfo.value?.capabilities, NetworkPanelCapability)),
             readOnlyReason: store.readOnlyReason,
+            sceneChangeCount: store.sceneChangeCount,
           }),
         },
         settingsSections as SectionRegistry<unknown>
       ),
     [store, store.remote.value]
   )
-  return <ProjectSettingsView model={model} />
+  const request = store.panelRequest.value
+  return (
+    <ProjectSettingsView
+      model={model}
+      requested={request?.id === "projectSettings" && request.section ? { section: request.section, seq: request.seq } : null}
+      onRequestApplied={(seq) => store.clearPanelRequest(seq)}
+    />
+  )
 }
 
 type Def = SettingsSectionDef<SectionComponent>
 
-export function ProjectSettingsView({ model }: { model: ProjectSettingsModel }) {
+export function ProjectSettingsView({
+  model,
+  requested = null,
+  onRequestApplied,
+}: {
+  model: ProjectSettingsModel
+  /** A section another panel asked for (EditorStore.panelRequest): picked when it arrives, then the user's clicks rule */
+  requested?: { section: string; seq: number } | null
+  /** The requested section was picked: the request is consumed, so a later mount opens at the first section again */
+  onRequestApplied?(seq: number): void
+}) {
   // Reads and listens while shown; stops when closed
   useEffect(() => model.start(), [model])
   const defs = model.registry.list() as Def[]
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(requested?.section ?? null)
+  useEffect(() => {
+    if (!requested) return
+    setSelected(requested.section)
+    onRequestApplied?.(requested.seq)
+  }, [requested?.seq])
   const info = model.info.value
   const loadError = model.loadError.value
   const connected = model.isConnected

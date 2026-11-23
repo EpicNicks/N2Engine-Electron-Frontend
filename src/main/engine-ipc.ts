@@ -12,6 +12,7 @@ import {
   EngineCommandArgs,
   EngineCommandName,
   EngineCommands,
+  MaxAssetMoves,
   MaxEntityBoundsIds,
   MaxJsonDepth,
   MaxJsonNodes,
@@ -40,8 +41,11 @@ const KindDescriptions: Record<ArgKind, string> = {
   vec3: "an {x, y, z} of finite numbers",
   quat: "an {x, y, z, w} of finite numbers",
   jsonObject: "a JSON object",
+  jsonArray: "a JSON array",
   stringArray: `an array of at most ${MaxEntityBoundsIds} strings`,
+  assetMoves: `an array of 1 to ${MaxAssetMoves} {from, to} pairs of strings`,
   inputEvents: "an array of input events",
+  stageMode: "\"isolated\" or \"context\"",
 }
 
 // How deep and how large a JSON argument may be (shared with the page, whose editors check the same limits)
@@ -125,10 +129,33 @@ export function checkArg(kind: ArgKind, value: unknown, where: string): unknown 
         return items
       }
       break
+    case "assetMoves":
+      if (Array.isArray(value) && value.length >= 1 && value.length <= MaxAssetMoves) {
+        // An index loop, as for stringArray: a sparse array's holes must not pass; only from and to are copied
+        const moves: { from: string; to: string }[] = []
+        for (let i = 0; i < value.length; i++) {
+          const item: unknown = value[i]
+          if (typeof item !== "object" || item === null || Array.isArray(item)) throw new Error(`${where} must be ${KindDescriptions[kind]}`)
+          const { from, to } = item as Record<string, unknown>
+          if (typeof from !== "string" || typeof to !== "string") throw new Error(`${where} must be ${KindDescriptions[kind]}`)
+          moves.push({ from, to })
+        }
+        return moves
+      }
+      break
     case "inputEvents":
       return checkInputEvents(value, where)
+    case "stageMode":
+      if (value === "isolated" || value === "context") return value
+      break
     case "jsonObject":
       if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
+        if (copy) return copy.value
+      }
+      break
+    case "jsonArray":
+      if (Array.isArray(value)) {
         const copy = copyJson(value, 0, { nodes: MaxJsonNodes })
         if (copy) return copy.value
       }

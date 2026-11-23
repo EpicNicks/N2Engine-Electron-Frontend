@@ -20,6 +20,7 @@ import type { SceneChange } from "../protocol/editor-events"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import type { EngineApi, JsonObject } from "../shared/api"
 import type { EditGroups } from "./edit-groups"
+import { isFieldOverridden, overrideRows, rowsForField } from "../protocol/prefab-overrides"
 import { eulerToQuat, quatToEuler, quatsEquivalent } from "./euler"
 import {
   displayValue,
@@ -45,12 +46,16 @@ type Engine = Pick<
   | "removeComponent"
 > &
   // Undo takes back an edit group that a refusal cut short (protocol 1.6); without it the panel only says so
-  Partial<Pick<EngineApi, "undo">>
+  Partial<Pick<EngineApi, "undo">> &
+  // Prefab overrides (protocol 1.33.0): a host before it has none to revert
+  Partial<Pick<EngineApi, "getPrefabOverrides" | "revertPrefabOverrides">>
 
 /** What the multi inspector needs of the single one: the component types, and whether anything may be changed */
 interface Host {
   readonly types: { readonly value: readonly ComponentSchema[] | null }
   readonly readOnlyReason: { readonly value: string | null }
+  /** InspectorState.checkNetworkNudge, after a component was added to the objects */
+  checkNetworkNudge?(typeName: string): Promise<void>
 }
 
 interface Options {
@@ -103,6 +108,8 @@ export interface MultiEntry {
   entityId: string
   componentId: string
   values: JsonObject
+  /** The values that differ from the prefab (protocol 1.34.0) */
+  overrides?: readonly string[]
 }
 
 export interface MultiComponent {
@@ -153,6 +160,7 @@ function firstOfType(details: EntityDetails): Map<string, MultiEntry> {
       entityId: details.header.id,
       componentId: component.uuid,
       values: isObject(component.values) ? component.values : {},
+      ...(component.overrides !== undefined ? { overrides: component.overrides } : {}),
     })
   }
   return found
@@ -196,6 +204,25 @@ export function buildMultiView(objects: readonly EntityDetails[]): MultiView {
     transform,
     components,
   }
+}
+
+/**
+ * The selected objects on which a field differs from the prefab (protocol 1.34.0's override marks): an object's own field
+ * ("isActive", "tag", "layer", "positionable.localScale") with component null, else a field of the shared component
+ */
+export function overriddenOn(
+  objects: readonly EntityDetails[],
+  component: MultiComponent | null,
+  field: string
+): { entityId: string; componentId: string | null }[] {
+  if (component === null) {
+    return objects
+      .filter((object) => isFieldOverridden(object.header.overrides, field))
+      .map((object) => ({ entityId: object.header.id, componentId: null }))
+  }
+  return component.entries
+    .filter((entry) => isFieldOverridden(entry.overrides, field))
+    .map((entry) => ({ entityId: entry.entityId, componentId: entry.componentId }))
 }
 
 /** The kinds that are edited on several objects at once */
@@ -503,7 +530,7 @@ export class MultiInspectorState {
     const jobs = objects.map((object) =>
       this.job(object.header.id, () => this.engine.addComponent(object.header.id, typeName))
     )
-    return this.run(objects.length, jobs)
+    return this.run(objects.length, jobs).then(() => void this.host.checkNetworkNudge?.(typeName))
   }
 
   /**
@@ -526,6 +553,28 @@ export class MultiInspectorState {
     )
     await this.run(count, jobs)
     return true
+  }
+
+  /** Whether overridden fields can be reverted (the host has the prefab override commands, 1.33.0) */
+  get canRevertOverrides(): boolean {
+    return typeof this.engine.getPrefabOverrides === "function" && typeof this.engine.revertPrefabOverrides === "function"
+  }
+
+  /**
+   * Reverts a field to its prefab's value on every selected object where it is overridden (see overriddenOn), as one
+   * undo step. Each object's overrides are read first, for the targets that name the field there.
+   */
+  revertOverride(component: MultiComponent | null, field: string): Promise<void> {
+    this.requireEditable()
+    if (!this.canRevertOverrides) throw new Error("This editor host has no prefab overrides (it needs protocol 1.33.0)")
+    const on = overriddenOn(this.objects.peek() ?? [], component, field)
+    const jobs: Job[] = on.map(({ entityId, componentId }) =>
+      this.job(entityId, async () => {
+        const rows = rowsForField(overrideRows(await this.engine.getPrefabOverrides!(entityId)), entityId, componentId, field)
+        if (rows.length > 0) await this.engine.revertPrefabOverrides!(entityId, rows.map((row) => row.target))
+      })
+    )
+    return this.run(on.length, jobs)
   }
 
   /** Runs the changes as one edit group, one after the other, one edit at a time; then reads the objects again */

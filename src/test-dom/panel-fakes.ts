@@ -69,6 +69,8 @@ export class FakeAssetHost {
   previews = new Map<string, AssetPreview>()
   /** A refusal the next command of this name throws */
   refuse = new Map<string, string>()
+  /** What MoveAsset answers as warnings */
+  moveWarnings: string[] = []
 
   private gate(name: string): void {
     const message = this.refuse.get(name)
@@ -112,6 +114,27 @@ export class FakeAssetHost {
       this.calls.push(`createFolder ${path}`)
       this.gate("createFolder")
       this.folders.push(path)
+    },
+    moveAssets: async (moves: { from: string; to: string }[]) => {
+      this.calls.push(`moveAssets ${moves.map((m) => `${m.from}>${m.to}`).join(",")}`)
+      this.gate("moveAssets")
+      const moved: { from: string; to: string; uuid?: string; type?: string }[] = []
+      for (const m of moves) {
+        const under = (p: string) => p === m.from || p.startsWith(`${m.from}/`)
+        if (this.folders.includes(m.from)) moved.push({ from: m.from, to: m.to })
+        for (const a of this.assets) {
+          if (!under(a.path)) continue
+          const to = m.to + a.path.slice(m.from.length)
+          moved.push({ from: a.path, to, uuid: a.uuid, type: a.type })
+          if (this.files.has(a.path)) {
+            this.files.set(to, this.files.get(a.path) as string)
+            this.files.delete(a.path)
+          }
+          a.path = to
+        }
+        this.folders = this.folders.map((f) => (under(f) ? m.to + f.slice(m.from.length) : f))
+      }
+      return { moved, warnings: [...this.moveWarnings] }
     },
   }
 }

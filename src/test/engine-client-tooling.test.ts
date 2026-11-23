@@ -15,6 +15,9 @@ import {
   decodeInstantiateEntitiesRequest,
   decodeInstantiatePrefabRequest,
   decodeUnpackPrefabRequest,
+  decodeRevertPrefabOverridesRequest,
+  decodeApplyPrefabOverridesRequest,
+  encodePrefabOverridesResponse,
   decodeSetPhysicsBackendRequest,
   decodeSetNetworkSettingsRequest,
   decodeGetNetworkValidationRequest,
@@ -203,7 +206,31 @@ describe("EngineClient editor tooling commands", () => {
     assert.deepEqual(decodeApplyPrefabRequest(requests[0].payload), { entityId: "e1" })
     await client.unpackPrefab("e2")
     assert.equal(requests[1].type, CommandType.UnpackPrefab)
-    assert.deepEqual(decodeUnpackPrefabRequest(requests[1].payload), { entityId: "e2" })
+    assert.deepEqual(decodeUnpackPrefabRequest(requests[1].payload), { entityId: "e2", completely: false })
+    // The id alone: a host before 1.34.0 refuses a payload with the trailing completely byte
+    assert.equal(requests[1].payload.length, 4 + 2)
+    reply(ResponseType.Ok, encodeOkResponse({}))
+    await client.unpackPrefab("e3", true)
+    assert.deepEqual(decodeUnpackPrefabRequest(requests[2].payload), { entityId: "e3", completely: true })
+  })
+
+  test("the prefab override commands send their targets and level, and answer the info", async () => {
+    const client = await connected()
+    const info = { rootId: "r", prefab: "p", path: "res://P.prefab", overrides: [], removedObjects: [], removedComponents: [], addedComponents: [], addedChildren: [] }
+    reply(ResponseType.PrefabOverrides, encodePrefabOverridesResponse({ info }))
+    assert.deepEqual(await client.getPrefabOverrides("e1"), info)
+    assert.equal(requests[0].type, CommandType.GetPrefabOverrides)
+    reply(ResponseType.Ok, encodeOkResponse({}))
+    await client.revertPrefabOverrides("e1", [{ all: true }])
+    assert.deepEqual(decodeRevertPrefabOverridesRequest(requests[1].payload), { entityId: "e1", targets: [{ all: true }] })
+    reply(ResponseType.Ok, encodeOkResponse({}))
+    await client.applyPrefabOverrides("e1", [{ source: "s", path: "name" }], -1)
+    assert.equal(requests[2].type, CommandType.ApplyPrefabOverrides)
+    assert.deepEqual(decodeApplyPrefabOverridesRequest(requests[2].payload), {
+      entityId: "e1",
+      targets: [{ source: "s", path: "name" }],
+      level: -1,
+    })
   })
 
   test("a play host's refusal of CreatePrefab is an EngineError", async () => {

@@ -51,6 +51,8 @@ export interface FakeHostOptions {
   busy?: boolean
   tls?: TestIdentity
   protocolVersion?: string
+  /** The capabilities Hello lists (default none) */
+  capabilities?: string[]
   /**
    * Model the engine's SessionArbiter (protocol 1.22, SessionArbiter::Decide): one session at a time. No session active:
    * Accept. The candidate yields: Busy. The active session yields and the candidate does not: Preempt (the active
@@ -323,7 +325,7 @@ export class FakeHost {
         ResponseCodecs.ServerInfo.encode({
           protocolVersion: this.options.protocolVersion ?? PROTOCOL_VERSION,
           engineVersion: "0.9.0",
-          capabilities: [],
+          capabilities: this.options.capabilities ?? [],
           projectLoaded: true,
           readOnly: this.options.readOnly ?? false,
           user,

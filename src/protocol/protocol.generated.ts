@@ -1,7 +1,7 @@
 // Auto-generated from protocol.json by generate_typescript.py - do not edit
 
 /** protocol.json's version (major.minor.patch); Hello sends it, and the server answers with its own */
-export const PROTOCOL_VERSION = "1.23.0";
+export const PROTOCOL_VERSION = "1.35.0";
 
 // ==================== Types ====================
 
@@ -48,6 +48,7 @@ export interface EditorEvent {
   added?: string[];
   removed?: string[];
   modified?: string[];
+  moved?: MovedAsset[];
   canUndo?: boolean;
   canRedo?: boolean;
   label?: string;
@@ -58,6 +59,7 @@ export interface EditorEvent {
   frame?: number;
   uiRevision?: number;
   extension?: string;
+  stage?: PrefabStageInfo;
 }
 
 export interface InputEvent {
@@ -67,6 +69,61 @@ export interface InputEvent {
   down?: boolean;
   x?: number;
   y?: number;
+}
+
+export interface AssetMove {
+  from: string;
+  to: string;
+}
+
+export interface MovedAsset {
+  from: string;
+  to: string;
+  uuid?: string;
+  type?: string;
+}
+
+export interface AssetsMovedResult {
+  moved: MovedAsset[];
+  warnings: string[];
+}
+
+export interface PrefabStageInfo {
+  open: boolean;
+  prefabUuid?: string;
+  path?: string;
+  name?: string;
+  mode?: string;
+  dirty?: boolean;
+  revision?: number;
+  savedRevision?: number;
+  anchorEntityId?: string;
+  contextAvailable?: boolean;
+  rootLocked?: boolean;
+  sceneName?: string;
+  scenePath?: string;
+  warnings?: string[];
+  externalChange?: boolean;
+  orphaned?: boolean;
+}
+
+export interface PrefabOverridesInfo {
+  rootId: string;
+  prefab: string;
+  path: string;
+  overrides: unknown[];
+  removedObjects: string[];
+  removedComponents: string[];
+  addedComponents: unknown[];
+  addedChildren: unknown[];
+  linkPath?: PrefabLinkLevel[];
+  applyTo?: unknown;
+}
+
+export interface PrefabLinkLevel {
+  rootId: string;
+  prefab: string;
+  path: string;
 }
 
 export interface HistoryEntry {
@@ -128,6 +185,9 @@ export interface HierarchyNode {
   tag: string;
   components: string[];
   prefab?: string;
+  linkDepth?: number;
+  overridden?: boolean;
+  prefabAdded?: boolean;
 }
 
 export interface EntityHeader {
@@ -140,6 +200,10 @@ export interface EntityHeader {
   layer: number;
   tag: string;
   prefab?: string;
+  linkDepth?: number;
+  overridden?: boolean;
+  prefabAdded?: boolean;
+  overrides?: string[];
 }
 
 export interface JsonVec3 {
@@ -171,6 +235,8 @@ export interface EntityComponent {
   type: string;
   uuid: string;
   values: unknown;
+  overrides?: string[];
+  prefabAdded?: boolean;
 }
 
 export interface EntityDetails {
@@ -188,10 +254,17 @@ export interface FieldSchema {
   readOnly: boolean;
   enumOptions?: string[];
   assetType?: string;
+  assetPath?: string;
   min?: number;
   max?: number;
   tooltip?: string;
   container?: string;
+  visibleWhen?: FieldCondition[];
+}
+
+export interface FieldCondition {
+  field: string;
+  equals: unknown[];
 }
 
 export interface ComponentSchema {
@@ -409,6 +482,121 @@ export interface AssetPreviewInfo {
   peaks?: AudioPeak[];
 }
 
+export interface EngineStatsHost {
+  kind: string;
+  state: string;
+  renderer?: string;
+  timersEnabled: boolean;
+  timeScale: number;
+}
+
+export interface EngineFrameRecord {
+  frame: number;
+  intervalMs: number;
+  tickMs: number;
+  fixedMs: number;
+  fixedTicks: number;
+  physicsMs: number;
+  updateMs: number;
+  audioMs: number;
+  renderMs: number;
+  commandsMs: number;
+  renderRequestMs: number;
+  readbackMs: number;
+}
+
+export interface EngineTiming {
+  avg: number;
+  p95: number;
+  max: number;
+}
+
+export interface EngineStatsSummary {
+  windowFrames: number;
+  fps: number;
+  tickMs: EngineTiming;
+}
+
+export interface EngineRenderStats {
+  counters: boolean;
+  drawCalls: number;
+  triangles: number;
+  vertices: number;
+  framesRendered: number;
+  width: number;
+  height: number;
+}
+
+export interface EngineSceneStats {
+  objects: number;
+  activeObjects: number;
+  components: number;
+  luaComponents: number;
+}
+
+export interface EngineLuaStats {
+  memoryBytes: number;
+  memoryCapBytes: number;
+}
+
+export interface EnginePhysicsStats {
+  backend: string;
+  bodies?: number;
+  staticBodies?: number;
+  activeBodies?: number;
+}
+
+export interface EngineProcessStats {
+  workingSetBytes: number;
+  peakWorkingSetBytes?: number;
+}
+
+export interface EngineStats {
+  host: EngineStatsHost;
+  frame: number;
+  frames: EngineFrameRecord[];
+  summary: EngineStatsSummary;
+  render?: EngineRenderStats;
+  scene?: EngineSceneStats;
+  lua?: EngineLuaStats;
+  physics?: EnginePhysicsStats;
+  process?: EngineProcessStats;
+}
+
+export interface ShaderParamInfo {
+  name: string;
+  type: string;
+  default: unknown;
+  slot?: number;
+  label?: string;
+  min?: number;
+  max?: number;
+}
+
+export interface ShaderStateInfo {
+  blend?: string;
+  cull?: string;
+  depthWrite?: boolean;
+  queue?: string;
+}
+
+export interface ShaderCookInfo {
+  status: string;
+  message?: string;
+  targets: string[];
+  diagnostics: string[];
+}
+
+export interface ShaderInfo {
+  path: string;
+  uuid: string;
+  name: string;
+  usesLighting: boolean;
+  state: ShaderStateInfo;
+  params: ShaderParamInfo[];
+  cook: ShaderCookInfo;
+}
+
 // ==================== Ids ====================
 
 export const CommandType = {
@@ -449,6 +637,8 @@ export const CommandType = {
   SetLocalTransform: 0x3A,
   CreateScript: 0x40,
   RescanAssets: 0x41,
+  RevertPrefabOverrides: 0x42,
+  ApplyPrefabOverrides: 0x43,
   ListAssets: 0xA0,
   GetAssetInfo: 0xA1,
   SetImportSettings: 0xA2,
@@ -466,6 +656,8 @@ export const CommandType = {
   GetProjectInfo: 0x70,
   SetProjectSettings: 0x71,
   SetStartupScene: 0x72,
+  SetBuildTargets: 0x73,
+  SetBuildSettings: 0x74,
   ListEditorExtensions: 0x80,
   GetEditorUi: 0x81,
   ReloadEditorExtensions: 0x84,
@@ -497,6 +689,15 @@ export const CommandType = {
   GetNetworkSettings: 0x51,
   SetNetworkSettings: 0x52,
   GetNetworkValidation: 0x53,
+  MoveAsset: 0xAF,
+  OpenPrefabStage: 0x2A,
+  SetPrefabStageMode: 0x2B,
+  SavePrefabStage: 0x2C,
+  ClosePrefabStage: 0x2D,
+  GetPrefabStage: 0x2E,
+  GetPrefabOverrides: 0x2F,
+  GetEngineStats: 0x54,
+  GetShaderInfo: 0xB5,
 } as const;
 
 export type CommandType = typeof CommandType[keyof typeof CommandType];
@@ -547,6 +748,11 @@ export const ResponseType = {
   PhysicsBackends: 0x23,
   NetworkSettings: 0x24,
   NetworkValidation: 0x25,
+  AssetsMoved: 0xA5,
+  PrefabStageInfo: 0x26,
+  EngineStats: 0x27,
+  ShaderInfo: 0x28,
+  PrefabOverrides: 0x29,
 } as const;
 
 export type ResponseType = typeof ResponseType[keyof typeof ResponseType];
@@ -590,6 +796,8 @@ export const CommandResponse = {
   SetLocalTransform: "Ok",
   CreateScript: "ScriptData",
   RescanAssets: "Ok",
+  RevertPrefabOverrides: "Ok",
+  ApplyPrefabOverrides: "Ok",
   ListAssets: "AssetList",
   GetAssetInfo: "AssetDetail",
   SetImportSettings: "Ok",
@@ -607,6 +815,8 @@ export const CommandResponse = {
   GetProjectInfo: "ProjectInfo",
   SetProjectSettings: "ProjectInfo",
   SetStartupScene: "ProjectInfo",
+  SetBuildTargets: "ProjectInfo",
+  SetBuildSettings: "ProjectInfo",
   ListEditorExtensions: "EditorExtensions",
   GetEditorUi: "EditorUi",
   ReloadEditorExtensions: "EditorExtensions",
@@ -638,6 +848,15 @@ export const CommandResponse = {
   GetNetworkSettings: "NetworkSettings",
   SetNetworkSettings: "NetworkSettings",
   GetNetworkValidation: "NetworkValidation",
+  MoveAsset: "AssetsMoved",
+  OpenPrefabStage: "PrefabStageInfo",
+  SetPrefabStageMode: "PrefabStageInfo",
+  SavePrefabStage: "PrefabStageInfo",
+  ClosePrefabStage: "PrefabStageInfo",
+  GetPrefabStage: "PrefabStageInfo",
+  GetPrefabOverrides: "PrefabOverrides",
+  GetEngineStats: "EngineStats",
+  GetShaderInfo: "ShaderInfo",
 } as const;
 
 // ==================== Messages ====================
@@ -785,6 +1004,17 @@ export interface CreateScriptRequest {
   name: string;
 }
 
+export interface RevertPrefabOverridesRequest {
+  entityId: string;
+  targets: unknown;
+}
+
+export interface ApplyPrefabOverridesRequest {
+  entityId: string;
+  targets: unknown;
+  level: number;
+}
+
 export interface ListAssetsRequest {
   folder: string;
   recursive: boolean;
@@ -849,6 +1079,14 @@ export interface SetProjectSettingsRequest {
 
 export interface SetStartupSceneRequest {
   path: string;
+}
+
+export interface SetBuildTargetsRequest {
+  targets: unknown;
+}
+
+export interface SetBuildSettingsRequest {
+  settings: unknown;
 }
 
 export interface InvokeMenuItemRequest {
@@ -919,6 +1157,7 @@ export interface ApplyPrefabRequest {
 
 export interface UnpackPrefabRequest {
   entityId: string;
+  completely: boolean;
 }
 
 export interface SetPhysicsBackendRequest {
@@ -932,6 +1171,36 @@ export interface SetNetworkSettingsRequest {
 
 export interface GetNetworkValidationRequest {
   preset: string;
+}
+
+export interface MoveAssetRequest {
+  moves: AssetMove[];
+}
+
+export interface OpenPrefabStageRequest {
+  uuidOrPath: string;
+  mode: string;
+  anchorEntityId: string;
+}
+
+export interface SetPrefabStageModeRequest {
+  mode: string;
+}
+
+export interface ClosePrefabStageRequest {
+  discard: boolean;
+}
+
+export interface GetPrefabOverridesRequest {
+  entityId: string;
+}
+
+export interface GetEngineStatsRequest {
+  sinceFrame: number;
+}
+
+export interface GetShaderInfoRequest {
+  uuidOrPath: string;
 }
 
 /** Ok has no payload */
@@ -1004,6 +1273,7 @@ export interface PickResultResponse {
   entityId: string;
   point: Vec3;
   distance: number;
+  normal: Vec3;
 }
 
 export interface BoundsResponse {
@@ -1169,6 +1439,26 @@ export interface NetworkSettingsResponse {
 
 export interface NetworkValidationResponse {
   report: NetworkValidationReport;
+}
+
+export interface AssetsMovedResponse {
+  result: AssetsMovedResult;
+}
+
+export interface PrefabStageInfoResponse {
+  info: PrefabStageInfo;
+}
+
+export interface PrefabOverridesResponse {
+  info: PrefabOverridesInfo;
+}
+
+export interface EngineStatsResponse {
+  stats: EngineStats;
+}
+
+export interface ShaderInfoResponse {
+  info: ShaderInfo;
 }
 
 export interface ErrorCodedResponse {
@@ -1910,6 +2200,40 @@ export function decodeCreateScriptRequest(payload: Uint8Array): CreateScriptRequ
   return { name };
 }
 
+/** RevertPrefabOverrides's request payload (without the frame header) */
+export function encodeRevertPrefabOverridesRequest(value: RevertPrefabOverridesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.json(value.targets);
+  return writer.finish();
+}
+
+/** Reads RevertPrefabOverrides's request payload; bytes after the last field are ignored */
+export function decodeRevertPrefabOverridesRequest(payload: Uint8Array): RevertPrefabOverridesRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const targets = reader.json() as unknown;
+  return { entityId, targets };
+}
+
+/** ApplyPrefabOverrides's request payload (without the frame header) */
+export function encodeApplyPrefabOverridesRequest(value: ApplyPrefabOverridesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  writer.json(value.targets);
+  writer.i32(value.level);
+  return writer.finish();
+}
+
+/** Reads ApplyPrefabOverrides's request payload; bytes after the last field are ignored */
+export function decodeApplyPrefabOverridesRequest(payload: Uint8Array): ApplyPrefabOverridesRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  const targets = reader.json() as unknown;
+  const level = reader.i32();
+  return { entityId, targets, level };
+}
+
 /** ListAssets's request payload (without the frame header) */
 export function encodeListAssetsRequest(value: ListAssetsRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2126,6 +2450,34 @@ export function decodeSetStartupSceneRequest(payload: Uint8Array): SetStartupSce
   return { path };
 }
 
+/** SetBuildTargets's request payload (without the frame header) */
+export function encodeSetBuildTargetsRequest(value: SetBuildTargetsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.targets);
+  return writer.finish();
+}
+
+/** Reads SetBuildTargets's request payload; bytes after the last field are ignored */
+export function decodeSetBuildTargetsRequest(payload: Uint8Array): SetBuildTargetsRequest {
+  const reader = new ProtocolReader(payload);
+  const targets = reader.json() as unknown;
+  return { targets };
+}
+
+/** SetBuildSettings's request payload (without the frame header) */
+export function encodeSetBuildSettingsRequest(value: SetBuildSettingsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.settings);
+  return writer.finish();
+}
+
+/** Reads SetBuildSettings's request payload; bytes after the last field are ignored */
+export function decodeSetBuildSettingsRequest(payload: Uint8Array): SetBuildSettingsRequest {
+  const reader = new ProtocolReader(payload);
+  const settings = reader.json() as unknown;
+  return { settings };
+}
+
 /** InvokeMenuItem's request payload (without the frame header) */
 export function encodeInvokeMenuItemRequest(value: InvokeMenuItemRequest): Uint8Array {
   const writer = new ProtocolWriter();
@@ -2340,6 +2692,7 @@ export function decodeApplyPrefabRequest(payload: Uint8Array): ApplyPrefabReques
 export function encodeUnpackPrefabRequest(value: UnpackPrefabRequest): Uint8Array {
   const writer = new ProtocolWriter();
   writer.string(value.entityId);
+  writer.bool(value.completely);
   return writer.finish();
 }
 
@@ -2347,7 +2700,8 @@ export function encodeUnpackPrefabRequest(value: UnpackPrefabRequest): Uint8Arra
 export function decodeUnpackPrefabRequest(payload: Uint8Array): UnpackPrefabRequest {
   const reader = new ProtocolReader(payload);
   const entityId = reader.string();
-  return { entityId };
+  const completely = reader.remaining > 0 ? reader.bool() : false;
+  return { entityId, completely };
 }
 
 /** SetPhysicsBackend's request payload (without the frame header) */
@@ -2392,6 +2746,108 @@ export function decodeGetNetworkValidationRequest(payload: Uint8Array): GetNetwo
   const reader = new ProtocolReader(payload);
   const preset = reader.string();
   return { preset };
+}
+
+/** MoveAsset's request payload (without the frame header) */
+export function encodeMoveAssetRequest(value: MoveAssetRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.moves);
+  return writer.finish();
+}
+
+/** Reads MoveAsset's request payload; bytes after the last field are ignored */
+export function decodeMoveAssetRequest(payload: Uint8Array): MoveAssetRequest {
+  const reader = new ProtocolReader(payload);
+  const moves = reader.json() as AssetMove[];
+  return { moves };
+}
+
+/** OpenPrefabStage's request payload (without the frame header) */
+export function encodeOpenPrefabStageRequest(value: OpenPrefabStageRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  writer.string(value.mode);
+  writer.string(value.anchorEntityId);
+  return writer.finish();
+}
+
+/** Reads OpenPrefabStage's request payload; bytes after the last field are ignored */
+export function decodeOpenPrefabStageRequest(payload: Uint8Array): OpenPrefabStageRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  const mode = reader.string();
+  const anchorEntityId = reader.string();
+  return { uuidOrPath, mode, anchorEntityId };
+}
+
+/** SetPrefabStageMode's request payload (without the frame header) */
+export function encodeSetPrefabStageModeRequest(value: SetPrefabStageModeRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.mode);
+  return writer.finish();
+}
+
+/** Reads SetPrefabStageMode's request payload; bytes after the last field are ignored */
+export function decodeSetPrefabStageModeRequest(payload: Uint8Array): SetPrefabStageModeRequest {
+  const reader = new ProtocolReader(payload);
+  const mode = reader.string();
+  return { mode };
+}
+
+/** ClosePrefabStage's request payload (without the frame header) */
+export function encodeClosePrefabStageRequest(value: ClosePrefabStageRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.bool(value.discard);
+  return writer.finish();
+}
+
+/** Reads ClosePrefabStage's request payload; bytes after the last field are ignored */
+export function decodeClosePrefabStageRequest(payload: Uint8Array): ClosePrefabStageRequest {
+  const reader = new ProtocolReader(payload);
+  const discard = reader.bool();
+  return { discard };
+}
+
+/** GetPrefabOverrides's request payload (without the frame header) */
+export function encodeGetPrefabOverridesRequest(value: GetPrefabOverridesRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.entityId);
+  return writer.finish();
+}
+
+/** Reads GetPrefabOverrides's request payload; bytes after the last field are ignored */
+export function decodeGetPrefabOverridesRequest(payload: Uint8Array): GetPrefabOverridesRequest {
+  const reader = new ProtocolReader(payload);
+  const entityId = reader.string();
+  return { entityId };
+}
+
+/** GetEngineStats's request payload (without the frame header) */
+export function encodeGetEngineStatsRequest(value: GetEngineStatsRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.u32(value.sinceFrame);
+  return writer.finish();
+}
+
+/** Reads GetEngineStats's request payload; bytes after the last field are ignored */
+export function decodeGetEngineStatsRequest(payload: Uint8Array): GetEngineStatsRequest {
+  const reader = new ProtocolReader(payload);
+  const sinceFrame = reader.u32();
+  return { sinceFrame };
+}
+
+/** GetShaderInfo's request payload (without the frame header) */
+export function encodeGetShaderInfoRequest(value: GetShaderInfoRequest): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.string(value.uuidOrPath);
+  return writer.finish();
+}
+
+/** Reads GetShaderInfo's request payload; bytes after the last field are ignored */
+export function decodeGetShaderInfoRequest(payload: Uint8Array): GetShaderInfoRequest {
+  const reader = new ProtocolReader(payload);
+  const uuidOrPath = reader.string();
+  return { uuidOrPath };
 }
 
 /** Ok's (empty) payload */
@@ -2579,6 +3035,7 @@ export function encodePickResultResponse(value: PickResultResponse): Uint8Array 
   writer.string(value.entityId);
   writeVec3(writer, value.point);
   writer.f32(value.distance);
+  writeVec3(writer, value.normal);
   return writer.finish();
 }
 
@@ -2588,7 +3045,8 @@ export function decodePickResultResponse(payload: Uint8Array): PickResultRespons
   const entityId = reader.string();
   const point = readVec3(reader);
   const distance = reader.f32();
-  return { entityId, point, distance };
+  const normal = reader.remaining > 0 ? readVec3(reader) : { x: 0, y: 0, z: 0 };
+  return { entityId, point, distance, normal };
 }
 
 /** Bounds's payload (without the frame header) */
@@ -3125,6 +3583,76 @@ export function decodeNetworkValidationResponse(payload: Uint8Array): NetworkVal
   return { report };
 }
 
+/** AssetsMoved's payload (without the frame header) */
+export function encodeAssetsMovedResponse(value: AssetsMovedResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.result);
+  return writer.finish();
+}
+
+/** Reads AssetsMoved's payload; bytes after the last field are ignored */
+export function decodeAssetsMovedResponse(payload: Uint8Array): AssetsMovedResponse {
+  const reader = new ProtocolReader(payload);
+  const result = reader.json() as AssetsMovedResult;
+  return { result };
+}
+
+/** PrefabStageInfo's payload (without the frame header) */
+export function encodePrefabStageInfoResponse(value: PrefabStageInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads PrefabStageInfo's payload; bytes after the last field are ignored */
+export function decodePrefabStageInfoResponse(payload: Uint8Array): PrefabStageInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as PrefabStageInfo;
+  return { info };
+}
+
+/** PrefabOverrides's payload (without the frame header) */
+export function encodePrefabOverridesResponse(value: PrefabOverridesResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads PrefabOverrides's payload; bytes after the last field are ignored */
+export function decodePrefabOverridesResponse(payload: Uint8Array): PrefabOverridesResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as PrefabOverridesInfo;
+  return { info };
+}
+
+/** EngineStats's payload (without the frame header) */
+export function encodeEngineStatsResponse(value: EngineStatsResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.stats);
+  return writer.finish();
+}
+
+/** Reads EngineStats's payload; bytes after the last field are ignored */
+export function decodeEngineStatsResponse(payload: Uint8Array): EngineStatsResponse {
+  const reader = new ProtocolReader(payload);
+  const stats = reader.json() as EngineStats;
+  return { stats };
+}
+
+/** ShaderInfo's payload (without the frame header) */
+export function encodeShaderInfoResponse(value: ShaderInfoResponse): Uint8Array {
+  const writer = new ProtocolWriter();
+  writer.json(value.info);
+  return writer.finish();
+}
+
+/** Reads ShaderInfo's payload; bytes after the last field are ignored */
+export function decodeShaderInfoResponse(payload: Uint8Array): ShaderInfoResponse {
+  const reader = new ProtocolReader(payload);
+  const info = reader.json() as ShaderInfo;
+  return { info };
+}
+
 /** ErrorCoded's payload (without the frame header) */
 export function encodeErrorCodedResponse(value: ErrorCodedResponse): Uint8Array {
   const writer = new ProtocolWriter();
@@ -3170,6 +3698,8 @@ export const RequestCodecs = {
   GetEntity: { encode: encodeGetEntityRequest, decode: decodeGetEntityRequest },
   SetLocalTransform: { encode: encodeSetLocalTransformRequest, decode: decodeSetLocalTransformRequest },
   CreateScript: { encode: encodeCreateScriptRequest, decode: decodeCreateScriptRequest },
+  RevertPrefabOverrides: { encode: encodeRevertPrefabOverridesRequest, decode: decodeRevertPrefabOverridesRequest },
+  ApplyPrefabOverrides: { encode: encodeApplyPrefabOverridesRequest, decode: decodeApplyPrefabOverridesRequest },
   ListAssets: { encode: encodeListAssetsRequest, decode: decodeListAssetsRequest },
   GetAssetInfo: { encode: encodeGetAssetInfoRequest, decode: decodeGetAssetInfoRequest },
   SetImportSettings: { encode: encodeSetImportSettingsRequest, decode: decodeSetImportSettingsRequest },
@@ -3184,6 +3714,8 @@ export const RequestCodecs = {
   GetLuaFields: { encode: encodeGetLuaFieldsRequest, decode: decodeGetLuaFieldsRequest },
   SetProjectSettings: { encode: encodeSetProjectSettingsRequest, decode: decodeSetProjectSettingsRequest },
   SetStartupScene: { encode: encodeSetStartupSceneRequest, decode: decodeSetStartupSceneRequest },
+  SetBuildTargets: { encode: encodeSetBuildTargetsRequest, decode: decodeSetBuildTargetsRequest },
+  SetBuildSettings: { encode: encodeSetBuildSettingsRequest, decode: decodeSetBuildSettingsRequest },
   InvokeMenuItem: { encode: encodeInvokeMenuItemRequest, decode: decodeInvokeMenuItemRequest },
   InvokeInspectorAction: { encode: encodeInvokeInspectorActionRequest, decode: decodeInvokeInspectorActionRequest },
   BeginEditGroup: { encode: encodeBeginEditGroupRequest, decode: decodeBeginEditGroupRequest },
@@ -3201,6 +3733,13 @@ export const RequestCodecs = {
   SetPhysicsBackend: { encode: encodeSetPhysicsBackendRequest, decode: decodeSetPhysicsBackendRequest },
   SetNetworkSettings: { encode: encodeSetNetworkSettingsRequest, decode: decodeSetNetworkSettingsRequest },
   GetNetworkValidation: { encode: encodeGetNetworkValidationRequest, decode: decodeGetNetworkValidationRequest },
+  MoveAsset: { encode: encodeMoveAssetRequest, decode: decodeMoveAssetRequest },
+  OpenPrefabStage: { encode: encodeOpenPrefabStageRequest, decode: decodeOpenPrefabStageRequest },
+  SetPrefabStageMode: { encode: encodeSetPrefabStageModeRequest, decode: decodeSetPrefabStageModeRequest },
+  ClosePrefabStage: { encode: encodeClosePrefabStageRequest, decode: decodeClosePrefabStageRequest },
+  GetPrefabOverrides: { encode: encodeGetPrefabOverridesRequest, decode: decodeGetPrefabOverridesRequest },
+  GetEngineStats: { encode: encodeGetEngineStatsRequest, decode: decodeGetEngineStatsRequest },
+  GetShaderInfo: { encode: encodeGetShaderInfoRequest, decode: decodeGetShaderInfoRequest },
 } as const;
 
 /** Each response's codecs */
@@ -3249,5 +3788,10 @@ export const ResponseCodecs = {
   PhysicsBackends: { encode: encodePhysicsBackendsResponse, decode: decodePhysicsBackendsResponse },
   NetworkSettings: { encode: encodeNetworkSettingsResponse, decode: decodeNetworkSettingsResponse },
   NetworkValidation: { encode: encodeNetworkValidationResponse, decode: decodeNetworkValidationResponse },
+  AssetsMoved: { encode: encodeAssetsMovedResponse, decode: decodeAssetsMovedResponse },
+  PrefabStageInfo: { encode: encodePrefabStageInfoResponse, decode: decodePrefabStageInfoResponse },
+  PrefabOverrides: { encode: encodePrefabOverridesResponse, decode: decodePrefabOverridesResponse },
+  EngineStats: { encode: encodeEngineStatsResponse, decode: decodeEngineStatsResponse },
+  ShaderInfo: { encode: encodeShaderInfoResponse, decode: decodeShaderInfoResponse },
   ErrorCoded: { encode: encodeErrorCodedResponse, decode: decodeErrorCodedResponse },
 } as const;

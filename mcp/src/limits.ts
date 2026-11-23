@@ -57,6 +57,11 @@ export const MaxWritesPerSession = 2000
 export const MaxBatchOps = 500
 /** A text asset written through n2_write_text_asset or n2_create_script: bytes of UTF-8 */
 export const WriteTextMaxBytes = 100 * 1024
+/** {from, to} pairs in one n2_move_asset call (the host takes 256; an agent makes smaller, reviewable moves) */
+export const MaxMovesPerCall = 50
+/** Moved assets listed in an n2_move_asset answer, and host warnings kept (a folder move lists every asset under it) */
+export const MovedListed = 100
+export const MoveWarningsListed = 20
 /** Text asset writes per session */
 export const MaxTextWritesPerSession = 200
 /** A file this large or larger is not overwritten (its previous content must be kept as a backup): bytes */

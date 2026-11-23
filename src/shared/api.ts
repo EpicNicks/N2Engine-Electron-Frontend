@@ -5,6 +5,8 @@
 import type {
   AssetDetails,
   AssetListResponse,
+  AssetMove,
+  AssetsMovedResult,
   AutosaveInfo,
   CameraPositionResponse,
   EditResultResponse,
@@ -13,6 +15,7 @@ import type {
   BoundsResponse,
   ComponentSchema,
   EngineHealthResponse,
+  EngineStats,
   ClipboardPayload,
   EntityDataResponse,
   EventsResponse,
@@ -23,8 +26,10 @@ import type {
   InputEvent,
   LuaSyntaxResult,
   NetworkSettingsInfo,
+  ShaderInfo,
   NetworkValidationReport,
   PhysicsBackendsInfo,
+  PrefabOverridesInfo,
   ProjectInfoResponse,
   SceneInfoResponse,
   ServerInfoResponse,
@@ -32,6 +37,7 @@ import type {
   Vec3,
 } from "../protocol/protocol.generated"
 import type { AssetPreview } from "../protocol/editor-tooling"
+import type { PrefabStage, PrefabStageMode } from "../protocol/prefab-stage"
 import type { AudioSamples } from "../audio-stream"
 import type { ExtensionsInfo, ExtensionsResult, ExtensionsUi, InvokeResult } from "../protocol/extensions"
 
@@ -87,6 +93,11 @@ export interface EngineCommands {
   /** settings: a JSON merge patch object (RFC 7386: a null value removes the key) */
   setProjectSettings(settings: JsonObject): Promise<ProjectInfoResponse>
   setStartupScene(path: string): Promise<ProjectInfoResponse>
+  /**
+   * Protocol 1.29.0 (buildTargets capability): changes project.n2proj's build.targets with a JSON merge patch (a target
+   * or a key set to null is removed). The host refuses secret-looking keys and PEM blocks, and names the key at fault.
+   */
+  setBuildTargets(targets: JsonObject): Promise<ProjectInfoResponse>
 
   createScript(name: string): Promise<string>
   rescanAssets(): Promise<void>
@@ -113,8 +124,15 @@ export interface EngineCommands {
   createScriptAsset(path: string, className: string): Promise<{ path: string; uuid: string }>
   /** Makes a folder and those above it that are missing; Ok when it exists */
   createFolder(path: string): Promise<void>
+  /** Moves assets and folders, all or nothing (protocol 1.24.0; 1..MaxAssetMoves {from, to} pairs); see EngineClient.moveAssets */
+  moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult>
 
   getEngineHealth(): Promise<EngineHealthResponse>
+  /**
+   * Protocol 1.28.0 (engineStats capability): the host's frame records after sinceFrame, the last frame's render
+   * counters and its scene, Lua, physics and process figures (a Read command that never logs; the Profiler polls it)
+   */
+  getEngineStats(sinceFrame: number): Promise<EngineStats>
 
   /**
    * PollEvents: the host's events after afterSeq in epoch (0, 0 for everything it still keeps), at most maxEvents
@@ -162,18 +180,36 @@ export interface EngineCommands {
   instantiatePrefab(uuidOrPath: string, parentId: string, siblingIndex: number, hasPosition: boolean, position: Vec3): Promise<string>
   /** Protocol 1.19.0: overwrites the linked prefab file with the object (refused in play) */
   applyPrefab(entityId: string): Promise<void>
-  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step) */
-  unpackPrefab(entityId: string): Promise<void>
+  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step); completely (1.34.0) unpacks the instances inside too */
+  unpackPrefab(entityId: string, completely: boolean): Promise<void>
+  /** Protocol 1.33.0 (prefabNesting): the changes of the prefab instance the object is in (a Read command) */
+  getPrefabOverrides(entityId: string): Promise<PrefabOverridesInfo>
+  /** Protocol 1.33.0: reverts the named changes of that instance, one undo step (a Write command) */
+  revertPrefabOverrides(entityId: string, targets: unknown[]): Promise<void>
+  /** Protocol 1.34.0 (prefabOverridesApply): writes the named changes into the prefab at level of the link path (a Write command; refused in play) */
+  applyPrefabOverrides(entityId: string, targets: unknown[], level: number): Promise<void>
   /** Protocol 1.20.0 (physicsBackends capability): the 3D physics backends the host has, what each declares, and which the project uses (a Read command) */
   getPhysicsBackends(): Promise<PhysicsBackendsInfo>
   /** Protocol 1.20.0: sets physics.backend ("physx" or "jolt"); takes effect at the next play session or host start. A Write command: refused in play, on a read-only host and for a viewer */
   setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo>
   /** Protocol 1.21.0 (networkPanel capability): the network preset, the three preset bundles row by row, the customisation and the nudge (a Read command) */
   getNetworkSettings(): Promise<NetworkSettingsInfo>
+  /** Protocol 1.32.0 (shaders capability): a Shader asset's header, parameters and cook state, by UUID or res:// path (a Read command) */
+  getShaderInfo(uuidOrPath: string): Promise<ShaderInfo>
   /** Protocol 1.21.0: sets the network preset (empty keeps it) and the tunable network settings (a merge patch of the network block); takes effect at the next play session or host start. A Write command */
   setNetworkSettings(preset: string, settings: JsonObject): Promise<NetworkSettingsInfo>
   /** Protocol 1.21.0: the startup checks of a preset ("none", "authoritative", "deterministic", or empty for the project's own), without starting anything (a Read command) */
   getNetworkValidation(preset: string): Promise<NetworkValidationReport>
+  /** Protocol 1.26.0 (prefabStage capability): opens a prefab for editing, parking the open scene; answers the stage */
+  openPrefabStage(uuidOrPath: string, mode: PrefabStageMode, anchorEntityId: string): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: Isolated or In Scene (not an edit) */
+  setPrefabStageMode(mode: PrefabStageMode): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: writes the stage to its .prefab file */
+  savePrefabStage(): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: closes the stage (refused with unsaved changes unless discard); answers null */
+  closePrefabStage(discard: boolean): Promise<PrefabStage | null>
+  /** Protocol 1.26.0: the open stage, or null (a Read command) */
+  getPrefabStage(): Promise<PrefabStage | null>
   /** One object in full: header, local transform, components' saved values, and its local-to-world matrix */
   getEntity(entityId: string): Promise<EntityDataResponse>
   /** Sets an object's transform relative to its parent; rotation is a quaternion (the host normalises it) */
@@ -262,7 +298,10 @@ export type EngineCommandName = keyof EngineCommands
  * The type of each argument of a forwarded command, checked by the main process before the call (the page is not
  * trusted to send what the TypeScript types say)
  */
-export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "stringArray"
+export type ArgKind = "inputEvents" | "string" | "number" | "int32" | "uint32" | "bool" | "vec3" | "quat" | "jsonObject" | "jsonArray" | "stringArray" | "assetMoves" | "stageMode"
+
+/** MoveAsset takes at most this many {from, to} pairs (the host refuses more) */
+export const MaxAssetMoves = 256
 
 /** GetEntityBounds takes at most this many ids (the host refuses more) */
 export const MaxEntityBoundsIds = 4096
@@ -292,6 +331,7 @@ export const EngineCommandArgs = {
   getOpenScene: [],
   getProjectInfo: [],
   setProjectSettings: ["jsonObject"],
+  setBuildTargets: ["jsonObject"],
   setStartupScene: ["string"],
   createScript: ["string"],
   rescanAssets: [],
@@ -302,7 +342,9 @@ export const EngineCommandArgs = {
   writeTextAsset: ["string", "string"],
   createScriptAsset: ["string", "string"],
   createFolder: ["string"],
+  moveAssets: ["assetMoves"],
   getEngineHealth: [],
+  getEngineStats: ["uint32"],
   pollEvents: ["uint32", "uint32", "uint32"],
   createEntity: ["string"],
   destroyEntity: ["string"],
@@ -319,12 +361,21 @@ export const EngineCommandArgs = {
   createPrefab: ["string", "string", "bool"],
   instantiatePrefab: ["string", "string", "int32", "bool", "vec3"],
   applyPrefab: ["string"],
-  unpackPrefab: ["string"],
+  unpackPrefab: ["string", "bool"],
+  getPrefabOverrides: ["string"],
+  revertPrefabOverrides: ["string", "jsonArray"],
+  applyPrefabOverrides: ["string", "jsonArray", "int32"],
   getPhysicsBackends: [],
   setPhysicsBackend: ["string"],
   getNetworkSettings: [],
+  getShaderInfo: ["string"],
   setNetworkSettings: ["string", "jsonObject"],
   getNetworkValidation: ["string"],
+  openPrefabStage: ["string", "stageMode", "string"],
+  setPrefabStageMode: ["stageMode"],
+  savePrefabStage: [],
+  closePrefabStage: ["bool"],
+  getPrefabStage: [],
   getEntity: ["string"],
   setLocalTransform: ["string", "vec3", "quat", "vec3"],
   getComponentTypes: [],
@@ -362,8 +413,11 @@ interface ArgKindTypes {
   vec3: Vec3
   quat: Quat
   jsonObject: JsonObject
+  jsonArray: unknown[]
   stringArray: string[]
+  assetMoves: AssetMove[]
   inputEvents: InputEvent[]
+  stageMode: PrefabStageMode
 }
 type KindsToArgs<T extends readonly ArgKind[]> = { -readonly [I in keyof T]: ArgKindTypes[T[I]] }
 type ArgsMatch = {
@@ -696,6 +750,8 @@ export interface PlayCommands {
   getAudio(): Promise<AudioSamples | null>
   pollEvents(epoch: number, afterSeq: number, maxEvents: number): Promise<EventsResponse>
   sendInput(events: PlayInputEvent[]): Promise<void>
+  /** The game's frame records and figures (protocol 1.28.0, the edit host's engineStats capability; a play host is the same executable) */
+  getEngineStats(sinceFrame: number): Promise<EngineStats>
 }
 
 export type PlayCommandName = keyof PlayCommands
@@ -707,6 +763,7 @@ export const PlayCommandArgs = {
   getAudio: [],
   pollEvents: ["uint32", "uint32", "uint32"],
   sendInput: ["inputEvents"],
+  getEngineStats: ["uint32"],
 } as const satisfies { readonly [K in PlayCommandName]: readonly ArgKind[] }
 
 export const PlayCommandNames = Object.keys(PlayCommandArgs) as PlayCommandName[]
@@ -895,4 +952,127 @@ export const Channels = {
   agentDone: "agent:done",
   /** (labels: EditMenuLabels) → IpcResult */
   editMenuLabels: "edit:menuLabels",
+
+  /** () → IpcResult<BuildTargetList>: n2build list, and where n2build is */
+  buildList: "build:list",
+  /** (target: string) → IpcResult<DoctorReport>: n2build doctor for the open local project */
+  buildDoctor: "build:doctor",
+  /** (request: BuildRequest) → IpcResult<BuildState>: starts n2build build (or run) for the open local project */
+  buildStart: "build:start",
+  /** () → IpcResult<BuildState>: ends the running build, with whatever it started */
+  buildCancel: "build:cancel",
+  /** () → IpcResult<BuildState> */
+  buildGetState: "build:getState",
+  /** main → page: BuildUpdate (the state, and the events since the last update) */
+  buildUpdate: "build:update",
 } as const
+
+// ==================== Builds (build targets stage 3: n2build from the main process) ====================
+
+/** A target n2build knows (n2build list --json; docs/build-targets.html#json) */
+export interface BuildTargetInfo {
+  name: string
+  displayName: string
+  hostSystems: string[]
+  /** Whether this machine's system can build it */
+  buildableHere: boolean
+  /** "targets/" for the engine's own; else the folder a private target came from */
+  source: string
+}
+
+/** One thing a target needs, as n2build doctor reports it */
+export interface DoctorCheck {
+  id: string
+  title: string
+  required: boolean
+  ok: boolean
+  version: string | null
+  detail: string
+  fix: string | null
+}
+
+export interface DoctorReport {
+  target: string
+  displayName: string
+  ok: boolean
+  checks: DoctorCheck[]
+}
+
+/** Where n2build is: the setting (settings.json's n2buildPath), N2BUILD_PATH, or beside the host's engine checkout */
+export interface N2BuildLocation {
+  path: string | null
+  source: "setting" | "env" | "host" | null
+  /** Why it can't be used (not found, or the editor connects to a remote host) */
+  problem: string | null
+}
+
+export interface BuildTargetList {
+  location: N2BuildLocation
+  targets: BuildTargetInfo[]
+}
+
+/** What the page asks to build: n2build's own arguments, checked again in the main process */
+export interface BuildRequest {
+  target: string
+  /** Absent: the target's build.targets config, else release (n2build decides) */
+  config?: string
+  /** Build and Run: n2build run (a desktop target starts the game; the web one serves it) */
+  run: boolean
+  /** A .zip or .7z beside the package (Build only) */
+  archive?: "zip" | "7z"
+}
+
+/** n2build's result line */
+export interface BuildResult {
+  type: "result"
+  ok: boolean
+  error?: string
+  output?: string
+  entry?: string
+  archive?: string
+  url?: string
+  serving?: boolean
+}
+
+/** n2build --json events (tools/n2build/lib/report.mjs) */
+export type BuildEvent =
+  | { type: "step"; id: string; title: string }
+  | { type: "log"; stream: "stdout" | "stderr"; text: string }
+  | { type: "warning"; text: string }
+  | ({ type: "doctor" } & DoctorReport)
+  | { type: "targets"; targets: BuildTargetInfo[] }
+  | BuildResult
+
+export type BuildStatus = "idle" | "running" | "succeeded" | "failed" | "cancelled"
+
+export interface BuildState {
+  status: BuildStatus
+  /** Counts builds: a higher one is a newer build (the page clears its log for it) */
+  id: number
+  request: BuildRequest | null
+  /** The step running now (or the last one) */
+  step: { id: string; title: string } | null
+  /** The last build's result line, once it ended */
+  result: BuildResult | null
+  /** Why the build ended without a result line (n2build crashed, or could not start) */
+  message: string | null
+}
+
+export const InitialBuildState: BuildState = { status: "idle", id: 0, request: null, step: null, result: null, message: null }
+
+/** main → page: the state, and the events of build state.id since the previous update (in order) */
+export interface BuildUpdate {
+  state: BuildState
+  events: BuildEvent[]
+}
+
+/** window.build: n2build, run by the main process for the open local project (never with a remote host) */
+export interface BuildApi {
+  state(): BuildState
+  /** Every update, in order: the state and the build's events since the last one */
+  onUpdate(listener: (update: BuildUpdate) => void): void
+  list(): Promise<BuildTargetList>
+  doctor(target: string): Promise<DoctorReport>
+  start(request: BuildRequest): Promise<BuildState>
+  cancel(): Promise<BuildState>
+}

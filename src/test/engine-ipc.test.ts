@@ -165,6 +165,7 @@ class FakeClient {
   writeTextAsset = (...args: unknown[]) => this.record("writeTextAsset", args)
   createScriptAsset = (...args: unknown[]) => this.record("createScriptAsset", args)
   createFolder = (...args: unknown[]) => this.record("createFolder", args)
+  moveAssets = (...args: unknown[]) => this.record("moveAssets", args)
 
   async renderFrame(): Promise<unknown> {
     this.calls.push(["renderFrame", []])
@@ -550,6 +551,7 @@ describe("EngineHost (the main process's engine IPC)", () => {
       ["writeTextAsset", ["res://a.lua", "print(1)\r\n"]],
       ["createScriptAsset", ["res://a.lua", ""]],
       ["createFolder", ["res://scripts"]],
+      ["moveAssets", [[{ from: "res://a.png", to: "res://b/a.png" }]]],
     ]
     for (const [name, args] of calls) {
       const result = await ipc.invoke(Channels.engineCall, editor, name, args)
@@ -570,6 +572,15 @@ describe("EngineHost (the main process's engine IPC)", () => {
       ["writeTextAsset", ["res://a.lua", 5]],
       ["createScriptAsset", ["res://a.lua"]],
       ["createFolder", [["res://x"]]],
+      ["moveAssets", []],
+      ["moveAssets", [[]]],
+      ["moveAssets", ["res://a.png"]],
+      ["moveAssets", [[{ from: "res://a.png" }]]],
+      ["moveAssets", [[{ from: "res://a.png", to: 5 }]]],
+      ["moveAssets", [[null]]],
+      ["moveAssets", [Array.from({ length: 257 }, (_, i) => ({ from: `res://${i}`, to: `res://b/${i}` }))]],
+      // A hole in a sparse array is not an item
+      ["moveAssets", [new Array(2)]],
     ]
     client.calls.length = 0
     for (const [name, args] of bad) {

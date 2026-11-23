@@ -7,9 +7,10 @@
 // changed on disk under unsaved edits is flagged, not overwritten by a reload.
 import { batch, computed, signal } from "@preact/signals-core"
 import type { AssetsChangedEvent } from "../protocol/editor-events"
-import type { AssetDetails } from "../protocol/protocol.generated"
+import type { AssetDetails, AssetsMovedResult } from "../protocol/protocol.generated"
 import { errorCodeOf, errorTextOf } from "../shared/api"
 import { AssetPreviewCache, PreviewEngine } from "./asset-previews"
+import { planMove, remapPath } from "./asset-move"
 import type { EngineApi, JsonObject } from "../shared/api"
 import {
   LineEnding,
@@ -46,6 +47,7 @@ type Engine = Pick<
   | "writeTextAsset"
   | "createScriptAsset"
   | "createFolder"
+  | "moveAssets"
 >
 
 /** The host's log, for the errors a script's reload logs after it was written */
@@ -150,6 +152,8 @@ export class AssetsState {
     (this.listing.value?.assets ?? []).filter((a) => isSceneAsset(a.type, a.path)).map((a) => a.path)
   )
 
+  /** What the host said about the last move that is worth a look (a script that names a moved file); empty when nothing */
+  readonly moveNotes = signal<readonly string[]>([])
   readonly tabs = signal<readonly TextTab[]>([])
   readonly activeTab = signal<string | null>(null)
 
@@ -167,7 +171,9 @@ export class AssetsState {
     /** Why the assets can't be changed now (a play session: the host refuses its writers); null when they can */
     private readonly editBlocked: () => string | null = () => null,
     /** Whether the host has GetAssetPreview now (connected, protocol 1.17.0 or later); default: yes */
-    previewsEnabled: () => boolean = () => true
+    previewsEnabled: () => boolean = () => true,
+    /** The loaded scene's file (res://...), which the host will not move; null when none */
+    private readonly openScene: () => string | null = () => null
   ) {
     this.previews = new AssetPreviewCache(engine as PreviewEngine, { enabled: previewsEnabled })
   }
@@ -526,6 +532,60 @@ export class AssetsState {
   }
 
   /**
+   * Moves files and folders into a folder (MoveAsset, protocol 1.24.0), all or nothing; answers the host's report, or null
+   * when nothing needed to move (already there). Throws the host's refusal, or why the drop is refused before asking
+   * (a folder into itself, a name already in the folder, the folder holding the open scene). What the panel holds by
+   * path (selection, open folders, open files) follows the assets; their UUIDs do not change.
+   */
+  async moveAssets(sources: readonly string[], folder: string): Promise<AssetsMovedResult | null> {
+    const blocked = this.blockedReason()
+    if (blocked) throw new Error(blocked)
+    const listing = this.listing.value
+    if (!listing) throw new Error("The assets are not listed yet")
+    const plan = planMove(listing, sources, folder, this.openScene())
+    if (plan.problem) throw new Error(plan.problem)
+    if (plan.moves.length === 0) return null
+    const result = await this.engine.moveAssets(plan.moves)
+    this.applyMoves(plan.moves)
+    batch(() => {
+      this.moveNotes.value = result.warnings
+      this.open.value = new Set(this.open.value).add(folder)
+    })
+    this.previews.invalidate(plan.moves.flatMap((m) => [m.from, m.to]), false)
+    await this.refresh().finally(() => this.previews.notifyChanged())
+    return result
+  }
+
+  /** Dismisses the notes of the last move */
+  dismissMoveNotes(): void {
+    if (this.moveNotes.value.length > 0) this.moveNotes.value = []
+  }
+
+  /** Follows moved assets: the selection, the open folders and the open files keep their place under the new paths */
+  private applyMoves(moves: readonly { from: string; to: string }[]): void {
+    if (moves.length === 0) return
+    const follow = (path: string) => remapPath(path, moves)
+    const followAll = (paths: ReadonlySet<string>): ReadonlySet<string> => {
+      const next = new Set<string>()
+      for (const path of paths) next.add(follow(path))
+      return next
+    }
+    batch(() => {
+      const selected = this.selected.value
+      if (selected !== null) this.selected.value = follow(selected)
+      if (this.marked.value.size > 0) this.marked.value = followAll(this.marked.value)
+      if (this.open.value.size > 0) this.open.value = followAll(this.open.value)
+      if (this.tabs.value.some((tab) => follow(tab.path) !== tab.path)) {
+        this.tabs.value = this.tabs.value.map((tab) => ({ ...tab, path: follow(tab.path) }))
+      }
+      const active = this.activeTab.value
+      if (active !== null) this.activeTab.value = follow(active)
+      const detail = this.detail.value
+      if (detail && follow(detail.path) !== detail.path) this.detail.value = { ...detail, path: follow(detail.path) }
+    })
+  }
+
+  /**
    * Makes a script from the engine's template inside a folder, selects it and opens it in the editor; answers its path
    * as the host spells it. Throws the host's refusal (an existing file at the path, a bad name).
    */
@@ -663,6 +723,9 @@ export class AssetsState {
   async onAssetsChanged(event: AssetsChangedEvent | null): Promise<void> {
     // A changed file has another picture; events that were missed (null) could have changed any
     // (the views ask again once the listing, which carries the files' new times, is read)
+    // Assets moved (by this editor, or by another client of the host): what is held by path follows them, so an open file
+    // is the same file at its new path and not one that was removed
+    if (event?.moved && event.moved.length > 0) this.applyMoves(event.moved)
     if (event) this.previews.invalidate([...event.modified, ...event.added, ...event.removed], false)
     else this.previews.clear(false)
     const refreshed = this.refresh().finally(() => this.previews.notifyChanged())

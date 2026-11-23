@@ -52,6 +52,10 @@ type Engine = Pick<
 export interface PrefabOptions {
   /** Whether the host has the prefabAssets capability (a signal, so the panel follows a reconnect) */
   readonly enabled: { readonly value: boolean }
+  /** Whether it has prefab links (prefabNesting, 1.33.0): an instance follows its prefab and has overrides */
+  readonly nesting?: { readonly value: boolean }
+  /** Whether it has ApplyPrefabOverrides, the override marks, Unpack completely and variants (prefabOverridesApply, 1.34.0) */
+  readonly overridesApply?: { readonly value: boolean }
   /** The path of the prefab asset with this UUID in the assets listing; null when it is not listed */
   pathOf(uuid: string): string | null
   /** Whether the assets listing has a file at this path (a stale listing is caught by the host, which refuses an overwrite) */
@@ -152,8 +156,39 @@ export class HierarchyState {
     if (reason !== null) throw new Error(`The scene can't be changed while ${reason}`)
   }
 
+  /** The scene's selection and expanded objects while a prefab stage is open (they come back when it closes) */
+  private parked: { selection: Selection; expanded: ReadonlySet<string> } | null = null
+
+  /**
+   * A prefab stage opened (protocol 1.26.0): the scene's selection and expanded objects are kept aside and cleared. The
+   * stage's ids are the prefab file's, which can equal ids of the scene (the object it was made from has the same ones),
+   * so keeping them selected would select the wrong objects.
+   */
+  enterPrefabStage(): void {
+    if (this.parked) return
+    batch(() => {
+      this.parked = { selection: this.selection.value, expanded: this.expanded.value }
+      this.expanded.value = new Set()
+      this.renaming.value = null
+      this.setSelection(emptySelection)
+    })
+  }
+
+  /** The stage closed: the scene's selection and expanded objects come back (the next read keeps those that exist) */
+  leavePrefabStage(): void {
+    const parked = this.parked
+    if (!parked) return
+    this.parked = null
+    batch(() => {
+      this.renaming.value = null
+      this.expanded.value = parked.expanded
+      this.setSelection(parked.selection)
+    })
+  }
+
   /** Everything is gone (disconnected, or another host) */
   reset(): void {
+    this.parked = null
     this.fetches++
     batch(() => {
       this.response.value = null
@@ -616,6 +651,21 @@ export class HierarchyState {
     return prefabs
   }
 
+  /** Whether instances follow their prefab (the host has prefab links, 1.33.0) */
+  get canNesting(): boolean {
+    return this.canPrefabs && this.options.prefabs?.nesting?.value === true
+  }
+
+  /** Whether Unpack Completely, Apply to a level and variants are there (1.34.0) */
+  get canOverridesApply(): boolean {
+    return this.canNesting && this.options.prefabs?.overridesApply?.value === true
+  }
+
+  /** Whether the object is a prefab link's root or inside one (1.33.0's linkDepth), not a legacy copy */
+  isLinked(id: string): boolean {
+    return (this.tree.value.nodes.get(id)?.linkDepth ?? 0) > 0
+  }
+
   /** The asset UUID of the prefab the object is linked to (an instance's root); null when it is not linked */
   prefabOf(id: string): string | null {
     return this.tree.value.nodes.get(id)?.prefab || null
@@ -725,9 +775,14 @@ export class HierarchyState {
       const node = this.tree.value.nodes.get(id)
       if (uuid === null || !node) return false
       const path = prefabs.pathOf(uuid) ?? "the prefab"
+      // A link instance's prefab reaches every instance of it (1.33.0); a copy's never did
+      const follows = this.canNesting && this.isLinked(id)
       if (
         !(await this.options.confirm(
-          `Overwrite ${path} with '${node.name}'? The file is replaced and Undo does not bring it back. Objects already made from the prefab are not updated.`,
+          `Overwrite ${path} with '${node.name}'? The file is replaced and Undo does not bring it back. ` +
+            (follows
+              ? "Every instance of the prefab is updated, keeping its own overrides."
+              : "Objects already made from the prefab are not updated."),
           "Apply"
         ))
       ) {
@@ -742,14 +797,18 @@ export class HierarchyState {
     })
   }
 
-  /** Clears the object's link to its prefab (one undo step); the object, what is under it and the file stay */
-  unpackPrefab(id: string): Promise<boolean> {
+  /**
+   * Clears the object's link to its prefab (one undo step); the object, what is under it and the file stay. completely
+   * (1.34.0) also unpacks every instance inside it, so nothing under the object is linked any more.
+   */
+  unpackPrefab(id: string, completely = false): Promise<boolean> {
     return this.exclusive(false, async () => {
       this.assertEditable()
       this.assertPrefabs()
       if (this.prefabOf(id) === null) return false
+      if (completely && !this.canOverridesApply) throw new Error("This editor host can't unpack completely (it needs protocol 1.34.0)")
       try {
-        await this.engine.unpackPrefab!(id)
+        await this.engine.unpackPrefab!(id, completely)
       } finally {
         await this.refresh()
       }

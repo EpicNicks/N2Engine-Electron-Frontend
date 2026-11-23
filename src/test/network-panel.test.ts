@@ -328,3 +328,50 @@ describe("time dilation (protocol 1.23.0)", () => {
     assert.equal(find(h.settings(), "network.authoritative.timeDilation.minScale"), undefined)
   })
 })
+
+describe("the nudge follows the scene", () => {
+  test("is read again, after a pause, when the scene changes, and stops when unwatched", async () => {
+    let networkObjects = 0
+    let reads = 0
+    const sceneChangeCount = signal(0)
+    const model = new NetworkPanelModel({
+      getNetworkSettings: async () => {
+        reads++
+        return fakeNetworkAnswers({}, { networkObjects }).info
+      },
+      getNetworkValidation: async (preset) => fakeNetworkAnswers({}, { networkObjects }).report(preset),
+      setNetworkSettings: async () => fakeNetworkAnswers({}, { networkObjects }).info,
+      setProjectSettings: async () => ({}) as never,
+      connected: signal(true),
+      supported: signal(true),
+      readOnlyReason: signal<string | null>(null),
+      sceneChangeCount,
+    })
+    const stop = model.watchScene(5)
+    await model.refresh()
+    assert.equal(model.info.value?.nudge.show, false)
+    const before = reads
+
+    // The first NetworkObject is added: no project save, only a scene change (three in a burst read once)
+    networkObjects = 1
+    sceneChangeCount.value++
+    sceneChangeCount.value++
+    sceneChangeCount.value++
+    assert.equal(reads, before, "not read at once")
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await settle()
+    assert.equal(reads, before + 1)
+    assert.equal(model.info.value?.nudge.show, true)
+    assert.equal(model.info.value?.nudge.networkObjects, 1)
+
+    stop()
+    sceneChangeCount.value++
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(reads, before + 1, "nothing is read after stop")
+  })
+
+  test("a model without the signal does not watch", () => {
+    const h = modelOf()
+    assert.doesNotThrow(() => h.model.watchScene()())
+  })
+})

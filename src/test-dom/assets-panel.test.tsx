@@ -6,7 +6,7 @@ import { screen, waitFor, within, fireEvent } from "@testing-library/preact"
 import userEvent from "@testing-library/user-event"
 import { AssetsState } from "../renderer/assets-state"
 import { AssetsPanel } from "../renderer/assets-panel"
-import { AssetDragType, parseAssetDrag } from "../renderer/drag-types"
+import { AssetDragType, AssetMoveDragType, parseAssetDrag } from "../renderer/drag-types"
 import { ContextMenu, PromptDialog, showContextMenu } from "../renderer/ui"
 import { HostReadOnlyReason } from "../renderer/store"
 import { renderWithApp } from "./helpers"
@@ -402,10 +402,124 @@ describe("dragging an asset", () => {
     const row = rowOf("hero.png")
     assert.equal(row.getAttribute("draggable"), "true")
     fireEvent.dragStart(row, { dataTransfer })
-    assert.equal(dataTransfer.effectAllowed, "copy")
+    // Copied onto a field, moved onto a folder
+    assert.equal(dataTransfer.effectAllowed, "copyMove")
     assert.equal(stored.get("text/plain"), "res://hero.png")
     const carried = parseAssetDrag(stored.get(AssetDragType) ?? "")
     assert.deepEqual(carried, { uuid: U1, path: "res://hero.png", resourceType: "Texture" })
+    assert.deepEqual(JSON.parse(stored.get(AssetMoveDragType) ?? "null"), ["res://hero.png"])
+  })
+})
+
+/** A dataTransfer the panel can both fill and read back, as a browser's is across one drag (jsdom has none) */
+function makeTransfer() {
+  const stored = new Map<string, string>()
+  return {
+    stored,
+    effectAllowed: "",
+    dropEffect: "",
+    get types() {
+      return [...stored.keys()]
+    },
+    setData: (type: string, data: string) => void stored.set(type, data),
+    getData: (type: string) => stored.get(type) ?? "",
+  }
+}
+
+describe("moving assets by dragging (protocol 1.24.0)", () => {
+  test("a file dropped on a folder row is moved there; the folder shows it is a target while the drag is over it", async () => {
+    const { host, assets } = await renderAssets()
+    const transfer = makeTransfer()
+    fireEvent.dragStart(rowOf("hero.png"), { dataTransfer: transfer })
+    const folder = rowOf("scenes")
+    // preventDefault on the drag-over is what allows the drop
+    assert.equal(fireEvent.dragOver(folder, { dataTransfer: transfer }), false)
+    assert.ok(folder.classList.contains("drop-target"))
+    assert.equal(transfer.dropEffect, "move")
+    fireEvent.drop(folder, { dataTransfer: transfer })
+    await waitFor(() => assert.ok(host.calls.includes("moveAssets res://hero.png>res://scenes/hero.png")))
+    assert.ok(!folder.classList.contains("drop-target"))
+    await waitFor(() => assert.ok(assets.listing.value?.assets.some((a) => a.path === "res://scenes/hero.png")))
+    assert.ok(!assets.listing.value?.assets.some((a) => a.path === "res://hero.png"))
+  })
+
+  test("a folder is dragged by its row, and a drop on the list moves it to the root", async () => {
+    const { host } = await renderAssets()
+    const transfer = makeTransfer()
+    const scripts = rowOf("scripts")
+    assert.equal(scripts.getAttribute("draggable"), "true")
+    fireEvent.dragStart(scripts, { dataTransfer: transfer })
+    assert.equal(transfer.effectAllowed, "move")
+    // scripts is already in the root: nothing to move there
+    const list = document.querySelector<HTMLElement>(".asset-list") as HTMLElement
+    assert.equal(fireEvent.dragOver(list, { dataTransfer: transfer }), true)
+    assert.ok(list.classList.contains("drop-refused"))
+    // Onto scenes it goes
+    fireEvent.dragOver(rowOf("scenes"), { dataTransfer: transfer })
+    fireEvent.drop(rowOf("scenes"), { dataTransfer: transfer })
+    await waitFor(() => assert.ok(host.calls.includes("moveAssets res://scripts>res://scenes/scripts")))
+  })
+
+  test("a folder over itself is marked as refused and takes no drop", async () => {
+    const { host } = await renderAssets()
+    const transfer = makeTransfer()
+    fireEvent.dragStart(rowOf("scripts"), { dataTransfer: transfer })
+    const scripts = rowOf("scripts")
+    assert.equal(fireEvent.dragOver(scripts, { dataTransfer: transfer }), true)
+    assert.ok(scripts.classList.contains("drop-refused"))
+    assert.equal(transfer.dropEffect, "none")
+    fireEvent.drop(scripts, { dataTransfer: transfer })
+    assert.equal(host.calls.some((c) => c.startsWith("moveAssets")), false)
+  })
+
+  test("dragging a row that is one of several selected files moves them all", async () => {
+    const { host, assets } = await renderAssets()
+    host.assets.push({ path: "res://b.png", uuid: U3, type: "Texture", size: 1, modified: 1 })
+    await assets.refresh()
+    await assets.select("res://hero.png")
+    await assets.toggleMarked("res://b.png")
+    const transfer = makeTransfer()
+    fireEvent.dragStart(rowOf("b.png"), { dataTransfer: transfer })
+    assert.deepEqual(JSON.parse(transfer.stored.get(AssetMoveDragType) ?? "[]").sort(), ["res://b.png", "res://hero.png"])
+    fireEvent.dragOver(rowOf("scenes"), { dataTransfer: transfer })
+    fireEvent.drop(rowOf("scenes"), { dataTransfer: transfer })
+    await waitFor(() =>
+      assert.ok(host.calls.includes("moveAssets res://b.png>res://scenes/b.png,res://hero.png>res://scenes/hero.png") ||
+        host.calls.includes("moveAssets res://hero.png>res://scenes/hero.png,res://b.png>res://scenes/b.png"))
+    )
+  })
+
+  test("a read-only host takes no drop: the folder is not a target", async () => {
+    const { host, signals } = await renderAssets()
+    signals.hostReadOnly.value = true
+    const transfer = makeTransfer()
+    fireEvent.dragStart(rowOf("hero.png"), { dataTransfer: transfer })
+    const folder = rowOf("scenes")
+    assert.equal(fireEvent.dragOver(folder, { dataTransfer: transfer }), true)
+    assert.ok(!folder.classList.contains("drop-target"))
+    fireEvent.drop(folder, { dataTransfer: transfer })
+    assert.equal(host.calls.some((c) => c.startsWith("moveAssets")), false)
+  })
+
+  test("the host's refusal is shown, and its warnings stay in a notice until dismissed", async () => {
+    const { host, errors } = await renderAssets()
+    host.refuse.set("moveAssets", "res://scenes/hero.png is open in another process")
+    const transfer = makeTransfer()
+    fireEvent.dragStart(rowOf("hero.png"), { dataTransfer: transfer })
+    fireEvent.dragOver(rowOf("scenes"), { dataTransfer: transfer })
+    fireEvent.drop(rowOf("scenes"), { dataTransfer: transfer })
+    await waitFor(() => assert.deepEqual(errors, ["Failed to move: res://scenes/hero.png is open in another process"]))
+
+    host.refuse.delete("moveAssets")
+    host.moveWarnings.push("scripts/b.lua names res://hero.png")
+    const again = makeTransfer()
+    fireEvent.dragStart(rowOf("hero.png"), { dataTransfer: again })
+    fireEvent.dragOver(rowOf("scenes"), { dataTransfer: again })
+    fireEvent.drop(rowOf("scenes"), { dataTransfer: again })
+    const notice = await screen.findByRole("status")
+    assert.match(notice.textContent ?? "", /scripts\/b\.lua names res:\/\/hero\.png/)
+    fireEvent.click(within(notice).getByRole("button", { name: "Dismiss" }))
+    await waitFor(() => assert.equal(screen.queryByRole("status"), null))
   })
 })
 

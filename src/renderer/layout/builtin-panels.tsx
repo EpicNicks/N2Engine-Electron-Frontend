@@ -7,7 +7,9 @@ import { HierarchyPanel } from "../hierarchy-panel"
 import { HistoryPanel } from "../history-panel"
 import { InspectorPanel } from "../inspector-panel"
 import { ProjectSettingsPanel } from "../project-settings-panel"
+import { BuildSettingsPanel } from "../build-settings-panel"
 import { EnginePanel } from "../panels"
+import { ProfilerPanel } from "../profiler-panel"
 import { Viewport } from "../viewport-panel"
 import { PanelRegistry } from "./panel-registry"
 
@@ -56,6 +58,17 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     singleton: true,
     unmountWhenHidden: true,
   })
+  // The profiler (FE-S5) is a tab beside the console and the history; it polls the host only while it is shown
+  registry.register({
+    id: "profiler",
+    title: "Profiler",
+    icon: "⏱",
+    component: ProfilerPanel as PanelComponent,
+    defaultRegion: "bottom",
+    closable: true,
+    singleton: true,
+    unmountWhenHidden: true,
+  })
   // The right region stacks three panels, each as high as it always was
   registry.register({
     id: "hierarchy",
@@ -84,6 +97,17 @@ export function builtinPanels(): PanelRegistry<PanelComponent> {
     title: "Project Settings",
     icon: "🛠",
     component: ProjectSettingsPanel as PanelComponent,
+    defaultRegion: "right",
+    defaultGroup: 1,
+    closable: true,
+    singleton: true,
+  })
+  // Build Settings (build targets stage 3) is a tab beside the project settings: the targets, their settings and n2build
+  registry.register({
+    id: "buildSettings",
+    title: "Build Settings",
+    icon: "📦",
+    component: BuildSettingsPanel as PanelComponent,
     defaultRegion: "right",
     defaultGroup: 1,
     closable: true,

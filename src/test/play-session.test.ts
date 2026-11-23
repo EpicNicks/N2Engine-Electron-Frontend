@@ -106,6 +106,9 @@ class FakeConnection implements PlayConnection {
     throw new Error("not used")
   }
   async sendInput(): Promise<void> {}
+  async getEngineStats(): Promise<never> {
+    throw new Error("not used")
+  }
 }
 
 const Project = path.resolve("proj")

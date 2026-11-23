@@ -3,6 +3,7 @@
 import { computed } from "@preact/signals-core"
 import { hasCapability } from "../protocol/extensions"
 import { PrefabAssetsCapability, samePath } from "../protocol/prefab-assets"
+import { PrefabNestingCapability, PrefabOverridesApplyCapability } from "../protocol/prefab-overrides"
 import type { AssetListing } from "./asset-tree"
 import type { PrefabOptions } from "./hierarchy-state"
 
@@ -23,6 +24,11 @@ export function prefabAssetsEnabled(host: PrefabHost): { readonly value: boolean
   return computed(() => host.connected.value && hasCapability(host.serverInfo.value?.capabilities, PrefabAssetsCapability))
 }
 
+/** Whether the connected host advertises a capability (false when not connected) */
+function capability(host: PrefabHost, name: string): { readonly value: boolean } {
+  return computed(() => host.connected.value && hasCapability(host.serverInfo.value?.capabilities, name))
+}
+
 export function prefabOptions(
   host: PrefabHost,
   assets: PrefabAssets,
@@ -30,6 +36,8 @@ export function prefabOptions(
 ): PrefabOptions {
   return {
     enabled: prefabAssetsEnabled(host),
+    nesting: capability(host, PrefabNestingCapability),
+    overridesApply: capability(host, PrefabOverridesApplyCapability),
     pathOf: (uuid) => assets.listing.value?.assets.find((asset) => asset.uuid.toLowerCase() === uuid.toLowerCase())?.path ?? null,
     exists: (path) =>
       assets.listing.value?.assets.some((asset) => samePath(asset.path, path, options.caseInsensitivePaths)) ?? false,

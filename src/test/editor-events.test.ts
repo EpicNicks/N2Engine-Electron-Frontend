@@ -71,8 +71,26 @@ describe("parseStateEvent", () => {
   test("assetsChanged lists the added, removed and modified assets", () => {
     assert.deepEqual(
       parseStateEvent({ seq: 2, kind: "assetsChanged", added: ["a"], removed: [], modified: ["b", "c"] }),
-      { kind: "assetsChanged", added: ["a"], removed: [], modified: ["b", "c"] }
+      { kind: "assetsChanged", added: ["a"], removed: [], modified: ["b", "c"], moved: [] }
     )
+  })
+
+  test("assetsChanged carries the moved pairs (1.24.0); an item that is not two strings is skipped", () => {
+    const event = {
+      seq: 2,
+      kind: "assetsChanged",
+      added: ["res://b/a.png"],
+      removed: ["res://a.png"],
+      modified: [],
+      moved: [{ from: "res://a.png", to: "res://b/a.png", uuid: "u" }, { from: 1, to: "x" }, null, "nope"],
+    } as unknown as EditorEvent
+    assert.deepEqual(parseStateEvent(event), {
+      kind: "assetsChanged",
+      added: ["res://b/a.png"],
+      removed: ["res://a.png"],
+      modified: [],
+      moved: [{ from: "res://a.png", to: "res://b/a.png" }],
+    })
   })
 
   test("projectChanged has no fields", () => {
@@ -90,7 +108,7 @@ describe("parseStateEvent", () => {
       full: false,
     })
     const assets = { seq: 5, kind: "assetsChanged", added: "nope", removed: [1, "r"] } as unknown as EditorEvent
-    assert.deepEqual(parseStateEvent(assets), { kind: "assetsChanged", added: [], removed: ["r"], modified: [] })
+    assert.deepEqual(parseStateEvent(assets), { kind: "assetsChanged", added: [], removed: ["r"], modified: [], moved: [] })
   })
 
   test("log events and unknown kinds are not state events", () => {

@@ -3,6 +3,7 @@
 // console). Events are plain JSON with the fields the protocol lists, and a client ignores kinds and keys it doesn't
 // know, so parsing is lenient: a missing or mistyped field takes its default.
 import type { EditorEvent } from "./protocol.generated"
+import { PrefabStage, parsePrefabStageInfo } from "./prefab-stage"
 
 /** The scene revision moved, a scene was saved, or another was loaded */
 export interface SceneChangedEvent {
@@ -29,6 +30,12 @@ export interface AssetsChangedEvent {
   added: string[]
   removed: string[]
   modified: string[]
+  /**
+   * Assets that were moved (since 1.24.0): each is also in removed (its old path) and added (its new path), so a client
+   * that ignores this refreshes right; this lets one keep what it holds by path (a selection, an open file). The host
+   * lists a moved folder's assets one by one, so a folder itself is not here. Empty from an older host.
+   */
+  moved?: { from: string; to: string }[]
 }
 
 /** project.n2proj was saved (SetProjectSettings, SetStartupScene, ...) */
@@ -71,7 +78,17 @@ export interface ExtensionsChangedEvent {
   uiRevision: number
 }
 
+/**
+ * The prefab stage changed (since 1.26.0): it was opened, closed, switched, saved, became dirty or clean, or its file
+ * moved, changed elsewhere or was deleted. stage is null when it is closed.
+ */
+export interface PrefabStageChangedEvent {
+  kind: "prefabStageChanged"
+  stage: PrefabStage | null
+}
+
 export type StateEvent =
+  | PrefabStageChangedEvent
   | SceneChangedEvent
   | AssetsChangedEvent
   | ProjectChangedEvent
@@ -84,6 +101,18 @@ const count = (value: unknown): number =>
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+
+/** The {from, to} pairs of an assetsChanged event's moved list; an item that isn't two strings is skipped */
+const movedPairs = (value: unknown): { from: string; to: string }[] => {
+  const pairs: { from: string; to: string }[] = []
+  if (!Array.isArray(value)) return pairs
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue
+    const { from, to } = item as Record<string, unknown>
+    if (typeof from === "string" && typeof to === "string") pairs.push({ from, to })
+  }
+  return pairs
+}
 
 /**
  * What a sceneChanged event means for the objects a panel shows, given the revision known before it (null when none
@@ -134,6 +163,7 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
         added: strings(event.added),
         removed: strings(event.removed),
         modified: strings(event.modified),
+        moved: movedPairs(event.moved),
       }
     case "projectChanged":
       return { kind: "projectChanged" }
@@ -151,6 +181,8 @@ export function parseStateEvent(event: EditorEvent): StateEvent | null {
       return { kind: "frameChanged", revision: count(event.revision) }
     case "extensionsChanged":
       return { kind: "extensionsChanged", uiRevision: count(event.uiRevision) }
+    case "prefabStageChanged":
+      return { kind: "prefabStageChanged", stage: parsePrefabStageInfo(event.stage) }
     default:
       return null
   }

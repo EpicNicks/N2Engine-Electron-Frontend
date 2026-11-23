@@ -267,7 +267,7 @@ describe("MarqueeBoundsCache", () => {
   test("over the engine's backend, more than 4096 candidates are asked in chunks of at most 4096", async () => {
     const calls: number[] = []
     const engine = {
-      pickEntity: async (): Promise<PickResultResponse> => ({ entityId: "", point: vec3(0, 0, 0), distance: 0 }),
+      pickEntity: async (): Promise<PickResultResponse> => ({ entityId: "", point: vec3(0, 0, 0), distance: 0, normal: vec3(0, 0, 0) }),
       getEntityBounds: async (ids: string[]): Promise<BoundsResponse> => {
         calls.push(ids.length)
         if (ids.length > MaxEntityBoundsIds) throw new Error("too many")

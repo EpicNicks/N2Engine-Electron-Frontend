@@ -86,6 +86,20 @@ describe("tool schemas", () => {
     h.host.entities.set(id, entityData(id, "11111111-0000-0000-0000-000000000001", "Player", [{ type: "Light", uuid: "c2", values: { intensity: 3 } }]))
     h.host.addLogEvents(["info", "hello"])
     h.host.texts.set("res://a.txt", "text")
+    h.host.on("GetPrefabOverrides", () => ({
+      info: {
+        rootId: id,
+        prefab: "55555555-0000-0000-0000-000000000001",
+        path: "res://Crate.prefab",
+        overrides: [{ source: "aaaaaaaa-0000-0000-0000-000000000001", path: "name", value: "Lid", objectId: id }],
+        removedObjects: [],
+        removedComponents: [],
+        addedComponents: [],
+        addedChildren: [],
+        linkPath: [{ rootId: id, prefab: "55555555-0000-0000-0000-000000000001", path: "res://Crate.prefab" }],
+        applyTo: { overrides: [[{ level: 0, prefab: "55555555-0000-0000-0000-000000000001", path: "res://Crate.prefab" }]] },
+      },
+    }))
     const calls: Array<[string, Record<string, unknown>]> = [
       ["n2_status", {}],
       ["n2_get_project_info", {}],
@@ -98,6 +112,7 @@ describe("tool schemas", () => {
       ["n2_read_text_asset", { path: "res://a.txt" }],
       ["n2_get_console", {}],
       ["n2_screenshot", { width: 64, height: 36 }],
+      ["n2_get_prefab_overrides", { entityId: id }],
     ]
     assert.equal(calls.length, ReadTools.length, "every tool is exercised")
     const ajv = new Ajv2020({ strict: false, validateFormats: false })

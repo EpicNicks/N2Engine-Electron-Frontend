@@ -33,6 +33,8 @@ export interface PlayControllerDeps {
   setPlayMode(reason: string | null): void
   /** Waits for the edits still on their way to the edit host (a rename, the inspector's 250 ms debounce) */
   settle?(): Promise<void>
+  /** Before a game starts: what stands in its way is dealt with (a prefab stage is closed, asking about its changes); false: don't start */
+  beforeStart?(): Promise<boolean>
   /** Whether the editor can start a game now: connected, a scene loaded, nothing busy */
   canStart(): boolean
   /** Adds the game's own log lines to the console */
@@ -99,6 +101,7 @@ export class PlayController {
   /** Plays the open scene (unsaved edits included) */
   async start(): Promise<void> {
     if (!this.canPlay.value) return
+    if (this.deps.beforeStart && !(await this.deps.beforeStart())) return
     // The snapshot is of what the edit host holds: what was typed a moment ago must have reached it
     await this.run(async () => {
       await this.deps.settle?.()

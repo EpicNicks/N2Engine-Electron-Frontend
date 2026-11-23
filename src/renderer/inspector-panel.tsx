@@ -1,6 +1,7 @@
 // The inspector panel: the selected object's own properties and transform, then its components, each with an editor per
 // field (inspector-editors.tsx) from the component's schema, and the Add Component menu. The logic is in
 // inspector-state.ts and inspector-fields.ts (tested in Node); this is the DOM around it.
+import type { ComponentChildren } from "preact"
 import { useEffect, useRef, useState } from "preact/hooks"
 import type { FieldSchema } from "../protocol/protocol.generated"
 import type { Vec3 } from "../protocol/protocol.generated"
@@ -16,12 +17,13 @@ import {
   groupComponentTypes,
   visibleFields,
 } from "./inspector-fields"
-import type { ComponentChildren } from "preact"
 import { AssetDragType, EntityDragType, FieldDropEffect, ScriptDragType, dragHas, parseScriptDrop } from "./drag-types"
 import { endWhenReleased } from "./edit-groups"
 import { clean } from "./extension-menu"
 import { formatFieldValue } from "./extension-inspector"
 import { Empty, Panel, useApp } from "./ui"
+import { ShaderStateSection } from "./shader-state-ui"
+import { MultiOverrideLabel, OverrideLabel, PrefabOverridesSection } from "./prefab-overrides-panel"
 
 // ==================== The object's own properties and transform ====================
 
@@ -43,6 +45,8 @@ const axisField = (label: string): FieldSchema => ({
  */
 function VectorRow(props: {
   label: string
+  /** In place of the plain label: the transform part's override label (1.34.0) */
+  labelElement?: ComponentChildren
   value: Vec3
   mixed?: { x: boolean; y: boolean; z: boolean }
   disabled: boolean
@@ -55,7 +59,7 @@ function VectorRow(props: {
   const field = axisField(props.label)
   return (
     <div class="inspector-row">
-      <label title={props.title}>{props.label}</label>
+      {props.labelElement ?? <label title={props.title}>{props.label}</label>}
       <div class="vector-inputs">
         {Axes.map((axis) => (
           <NumberInput
@@ -92,8 +96,10 @@ const LayerField: FieldSchema = {
  * Protocol 1.19.0: the prefab an object is linked to. An instance is a copy with a link, so changing the prefab does not
  * update it; Apply writes this object over the prefab file, Unpack clears the link.
  */
-export function PrefabRow({ id, uuid, disabled }: { id: string; uuid: string; disabled: boolean }) {
+export function PrefabRow({ id, uuid, disabled, linked = false }: { id: string; uuid: string; disabled: boolean; linked?: boolean }) {
   const { store, assets, hierarchy, inspector } = useApp()
+  // A link instance (1.33.0) follows its prefab; a copy (1.19.0) never does
+  const follows = linked && hierarchy.canNesting
   const path = assets.listing.value?.assets.find((a) => a.uuid.toLowerCase() === uuid.toLowerCase())?.path ?? null
   const actions = hierarchy.canPrefabs
   const fail = (what: string) => (e: unknown) => store.reportError(what, e)
@@ -101,7 +107,14 @@ export function PrefabRow({ id, uuid, disabled }: { id: string; uuid: string; di
   return (
     <div class="inspector-row prefab-row">
       <label>Prefab</label>
-      <span class="prefab-name" title={`${path ?? uuid}\nThis object is a copy linked to the prefab. Changing the prefab does not update it.`}>
+      <span
+        class="prefab-name"
+        title={`${path ?? uuid}\n${
+          follows
+            ? "This object is an instance of the prefab: it follows the prefab, and what it changes is kept as its overrides."
+            : "This object is a copy linked to the prefab. Changing the prefab does not update it."
+        }`}
+      >
         {path ?? "(not in the assets list)"}
       </span>
       {actions && (
@@ -121,7 +134,12 @@ export function PrefabRow({ id, uuid, disabled }: { id: string; uuid: string; di
           <button
             class="secondary"
             disabled={disabled}
-            title={readOnlyHint ?? "Overwrite the prefab file with this object (asks first). Objects already made from the prefab are not updated."}
+            title={
+              readOnlyHint ??
+              (follows
+                ? "Overwrite the prefab file with this instance (asks first). Every instance of the prefab is updated."
+                : "Overwrite the prefab file with this object (asks first). Objects already made from the prefab are not updated.")
+            }
             onClick={() =>
               void hierarchy
                 .applyPrefab(id)
@@ -162,7 +180,7 @@ function EntitySection() {
     <div class="inspector-section">
       <h4>Entity</h4>
       <div class="inspector-row">
-        <label>Name</label>
+        <OverrideLabel text="Name" overrides={header.overrides} field="name" objectId={header.id} componentId={null} />
         <TextInput
           label="Name"
           value={header.name}
@@ -171,7 +189,7 @@ function EntitySection() {
         />
       </div>
       <div class="inspector-row">
-        <label>Active</label>
+        <OverrideLabel text="Active" overrides={header.overrides} field="isActive" objectId={header.id} componentId={null} />
         <input
           type="checkbox"
           aria-label="Active"
@@ -182,7 +200,7 @@ function EntitySection() {
         {!header.activeInHierarchy && header.active && <span class="hint">inactive through a parent</span>}
       </div>
       <div class="inspector-row">
-        <label>Tag</label>
+        <OverrideLabel text="Tag" overrides={header.overrides} field="tag" objectId={header.id} componentId={null} />
         <TextInput
           label="Tag"
           value={header.tag}
@@ -191,7 +209,7 @@ function EntitySection() {
         />
       </div>
       <div class="inspector-row">
-        <label>Layer</label>
+        <OverrideLabel text="Layer" overrides={header.overrides} field="layer" objectId={header.id} componentId={null} />
         <NumberInput
           field={LayerField}
           value={header.layer}
@@ -200,7 +218,8 @@ function EntitySection() {
           onInvalid={(message) => store.reportError("Layer", message)}
         />
       </div>
-      {header.prefab && <PrefabRow id={header.id} uuid={header.prefab} disabled={disabled} />}
+      {header.prefab && <PrefabRow id={header.id} uuid={header.prefab} disabled={disabled} linked={(header.linkDepth ?? 0) > 0} />}
+      <PrefabOverridesSection />
       {error && <div class="field-error">{error}</div>}
     </div>
   )
@@ -229,11 +248,18 @@ function TransformSection() {
   }
   const invalid = (message: string) => store.reportError("Transform", message)
   const syncKey = inspector.transformRev.value
+  const header = inspector.header.value
+  // Bold when the part differs from the prefab (1.34.0)
+  const partLabel = (text: string, part: string, title?: string) =>
+    header ? (
+      <OverrideLabel text={text} title={title} overrides={header.overrides} field={`positionable.${part}`} objectId={header.id} componentId={null} />
+    ) : undefined
   return (
     <div class="inspector-section">
       <h4 title={TransformTitle}>Transform</h4>
       <VectorRow
         label="Position"
+        labelElement={partLabel("Position", "localPosition")}
         syncKey={syncKey}
         value={transform.position}
         disabled={disabled}
@@ -242,6 +268,7 @@ function TransformSection() {
       />
       <VectorRow
         label="Rotation"
+        labelElement={partLabel("Rotation", "localRotation", TransformTitle)}
         title={TransformTitle}
         syncKey={syncKey}
         value={euler}
@@ -251,6 +278,7 @@ function TransformSection() {
       />
       <VectorRow
         label="Scale"
+        labelElement={partLabel("Scale", "localScale")}
         syncKey={syncKey}
         value={transform.scale}
         disabled={disabled}
@@ -295,7 +323,14 @@ function FieldRow({ view, field }: { view: ComponentView; field: FieldSchema }) 
   }
   return (
     <div class="field-row" onDragOver={keep} onDrop={keep}>
-      <label title={tip || undefined}>{field.displayName}</label>
+      <OverrideLabel
+        text={field.displayName}
+        title={tip || undefined}
+        overrides={view.overrides}
+        field={field.name}
+        objectId={inspector.entityId.value ?? ""}
+        componentId={view.id}
+      />
       <div class="field-editor" onPointerDownCapture={onPointerDown}>
         <FieldEditor field={field} value={value} disabled={disabled} commit={commit} invalid={setError} />
         {error && <div class="field-error">{error}</div>}
@@ -418,6 +453,11 @@ function ComponentCard({ view }: { view: ComponentView }) {
         <span class="component-title" title={view.type} onClick={() => inspector.toggleCollapsed(view.id)}>
           {displayTypeName(view.type)}
         </span>
+        {view.prefabAdded && (
+          <span class="component-added" title="Added to the prefab instance: not in the prefab" aria-label="Added to the instance">
+            +
+          </span>
+        )}
         <button
           class="secondary component-remove"
           title={`Remove ${view.type}`}
@@ -440,6 +480,7 @@ function ComponentCard({ view }: { view: ComponentView }) {
             ))
           )}
           {problem && <div class="field-error">The script's fields can't be read: {problem}</div>}
+          <ShaderStateSection view={view} />
           <ExtensionSections view={view} />
           {error && <div class="field-error component-error">{error}</div>}
         </div>
@@ -553,7 +594,7 @@ function MultiFieldRow({ component, field }: { component: MultiComponent; field:
   const tip = field.tooltip
   return (
     <div class="field-row">
-      <label title={tip || undefined}>{field.displayName}</label>
+      <MultiOverrideLabel text={field.displayName} title={tip || undefined} component={component} field={field.name} />
       <div class="field-editor">
         <FieldEditor
           field={field}
@@ -687,6 +728,14 @@ function MultiInspector() {
     return (
       <VectorRow
         label={label}
+        labelElement={
+          <MultiOverrideLabel
+            text={label}
+            title={part === "rotation" ? TransformTitle : undefined}
+            component={null}
+            field={`positionable.${part === "position" ? "localPosition" : part === "rotation" ? "localRotation" : "localScale"}`}
+          />
+        }
         title={part === "rotation" ? TransformTitle : undefined}
         syncKey={multi.objects.value}
         value={{ x: axes.x.value, y: axes.y.value, z: axes.z.value }}
@@ -705,7 +754,7 @@ function MultiInspector() {
       <div class="inspector-section">
         <h4>Entity</h4>
         <div class="inspector-row">
-          <label>Active</label>
+          <MultiOverrideLabel text="Active" component={null} field="isActive" />
           <FieldEditor
             field={{ ...IsActiveField, name: "active", displayName: "Active" }}
             value={view.active.value}
@@ -716,7 +765,7 @@ function MultiInspector() {
           />
         </div>
         <div class="inspector-row">
-          <label>Tag</label>
+          <MultiOverrideLabel text="Tag" component={null} field="tag" />
           <TextInput
             label="Tag"
             value={view.tag.value}
@@ -727,7 +776,7 @@ function MultiInspector() {
           />
         </div>
         <div class="inspector-row">
-          <label>Layer</label>
+          <MultiOverrideLabel text="Layer" component={null} field="layer" />
           <NumberInput
             field={layerField}
             value={view.layer.value}
@@ -845,6 +894,7 @@ export function InspectorPanel() {
         </button>
       }
     >
+      <NetworkNudge />
       <ScriptDropZone single={selectedCount <= 1}>{content}</ScriptDropZone>
     </Panel>
   )
@@ -885,6 +935,34 @@ function ScriptDropZone(props: { single: boolean; children: ComponentChildren })
       }}
     >
       {props.children}
+    </div>
+  )
+}
+
+/**
+ * #381 item 8: the host's network nudge after a NetworkObject was added while the project's network preset is none, with
+ * the way to the Network section of Project Settings
+ */
+export function NetworkNudge() {
+  const { store, inspector } = useApp()
+  const hint = inspector.networkNudge.value
+  if (hint === null) return null
+  return (
+    <div class="inspector-banner inspector-nudge" role="note" data-network-nudge="">
+      <p>{hint}</p>
+      <div class="inspector-nudge-actions">
+        <button
+          onClick={() => {
+            inspector.dismissNetworkNudge()
+            store.requestPanel("projectSettings", "network")
+          }}
+        >
+          Open network settings
+        </button>
+        <button onClick={() => inspector.dismissNetworkNudge()} aria-label="Dismiss the network nudge">
+          Dismiss
+        </button>
+      </div>
     </div>
   )
 }

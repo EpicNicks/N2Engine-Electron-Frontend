@@ -2,9 +2,9 @@
 // PickBackend, and the small pure helpers around them. No DOM; unit tested with a fake engine.
 import type { EngineApi } from "../shared/api"
 import { MaxEntityBoundsIds } from "../shared/api"
-import type { EntityBounds } from "../protocol/protocol.generated"
+import type { EntityBounds, PickResultResponse } from "../protocol/protocol.generated"
 import type { Bounds } from "./viewport-camera"
-import type { PickBackend } from "./viewport-controller"
+import type { PickBackend, PickHit } from "./viewport-controller"
 
 type PickingEngine = Pick<EngineApi, "pickEntity" | "getEntityBounds">
 
@@ -63,7 +63,21 @@ export const translateBounds = (b: Bounds, delta: { x: number; y: number; z: num
 })
 
 /**
- * PickBackend over the engine API. pick: "" (a miss) is null. bounds: ids are asked in batches of at most
+ * A PickResult as a PickHit: null for a miss (an empty id). The point is kept only when it is finite (the host gives it
+ * since 1.8.0); the normal (1.27.0) only when it is finite and not zero, which is what a 1.26 or older host's PickResult
+ * decodes to, and is made unit length.
+ */
+export function pickHitOf(result: PickResultResponse): PickHit | null {
+  if (result.entityId === "") return null
+  const point = finite(result.point) ? { ...result.point } : null
+  const n = result.normal
+  const length = finite(n) ? Math.hypot(n.x, n.y, n.z) : 0
+  const normal = length > 1e-6 ? { x: n.x / length, y: n.y / length, z: n.z / length } : null
+  return { entityId: result.entityId, point, normal }
+}
+
+/**
+ * PickBackend over the engine API. pick: "" (a miss) is null; pickHit keeps the point and normal (pickHitOf). bounds: ids are asked in batches of at most
  * MaxEntityBoundsIds (one call for any realistic selection); only the entries for ids that were asked are kept.
  */
 export function createPickBackend(engine: PickingEngine): PickBackend {
@@ -71,6 +85,9 @@ export function createPickBackend(engine: PickingEngine): PickBackend {
     async pick(x, y, includeInactive) {
       const result = await engine.pickEntity(x, y, includeInactive)
       return result.entityId === "" ? null : result.entityId
+    },
+    async pickHit(x, y, includeInactive) {
+      return pickHitOf(await engine.pickEntity(x, y, includeInactive))
     },
     async bounds(entityIds) {
       const asked = new Set(entityIds)

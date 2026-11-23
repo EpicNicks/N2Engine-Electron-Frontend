@@ -1,7 +1,7 @@
-// Where a prefab dropped on the viewport is put (protocol 1.19.0: InstantiatePrefab with a world position). PickEntity
-// answers the object under the pixel but not the point on it, so the point is where the ray through the pixel enters that
-// object's box (GetEntityBounds), else the ray at the depth of the box's centre, and on a miss a point in front of the
-// camera on that ray. No DOM: unit tested in Node.
+// Where a prefab dropped on the viewport is put (protocol 1.19.0: InstantiatePrefab with a world position). The
+// controller uses PickEntity's hit point when it has one (ViewportController.prefabDropPosition); this is the rest: for a
+// pick without a point, where the ray through the pixel enters that object's box (GetEntityBounds), else the ray at the
+// depth of the box's centre, and on a miss a point in front of the camera on that ray. No DOM: unit tested in Node.
 import type { Bounds } from "./viewport-camera"
 import { Ray, add, dot, isFiniteVec3, scale, sub } from "./viewport-math"
 import type { Vec3 } from "../protocol/protocol.generated"

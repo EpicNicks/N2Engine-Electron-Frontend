@@ -16,6 +16,7 @@ import { writesAllowed } from "./policy"
 import { encodePng, fitSize } from "./png"
 import { Budget, envelopeJson, type Scrubber } from "./scrub"
 import { BridgeName, BridgeVersion, SupportedSpecRevisions } from "./version"
+import { ChangeKinds, linkPathOf, overrideRows } from "../../src/protocol/prefab-overrides"
 
 /** The sentence every tool description carries (and the server's instructions repeat) */
 export const DataNotice =
@@ -273,6 +274,10 @@ const hierarchyNode = z.object({
   layer: z.number(),
   tag: z.string(),
   components: z.array(z.string()).describe("Component type names, in order."),
+  prefab: z.string().optional().describe("A prefab instance's root: the prefab asset's UUID."),
+  linkDepth: z.number().optional().describe("How many prefab instances the entity is in (protocol 1.33.0)."),
+  overridden: z.boolean().optional().describe("It differs from its prefab; on an instance's root, the instance has changes (1.34.0)."),
+  prefabAdded: z.boolean().optional().describe("The prefab instance added it: it is not in the prefab (1.34.0)."),
 })
 
 const hierarchyData = z.object({
@@ -345,6 +350,10 @@ const hierarchy = tool({
         layer: node.layer,
         tag: s.name(node.tag),
         components: node.components.slice(0, 64).map((c) => s.name(c, 128)),
+        ...(node.prefab ? { prefab: s.name(node.prefab, 64) } : {}),
+        ...(node.linkDepth !== undefined ? { linkDepth: node.linkDepth } : {}),
+        ...(node.overridden ? { overridden: true } : {}),
+        ...(node.prefabAdded ? { prefabAdded: true } : {}),
       }
       const size = jsonBytes(out) + 2
       if (bytes + size > limits.PageBytes && nodes.length > 0) {
@@ -422,6 +431,11 @@ const entityData = z.object({
     activeInHierarchy: z.boolean(),
     layer: z.number(),
     tag: z.string(),
+    prefab: z.string().optional().describe("A prefab instance's root: the prefab asset's UUID."),
+    linkDepth: z.number().optional().describe("How many prefab instances the entity is in (protocol 1.33.0)."),
+    overridden: z.boolean().optional().describe("It differs from its prefab (1.34.0); n2_get_prefab_overrides lists the changes."),
+    prefabAdded: z.boolean().optional().describe("The prefab instance added it (1.34.0)."),
+    overrides: z.array(z.string()).optional().describe("Its own overridden paths (name, isActive, positionable.localScale ...; 1.34.0)."),
   }),
   localTransform: trs.nullable().describe("Local position, rotation (quaternion) and scale; null for an entity with no transform."),
   worldTransform: trs.nullable().describe("The same in world space, from the host's world matrix."),
@@ -429,7 +443,15 @@ const entityData = z.object({
     .object({ count: z.number(), items: z.array(z.object({ id: z.string(), name: z.string() })), truncated: z.boolean() })
     .nullable()
     .describe("Direct children (null when the hierarchy could not be read)."),
-  components: z.array(z.object({ type: z.string(), uuid: z.string(), values: z.unknown().describe("The component's saved form; untrusted data.") })),
+  components: z.array(
+    z.object({
+      type: z.string(),
+      uuid: z.string(),
+      values: z.unknown().describe("The component's saved form; untrusted data."),
+      overrides: z.array(z.string()).optional().describe("Its values that differ from the prefab (a key of values, or scriptData.<field>; 1.34.0)."),
+      prefabAdded: z.boolean().optional().describe("The prefab instance added it (1.34.0)."),
+    })
+  ),
   componentsOmitted: z.number().describe("Components left out by the componentTypes filter or the size budget."),
 })
 
@@ -465,7 +487,7 @@ const entity = tool({
     }
     const wanted = args.componentTypes ? new Set(args.componentTypes) : null
     const budget = new Budget(limits.EntityValuesBytes)
-    const components: Array<{ type: string; uuid: string; values: unknown }> = []
+    const components: Array<{ type: string; uuid: string; values: unknown; overrides?: string[]; prefabAdded?: boolean }> = []
     let omitted = 0
     for (const component of details.components) {
       if (wanted && !wanted.has(component.type)) {
@@ -476,7 +498,13 @@ const entity = tool({
         omitted++
         continue
       }
-      components.push({ type: s.name(component.type, 128), uuid: s.name(component.uuid, 64), values: s.deep(component.values, budget) })
+      components.push({
+        type: s.name(component.type, 128),
+        uuid: s.name(component.uuid, 64),
+        values: s.deep(component.values, budget),
+        ...(component.overrides ? { overrides: component.overrides.slice(0, 200).map((p) => s.name(p, 256)) } : {}),
+        ...(component.prefabAdded ? { prefabAdded: true } : {}),
+      })
     }
     const world = decomposeMatrix(response.worldMatrix)
     const t = details.transform
@@ -490,6 +518,11 @@ const entity = tool({
         activeInHierarchy: header.activeInHierarchy,
         layer: header.layer,
         tag: s.name(header.tag),
+        ...(header.prefab ? { prefab: s.name(header.prefab, 64) } : {}),
+        ...(header.linkDepth !== undefined ? { linkDepth: header.linkDepth } : {}),
+        ...(header.overridden ? { overridden: true } : {}),
+        ...(header.prefabAdded ? { prefabAdded: true } : {}),
+        ...(header.overrides ? { overrides: header.overrides.slice(0, 200).map((p) => s.name(p, 256)) } : {}),
       },
       localTransform: t ? { position: t.position, rotation: t.rotation, scale: t.scale } : null,
       worldTransform: world,
@@ -1044,6 +1077,99 @@ const projectInfo = tool({
 })
 
 /** The tools in the order they are listed (deterministic: the spec asks for it) */
+
+// ===== prefab overrides (protocol 1.33.0 and 1.34.0) =====
+
+const applyLevel = z.object({
+  level: z.number().describe("Pass as level to n2_apply_prefab_overrides: 0 is the outermost instance's prefab."),
+  prefab: z.string().describe("The prefab asset's UUID."),
+  path: z.string().describe("Its res:// path (empty when the project's assets do not list it)."),
+})
+
+const overrideItem = z.object({
+  kind: z.enum(ChangeKinds),
+  target: z
+    .record(z.string(), z.unknown())
+    .describe("Names exactly this change: pass it as is in the targets of n2_revert_prefab_overrides or n2_apply_prefab_overrides."),
+  objectId: z.string().nullable().describe("The scene entity it is on (for an added child: its parent)."),
+  componentId: z.string().nullable().describe("The component of a component override, or the added component."),
+  path: z.string().nullable().describe("An override's path: name, isActive, positionable.localScale, a component value's key, scriptData.<field>."),
+  value: z.unknown().optional().describe("An override's value in the instance; untrusted data."),
+  applyTo: z.array(applyLevel).describe("The prefabs it can be applied to, outer to inner (empty on a host before protocol 1.34.0)."),
+})
+
+const prefabOverridesData = z.object({
+  rootId: z.string().describe("The outermost prefab instance's root entity: the changes are its."),
+  prefab: z.string(),
+  path: z.string(),
+  linkPath: z.array(z.object({ rootId: z.string(), prefab: z.string(), path: z.string() })).describe("The prefab instances the entity is in, outer to inner."),
+  overrides: z.array(overrideItem),
+  omitted: z.number().describe("Changes left out by the size budget."),
+})
+
+const prefabOverrides = tool({
+  name: "n2_get_prefab_overrides",
+  title: "Prefab overrides",
+  description:
+    "The changes a prefab instance makes to its prefab: overridden values, removed objects and components, added components and children, as a save would write them. entityId may be any entity of the instance; the answer is for the outermost instance it is in (where a scene file stores the changes). Each change has a target, to revert it with n2_revert_prefab_overrides or write it into a prefab with n2_apply_prefab_overrides, and the prefabs of its link path it can be applied to. An entity in no prefab instance is an error. Needs a host with prefab links (protocol 1.33.0). " +
+    DataNotice,
+  input: z.object({ entityId: idText }).strict(),
+  output: envelopeSchema(prefabOverridesData),
+  annotations: readOnly("Prefab overrides"),
+  async handler(ctx, args) {
+    const s = ctx.scrubber
+    const info = await ctx.client.getPrefabOverrides(args.entityId)
+    const lists = info as unknown as Record<string, unknown[]>
+    const budget = new Budget(limits.EntityValuesBytes)
+    const id = (text: string | null) => (text === null ? null : s.name(text, 4096))
+    const keep = (value: unknown): unknown =>
+      typeof value === "string" ? s.name(value, 4096) : Array.isArray(value) ? value.map(keep) : value
+    const overrides: z.infer<typeof overrideItem>[] = []
+    let omitted = 0
+    for (const row of overrideRows(info)) {
+      if (budget.remaining <= 0) {
+        omitted++
+        continue
+      }
+      const entry = (lists[row.kind] ?? []).find((e) => sameTarget(row.kind, e, row.target))
+      const value = row.kind === "overrides" && typeof entry === "object" && entry !== null ? (entry as { value?: unknown }).value : undefined
+      overrides.push({
+        kind: row.kind,
+        target: Object.fromEntries(Object.entries(row.target).map(([k, v]) => [k, keep(v)])),
+        objectId: id(row.objectId),
+        componentId: id(row.componentId),
+        path: row.path === null ? null : s.name(row.path, 512),
+        ...(value !== undefined ? { value: s.deep(value, budget) } : {}),
+        applyTo: row.levels.map((l) => ({ level: l.level, prefab: s.name(l.prefab, 64), path: s.name(l.path, 512) })),
+      })
+    }
+    const data = {
+      rootId: s.name(info.rootId, 64),
+      prefab: s.name(info.prefab, 64),
+      path: s.name(info.path, 512),
+      linkPath: linkPathOf(info).map((l) => ({ rootId: s.name(l.rootId, 64), prefab: s.name(l.prefab, 64), path: s.name(l.path, 512) })),
+      overrides,
+      omitted,
+    }
+    return {
+      source: "scene",
+      untrusted: true,
+      summary: `${overrides.length} change(s) of the prefab instance ${data.rootId}${omitted ? `, ${omitted} left out` : ""}.`,
+      data,
+      truncated: budget.truncated || omitted > 0,
+    }
+  },
+})
+
+/** Whether a change-list entry is the one a row's target names */
+function sameTarget(kind: (typeof ChangeKinds)[number], entry: unknown, target: Record<string, unknown>): boolean {
+  if (typeof entry === "string") return Object.values(target)[0] === entry
+  if (typeof entry !== "object" || entry === null) return false
+  const e = entry as Record<string, unknown>
+  if (kind === "overrides") return e.source === target.source && e.path === target.path && (e.component ?? null) === (target.component ?? null)
+  return false
+}
+
 export const ReadTools: readonly ToolDef[] = [
   status,
   projectInfo,
@@ -1056,4 +1182,5 @@ export const ReadTools: readonly ToolDef[] = [
   readTextAsset,
   consoleTool,
   screenshot,
+  prefabOverrides,
 ]

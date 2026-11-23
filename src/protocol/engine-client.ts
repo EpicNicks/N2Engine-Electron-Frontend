@@ -2,6 +2,8 @@ import * as net from "net"
 import {
   AssetDetails,
   AssetListResponse,
+  AssetMove,
+  AssetsMovedResult,
   LuaSyntaxResult,
   AutosaveInfo,
   CameraPositionResponse,
@@ -9,6 +11,7 @@ import {
   ComponentSchema,
   CommandType,
   EngineHealthResponse,
+  EngineStats,
   ClipboardPayload,
   EntityDataResponse,
   EntityInfo,
@@ -26,7 +29,9 @@ import {
   NetworkValidationReport,
   PROTOCOL_VERSION,
   PhysicsBackendsInfo,
+  PrefabOverridesInfo,
   ProjectInfoResponse,
+  ProtocolWriter,
   ResponseType,
   SceneDataResponse,
   SceneInfoResponse,
@@ -37,12 +42,28 @@ import {
   encodeFrame,
   isProtocolCompatible,
   parseProtocolVersion,
+  ShaderInfo,
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
+
+/**
+ * UnpackPrefab with the object's id alone: completely is a trailing field (1.34.0), and a host before it refuses a payload
+ * with bytes it doesn't read, so a plain unpack never sends it
+ */
+const UnpackPrefabByIdOnly: CommandSpec<{ entityId: string }, void> = {
+  ...Commands.UnpackPrefab,
+  encode(request) {
+    const writer = new ProtocolWriter()
+    writer.string(request.entityId)
+    return writer.finish()
+  },
+}
 import { Frame, FrameReader } from "./framing"
 import { validatePhysicsBackendsInfo } from "./physics-backends"
+import { validateEngineStats } from "./engine-stats"
 import { validateNetworkSettingsInfo, validateNetworkValidationReport } from "./network-panel"
-import { parseAssetDetails, parseAssetList } from "./asset-parse"
+import { parseAssetDetails, parseAssetList, parseAssetsMoved } from "./asset-parse"
+import { PrefabStage, PrefabStageMode, parsePrefabStageInfo } from "./prefab-stage"
 import { AssetPreview, checkPreviewSize, parseAssetPreview, parseLuaSyntax } from "./editor-tooling"
 import { checkEntityProperties } from "./entity-args"
 import { checkEditGroupLabel, parseAutosaveInfo, parseEditResult, parseHistory } from "./edit-history"
@@ -581,9 +602,27 @@ export class EngineClient {
     return this.send(Commands.SetProjectSettings, { settings })
   }
 
+  /**
+   * Protocol 1.30.0 (buildSettings capability): changes the project's build-wide settings (project.n2proj's build block)
+   * with a JSON merge patch; the only key is strictFp (true or false sets it, null removes it: automatic). Answers the project saved.
+   */
+  setBuildSettings(settings: unknown): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetBuildSettings, { settings })
+  }
+
   /** Sets the scene the host opens first (an existing scene file, or empty for none); answers the project saved */
   setStartupScene(path: string): Promise<ProjectInfoResponse> {
     return this.send(Commands.SetStartupScene, { path })
+  }
+
+  // ==================== Build targets (protocol 1.29.0) ====================
+
+  /**
+   * Changes project.n2proj's build.targets with a JSON merge patch (RFC 7386); answers the project saved. A Write command
+   * (buildTargets capability): a viewer gets forbidden, a --read-only host readOnly, and a secret-looking key is refused.
+   */
+  setBuildTargets(targets: unknown): Promise<ProjectInfoResponse> {
+    return this.send(Commands.SetBuildTargets, { targets })
   }
 
   // ==================== Physics backend (protocol 1.20.0) ====================
@@ -600,6 +639,20 @@ export class EngineClient {
    */
   async setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo> {
     return validatePhysicsBackendsInfo((await this.send(Commands.SetPhysicsBackend, { backend })).info)
+  }
+
+  // ==================== Shaders (protocol 1.32.0) ====================
+
+  /** A Shader asset's header, parameters and cook state, by UUID or res:// path (a Read command; shaders capability) */
+  async getShaderInfo(uuidOrPath: string): Promise<ShaderInfo> {
+    const info = (await this.send(Commands.GetShaderInfo, { uuidOrPath })).info as ShaderInfo
+    if (!info || typeof info !== "object" || !Array.isArray(info.params)) throw new Error("The shader info has no params list")
+    for (const param of info.params) {
+      if (!param || typeof param !== "object" || typeof param.name !== "string" || param.name === "" || typeof param.type !== "string") {
+        throw new Error("The shader info has a parameter without a name or a type")
+      }
+    }
+    return info
   }
 
   // ==================== Network panel (protocol 1.21.0) ====================
@@ -731,9 +784,33 @@ export class EngineClient {
     return this.send(Commands.ApplyPrefab, { entityId })
   }
 
-  /** Protocol 1.19.0: clears the object's link to its prefab (one undo step); the object and the file are untouched */
-  unpackPrefab(entityId: string): Promise<void> {
-    return this.send(Commands.UnpackPrefab, { entityId })
+  /**
+   * Protocol 1.19.0: clears the object's link to its prefab (one undo step); the object and the file are untouched.
+   * completely (1.34.0, prefabOverridesApply) also unpacks every instance inside it; an older host ignores it.
+   */
+  unpackPrefab(entityId: string, completely = false): Promise<void> {
+    return completely ? this.send(Commands.UnpackPrefab, { entityId, completely }) : this.send(UnpackPrefabByIdOnly, { entityId })
+  }
+
+  /**
+   * Protocol 1.33.0 (prefabNesting): the changes of the prefab instance the object is in (its outermost link), as a save
+   * would write them; 1.34.0 adds the link path, the levels each entry can be applied to and the scene ids it names
+   */
+  async getPrefabOverrides(entityId: string): Promise<PrefabOverridesInfo> {
+    return (await this.send(Commands.GetPrefabOverrides, { entityId })).info
+  }
+
+  /** Protocol 1.33.0: reverts the named changes of that instance (targets as prefab-overrides.ts names them), one undo step */
+  revertPrefabOverrides(entityId: string, targets: unknown[]): Promise<void> {
+    return this.send(Commands.RevertPrefabOverrides, { entityId, targets })
+  }
+
+  /**
+   * Protocol 1.34.0 (prefabOverridesApply): writes the named changes into the prefab at level of the link path (0 the
+   * outermost instance's prefab, -1 the innermost that holds each); the scene's instances update as one undo step
+   */
+  applyPrefabOverrides(entityId: string, targets: unknown[], level: number): Promise<void> {
+    return this.send(Commands.ApplyPrefabOverrides, { entityId, targets, level })
   }
 
   getEntity(entityId: string): Promise<EntityDataResponse> {
@@ -888,6 +965,47 @@ export class EngineClient {
   /** Makes a folder and those above it that are missing (Ok when it exists) */
   createFolder(path: string): Promise<void> {
     return this.send(Commands.CreateFolder, { path })
+  }
+
+  /**
+   * Moves (and renames) assets and folders (protocol 1.24.0, 1..256 {from, to}: `to` is the new full path). All or
+   * nothing: the host refuses the whole call for a collision, a path outside the assets or the open scene's file. An
+   * asset keeps its UUID, so what refers to it by UUID keeps working. The answer lists what moved and the host's
+   * warnings (a script that names the old path).
+   */
+  async moveAssets(moves: AssetMove[]): Promise<AssetsMovedResult> {
+    return parseAssetsMoved((await this.send(Commands.MoveAsset, { moves })).result)
+  }
+
+  // ==================== Prefab stage (protocol 1.26.0) ====================
+
+  /**
+   * Opens a prefab (asset UUID or res:// path) for editing: the host parks the open scene and loads the prefab's tree as
+   * the loaded scene. mode "context" shows it inside the parked scene at anchorEntityId (an instance; "" for the first).
+   * Refused (stageOpen) while a stage is open. Answers the stage.
+   */
+  async openPrefabStage(uuidOrPath: string, mode: PrefabStageMode, anchorEntityId: string): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.OpenPrefabStage, { uuidOrPath, mode, anchorEntityId })).info)
+  }
+
+  /** Switches the open stage between Isolated and In Scene (not an edit) */
+  async setPrefabStageMode(mode: PrefabStageMode): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.SetPrefabStageMode, { mode })).info)
+  }
+
+  /** Writes the stage to its .prefab file */
+  async savePrefabStage(): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.SavePrefabStage, {})).info)
+  }
+
+  /** Closes the stage and gets the parked scene back; refused (unsavedChanges) with unsaved changes unless discard */
+  async closePrefabStage(discard: boolean): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.ClosePrefabStage, { discard })).info)
+  }
+
+  /** The open stage, or null (a Read command) */
+  async getPrefabStage(): Promise<PrefabStage | null> {
+    return parsePrefabStageInfo((await this.send(Commands.GetPrefabStage, {})).info)
   }
 
   // ==================== Events ====================
@@ -1046,6 +1164,15 @@ export class EngineClient {
   /** Per-subsystem status (window, renderer, audio, ...); healthy is false when any of them failed */
   getEngineHealth(): Promise<EngineHealthResponse> {
     return this.send(Commands.GetEngineHealth, {})
+  }
+
+  /**
+   * Protocol 1.28.0 (engineStats capability): the host's frame records after sinceFrame (it keeps the last 240; 0 for all
+   * of them), a summary, the last rendered frame's counters, and the scene, Lua, physics and process figures it has.
+   * A Read command that never logs; the first call turns the host's frame timers on, and 10 s without one turns them off.
+   */
+  async getEngineStats(sinceFrame: number): Promise<EngineStats> {
+    return validateEngineStats((await this.send(Commands.GetEngineStats, { sinceFrame })).stats)
   }
 
   // ==================== Internals ====================
