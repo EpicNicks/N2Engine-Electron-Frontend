@@ -227,10 +227,9 @@ describe("followScene and the prefab stage", () => {
         reset: () => {},
         loadTypes: async () => {},
         loadAssets: async () => {},
-        select: async () => {},
+        follow: async () => {},
         applyChange: async () => {},
         refreshLuaFields: async () => {},
-        multi: { select: async () => {} },
       } as never,
     })
     prefabStage.value = parsePrefabStageInfo(info())

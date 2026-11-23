@@ -392,6 +392,27 @@ describe("drag and drop (a hand-made dataTransfer: jsdom has none)", () => {
     assert.equal(document.querySelector(".drop-inside"), null)
   })
 
+  test("starting a drag does not change the selection; a click does, with Ctrl and Shift as before", async () => {
+    const h = await renderHierarchy("A,B,C")
+    const user = userEvent.setup()
+    await user.click(rowOf("A"))
+    assert.ok(isSelected("A"))
+    const transfer = makeTransfer()
+    fireEvent.mouseDown(rowOf("B"))
+    assert.ok(isSelected("A") && !isSelected("B"), "a press selects nothing")
+    fireEvent.dragStart(rowOf("B"), { dataTransfer: transfer })
+    assert.equal(transfer.data.get("application/x-n2-entity"), "id-B")
+    assert.ok(isSelected("A") && !isSelected("B"), "a drag from an unselected row leaves the selection alone")
+    assert.equal(h.hierarchy.selection.value.primary, "id-A")
+    fireEvent.dragEnd(rowOf("B"), { dataTransfer: transfer })
+    await user.click(rowOf("B"))
+    assert.ok(isSelected("B") && !isSelected("A"))
+    await user.keyboard("{Control>}")
+    await user.click(rowOf("C"))
+    await user.keyboard("{/Control}")
+    assert.ok(isSelected("B") && isSelected("C"))
+  })
+
   test("an object dropped on itself or on something under it changes nothing", async () => {
     const h = await renderHierarchy("A(A1)")
     const user = userEvent.setup()
