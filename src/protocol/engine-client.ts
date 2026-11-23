@@ -42,6 +42,7 @@ import {
   encodeFrame,
   isProtocolCompatible,
   parseProtocolVersion,
+  ShaderInfo,
 } from "./protocol.generated"
 import { CommandSpec, Commands, decodeError } from "./codec"
 
@@ -638,6 +639,15 @@ export class EngineClient {
    */
   async setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo> {
     return validatePhysicsBackendsInfo((await this.send(Commands.SetPhysicsBackend, { backend })).info)
+  }
+
+  // ==================== Shaders (protocol 1.32.0) ====================
+
+  /** A Shader asset's header, parameters and cook state, by UUID or res:// path (a Read command; shaders capability) */
+  async getShaderInfo(uuidOrPath: string): Promise<ShaderInfo> {
+    const info = (await this.send(Commands.GetShaderInfo, { uuidOrPath })).info as ShaderInfo
+    if (!info || typeof info !== "object" || !Array.isArray(info.params)) throw new Error("The shader info has no params list")
+    return info
   }
 
   // ==================== Network panel (protocol 1.21.0) ====================
