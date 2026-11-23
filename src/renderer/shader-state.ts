@@ -77,7 +77,10 @@ export function shaderStatePatch(state: ShaderState | null): JsonObject {
   return { shaderState: state === null ? null : { shader: state.shader, params: state.params } }
 }
 
-/** The parameters a person edits here: not the reserved baseColorTexture the component itself fills */
+/**
+ * The parameters a person edits here: not the reserved baseColorTexture (the component's own texture) nor baseColor (unset, it
+ * is the material's colour times the draw's tint, which no default here could show)
+ */
 export function editableParams(info: ShaderInfo): ShaderParamInfo[] {
-  return info.params.filter((param) => param.name !== "baseColorTexture")
+  return info.params.filter((param) => param.name !== "baseColorTexture" && param.name !== "baseColor")
 }

@@ -6,7 +6,7 @@ import * as assert from "node:assert/strict"
 import { fireEvent, screen, waitFor } from "@testing-library/preact"
 import { signal } from "@preact/signals-core"
 import { AssetLookup } from "../renderer/asset-lookup"
-import { ShaderStateSection } from "../renderer/shader-state-ui"
+import { ShaderStateSection, numberField } from "../renderer/shader-state-ui"
 import type { ComponentView } from "../renderer/inspector-state"
 import { renderWithApp } from "./helpers"
 
@@ -32,6 +32,7 @@ function harness(options: { capability?: boolean; values?: Record<string, unknow
         { name: "baseColorTexture", type: "texture", default: "white" },
         { name: "u_Amount", type: "float", default: 0.25 },
         { name: "u_On", type: "bool", default: true },
+        { name: "u_Steps", type: "int", default: 2 },
       ],
       cook: { status: "ok", targets: [], diagnostics: [] },
     }),
@@ -65,4 +66,17 @@ test("with a shader: its parameters (not baseColorTexture), an edit keeps the ot
   assert.deepEqual(h.edits.at(-1), ["c1", { shaderState: { shader: S, params: { u_On: true } } }])
   fireEvent.click(screen.getByLabelText("Remove the shader"))
   assert.deepEqual(h.edits.at(-1), ["c1", { shaderState: null }])
+})
+
+test("picking the shader that is set sends nothing; an int is edited as an Int field", async () => {
+  const h = harness({ values: { shaderState: { shader: S } } })
+  const { container } = renderWithApp(<ShaderStateSection view={h.view} />, { inspector: h.inspector as never, store: h.store as never })
+  await waitFor(() => assert.ok(container.querySelector('[data-shader-param="u_Steps"]')))
+  fireEvent.click(screen.getByText("shaders/glow.n2shader"))
+  const options = await screen.findAllByText("shaders/glow.n2shader")
+  fireEvent.click(options.at(-1)!)
+  assert.equal(h.edits.length, 0, "the same shader again: no request")
+  assert.equal(numberField({ name: "u_Steps", type: "int", default: 2 }, null).kind, "Int")
+  assert.equal(numberField({ name: "u_A", type: "float", default: 0, min: 0, max: 1 }, null).max, 1)
+  assert.equal(numberField({ name: "u_V", type: "vec2", default: [0, 0], min: 0, max: 1 }, "x").max, undefined, "no range on a vector's axes")
 })

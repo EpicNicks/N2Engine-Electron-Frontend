@@ -647,6 +647,11 @@ export class EngineClient {
   async getShaderInfo(uuidOrPath: string): Promise<ShaderInfo> {
     const info = (await this.send(Commands.GetShaderInfo, { uuidOrPath })).info as ShaderInfo
     if (!info || typeof info !== "object" || !Array.isArray(info.params)) throw new Error("The shader info has no params list")
+    for (const param of info.params) {
+      if (!param || typeof param !== "object" || typeof param.name !== "string" || param.name === "" || typeof param.type !== "string") {
+        throw new Error("The shader info has a parameter without a name or a type")
+      }
+    }
     return info
   }
 

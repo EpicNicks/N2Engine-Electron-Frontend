@@ -22,16 +22,18 @@ import { useApp } from "./ui"
 const AxisNames = ["x", "y", "z", "w"]
 const ColorNames = ["r", "g", "b", "a"]
 
-function numberField(param: ShaderParamInfo, axis: string | null): FieldSchema {
+export function numberField(param: ShaderParamInfo, axis: string | null): FieldSchema {
+  // The engine clamps only a float's or an int's range (Material's .mat reader), so a vector's axes get none here
+  const scalar = axis === null
   return {
     name: axis ? `${param.name}.${axis}` : param.name,
     displayName: param.label ?? param.name,
-    kind: param.type === "int" ? "int" : "float",
+    kind: param.type === "int" ? "Int" : "Float",
     typeName: param.type === "int" ? "int" : "float",
     hidden: false,
     readOnly: false,
-    ...(param.min !== undefined ? { min: param.min } : {}),
-    ...(param.max !== undefined ? { max: param.max } : {}),
+    ...(scalar && param.min !== undefined ? { min: param.min } : {}),
+    ...(scalar && param.max !== undefined ? { max: param.max } : {}),
   }
 }
 
@@ -95,21 +97,28 @@ export function ShaderStateSection({ view }: { view: ComponentView }) {
   return ShaderStateTypes.has(view.type) ? <ShaderStateBody view={view} /> : null
 }
 
+/** What GetShaderInfo said about one shader: kept with the UUID it was read for, so another shader's parameters never show */
+interface LoadedInfo {
+  shader: string
+  info: ShaderInfo
+}
+
 function ShaderStateBody({ view }: { view: ComponentView }) {
   const { store, inspector } = useApp()
   const supported = hasCapability(store.serverInfo.value?.capabilities, ShaderStateCapability)
   const state = readShaderState(inspector.valuesOf(view))
-  const [info, setInfo] = useState<ShaderInfo | null>(null)
+  const [loaded, setLoaded] = useState<LoadedInfo | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const shader = state?.shader ?? null
+  // The asset listing changes when a file does (a saved or cooked .n2shader): the parameters are read again then
+  const assets = inspector.assets.value
   useEffect(() => {
-    setInfo(null)
     setProblem(null)
     if (!supported || shader === null) return
     let stale = false
     window.engine.getShaderInfo(shader).then(
       (read) => {
-        if (!stale) setInfo(read)
+        if (!stale) setLoaded({ shader, info: read })
       },
       (e) => {
         if (!stale) setProblem(String(e instanceof Error ? e.message : e))
@@ -118,7 +127,8 @@ function ShaderStateBody({ view }: { view: ComponentView }) {
     return () => {
       stale = true
     }
-  }, [supported, shader])
+  }, [supported, shader, assets])
+  const info = loaded !== null && loaded.shader === shader ? loaded.info : null
   if (!supported) return null
 
   const disabled = inspector.readOnly.value
@@ -143,7 +153,8 @@ function ShaderStateBody({ view }: { view: ComponentView }) {
           entries={shaders}
           placeholder="Search shaders"
           emptyText="No Shader assets in the project"
-          onPick={(uuid) => edit({ shader: uuid, params: uuid === shader && state ? state.params : {} })}
+          // The same shader again changes nothing: no request, no undo step
+          onPick={(uuid) => (uuid === shader ? undefined : edit({ shader: uuid, params: {} }))}
         />
         {shader && (
           <button class="secondary" aria-label="Remove the shader" title="Draw as built in" disabled={disabled} onClick={() => edit(null)}>

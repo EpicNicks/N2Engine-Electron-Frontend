@@ -44,7 +44,7 @@ test("setting a parameter keeps the others; an int is rounded; null clears the s
   assert.deepEqual(shaderStatePatch(state), { shaderState: { shader: S, params: { a: 1 } } })
 })
 
-test("the reserved baseColorTexture is not offered (the component fills it)", () => {
-  const info = { params: [param("baseColorTexture", "texture", "white"), param("u_A", "float", 0)] } as unknown as ShaderInfo
+test("the reserved baseColorTexture and baseColor are not offered (the component fills them)", () => {
+  const info = { params: [param("baseColorTexture", "texture", "white"), param("baseColor", "color", [1, 0, 0, 1]), param("u_A", "float", 0)] } as unknown as ShaderInfo
   assert.deepEqual(editableParams(info).map((p) => p.name), ["u_A"])
 })
