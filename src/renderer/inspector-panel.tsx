@@ -21,6 +21,7 @@ import { endWhenReleased } from "./edit-groups"
 import { clean } from "./extension-menu"
 import { formatFieldValue } from "./extension-inspector"
 import { Empty, Panel, useApp } from "./ui"
+import { ShaderStateSection } from "./shader-state-ui"
 import { MultiOverrideLabel, OverrideLabel, PrefabOverridesSection } from "./prefab-overrides-panel"
 
 // ==================== The object's own properties and transform ====================
@@ -473,6 +474,7 @@ function ComponentCard({ view }: { view: ComponentView }) {
             ))
           )}
           {problem && <div class="field-error">The script's fields can't be read: {problem}</div>}
+          <ShaderStateSection view={view} />
           <ExtensionSections view={view} />
           {error && <div class="field-error component-error">{error}</div>}
         </div>

@@ -26,6 +26,7 @@ import type {
   InputEvent,
   LuaSyntaxResult,
   NetworkSettingsInfo,
+  ShaderInfo,
   NetworkValidationReport,
   PhysicsBackendsInfo,
   PrefabOverridesInfo,
@@ -193,6 +194,8 @@ export interface EngineCommands {
   setPhysicsBackend(backend: string): Promise<PhysicsBackendsInfo>
   /** Protocol 1.21.0 (networkPanel capability): the network preset, the three preset bundles row by row, the customisation and the nudge (a Read command) */
   getNetworkSettings(): Promise<NetworkSettingsInfo>
+  /** Protocol 1.32.0 (shaders capability): a Shader asset's header, parameters and cook state, by UUID or res:// path (a Read command) */
+  getShaderInfo(uuidOrPath: string): Promise<ShaderInfo>
   /** Protocol 1.21.0: sets the network preset (empty keeps it) and the tunable network settings (a merge patch of the network block); takes effect at the next play session or host start. A Write command */
   setNetworkSettings(preset: string, settings: JsonObject): Promise<NetworkSettingsInfo>
   /** Protocol 1.21.0: the startup checks of a preset ("none", "authoritative", "deterministic", or empty for the project's own), without starting anything (a Read command) */
@@ -365,6 +368,7 @@ export const EngineCommandArgs = {
   getPhysicsBackends: [],
   setPhysicsBackend: ["string"],
   getNetworkSettings: [],
+  getShaderInfo: ["string"],
   setNetworkSettings: ["string", "jsonObject"],
   getNetworkValidation: ["string"],
   openPrefabStage: ["string", "stageMode", "string"],

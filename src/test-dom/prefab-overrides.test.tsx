@@ -209,6 +209,7 @@ describe("the inspector's prefab overrides", () => {
       {
         store: {
           connected: signal(true),
+          serverInfo: signal(null), // a host without the shaderState capability: no shader section
           reportError: (what: string, e: unknown) => assert.fail(`${what}: ${e}`),
           openPrefabStage: async (path: string) => void opened.push(path),
         } as never,
@@ -312,7 +313,7 @@ describe("the multi-object inspector's prefab marks", () => {
         <ContextMenu />
       </>,
       {
-        store: { connected: signal(true), reportError: (what: string, e: unknown) => assert.fail(`${what}: ${e}`) } as never,
+        store: { connected: signal(true), serverInfo: signal(null), reportError: (what: string, e: unknown) => assert.fail(`${what}: ${e}`) } as never,
         scene: { selectedId: signal<string | null>("a") },
         hierarchy: { selection, tree: signal(buildTree([])), canPrefabs: false, canNesting: true, deleteSelected: async () => {} } as never,
         inspector,
