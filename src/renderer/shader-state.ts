@@ -78,9 +78,24 @@ export function shaderStatePatch(state: ShaderState | null): JsonObject {
 }
 
 /**
+ * The names the engine fills on every draw (engine Material.hpp, "Reserved parameter names", engine issue #445), with the types
+ * it fills them for: a stored value is kept but never used. A parameter of such a name and another type is an ordinary one.
+ */
+const EngineFilledParams: ReadonlyMap<string, readonly string[]> = new Map([
+  ["u_Time", ["float"]],
+  ["u_ScaledTime", ["float"]],
+  ["u_Saturation", ["float"]],
+  ["u_Flash", ["color", "vec4"]],
+])
+
+export function isEngineFilled(param: ShaderParamInfo): boolean {
+  return EngineFilledParams.get(param.name)?.includes(param.type) ?? false
+}
+
+/**
  * The parameters a person edits here: not the reserved baseColorTexture (the component's own texture) nor baseColor (unset, it
- * is the material's colour times the draw's tint, which no default here could show)
+ * is the material's colour times the draw's tint, which no default here could show), nor one the engine fills on every draw
  */
 export function editableParams(info: ShaderInfo): ShaderParamInfo[] {
-  return info.params.filter((param) => param.name !== "baseColorTexture" && param.name !== "baseColor")
+  return info.params.filter((param) => param.name !== "baseColorTexture" && param.name !== "baseColor" && !isEngineFilled(param))
 }
