@@ -5,6 +5,7 @@ import type { ShaderInfo, ShaderParamInfo } from "../protocol/protocol.generated
 import {
   componentCount,
   editableParams,
+  isEngineFilled,
   paramBool,
   paramNumbers,
   readShaderState,
@@ -47,4 +48,18 @@ test("setting a parameter keeps the others; an int is rounded; null clears the s
 test("the reserved baseColorTexture and baseColor are not offered (the component fills them)", () => {
   const info = { params: [param("baseColorTexture", "texture", "white"), param("baseColor", "color", [1, 0, 0, 1]), param("u_A", "float", 0)] } as unknown as ShaderInfo
   assert.deepEqual(editableParams(info).map((p) => p.name), ["u_A"])
+})
+
+test("the parameters the engine fills on every draw are not offered, unless their type is not the one it fills", () => {
+  const filled = [
+    param("u_Time", "float", 0),
+    param("u_ScaledTime", "float", 0),
+    param("u_Saturation", "float", 1),
+    param("u_Flash", "color", [0, 0, 0, 0]),
+    param("u_Flash", "vec4", [0, 0, 0, 0]),
+  ]
+  const ordinary = [param("u_Time", "vec2", [0, 0]), param("u_Flash", "float", 0), param("u_TimeScale", "float", 1), param("u_time", "float", 0)]
+  assert.deepEqual(filled.map(isEngineFilled), [true, true, true, true, true])
+  const info = { params: [...filled, ...ordinary] } as unknown as ShaderInfo
+  assert.deepEqual(editableParams(info), ordinary)
 })

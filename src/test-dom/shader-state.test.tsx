@@ -33,6 +33,8 @@ function harness(options: { capability?: boolean; values?: Record<string, unknow
         { name: "u_Amount", type: "float", default: 0.25 },
         { name: "u_On", type: "bool", default: true },
         { name: "u_Steps", type: "int", default: 2 },
+        { name: "u_Time", type: "float", default: 0 },
+        { name: "u_Flash", type: "color", default: [0, 0, 0, 0] },
       ],
       cook: { status: "ok", targets: [], diagnostics: [] },
     }),
@@ -60,6 +62,9 @@ test("with a shader: its parameters (not baseColorTexture), an edit keeps the ot
   const { container } = renderWithApp(<ShaderStateSection view={h.view} />, { inspector: h.inspector as never, store: h.store as never })
   await waitFor(() => assert.ok(container.querySelector('[data-shader-param="u_Amount"]')))
   assert.equal(container.querySelector('[data-shader-param="baseColorTexture"]'), null)
+  // The engine fills these on every draw, so there is nothing to edit
+  assert.equal(container.querySelector('[data-shader-param="u_Time"]'), null)
+  assert.equal(container.querySelector('[data-shader-param="u_Flash"]'), null)
   const on = screen.getByLabelText("u_On") as HTMLInputElement
   assert.equal(on.checked, false, "the stored value, not the default")
   fireEvent.click(on)
